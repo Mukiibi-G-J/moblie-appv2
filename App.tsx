@@ -62,7 +62,7 @@ const AppNavigator = () => {
       <Stack.Navigator initialRouteName={initialRoute}>
         {accessToken ? (
           <>
-            {/* <Stack.Screen
+            <Stack.Screen
               name="Home"
               component={CustomDrawer}
               options={{ headerShown: false }}
@@ -113,7 +113,12 @@ const AppNavigator = () => {
               name="ItemJournal"
               component={ItemJournal}
               options={{ headerShown: false }}
-            /> */}
+            />
+             <Stack.Screen
+              name="SignIn"
+              component={SignIn}
+              options={{ headerShown: false }}
+            />
           </>
         ) : (
           <>
