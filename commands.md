@@ -30,6 +30,8 @@ npm install jwt-decode
 npm install @react-native-community/netinfo
 npm install @react-native-picker/picker
 npm install @twotalltotems/react-native-otp-input
+npm install react-native-country-picker-modal
+npm install react-native-confirmation-code-field    
 
 
   
