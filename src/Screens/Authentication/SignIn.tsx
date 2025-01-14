@@ -1,249 +1,354 @@
-import { Image, Text, TouchableOpacity, View, ActivityIndicator } from 'react-native'
-import React, { useContext, useEffect, useState } from 'react'
-import AuthLayout from './AuthLayout'
-import { COLORS, FONTS, icons, SIZES } from '../../constants'
-import FormInput from '../../Components/FormInput'
-import TextButton from '../../Components/TextButton'
-import CustomSwitch from '../../Components/CustomSwitch'
-import TextIconButton from '../../Components/TextIconButton'
-import utils from '../../utils/utils'
-import { KeyboardAvoidingView, Platform, ScrollView } from 'react-native'
-import { AppContextType, useAppContext } from '../../context/Store';
+import {
+  Image,
+  Text,
+  TouchableOpacity,
+  View,
+  ActivityIndicator,
+  Modal,
+  Alert,
+} from 'react-native';
+import React, {useContext, useEffect, useState} from 'react';
+import AuthLayout from './AuthLayout';
+import {COLORS, FONTS, icons, SIZES} from '../../constants';
+import FormInput from '../../Components/FormInput';
+import TextButton from '../../Components/TextButton';
+import CustomSwitch from '../../Components/CustomSwitch';
+import TextIconButton from '../../Components/TextIconButton';
+import utils from '../../utils/utils';
+import {KeyboardAvoidingView, Platform, ScrollView} from 'react-native';
+import {AppContextType, useAppContext} from '../../context/Store';
 import Toast from 'react-native-toast-message';
-import { getEmail, getTenant, getTenantAxios, getVerifiedEmail, setTenantOnLogin } from '../../utils/tenant'
+import {
+  getEmail,
+  getTenant,
+  getTenantAxios,
+  getVerifiedEmail,
+  setTenantOnLogin,
+} from '../../utils/tenant';
+import CustomAlert from '../../Components/CustomAlert';
 
-const SignIn = ({ navigation }: { navigation: any }) => {
-    const context = useAppContext();
-    const { login } = context as AppContextType;
-    const [email, setEmail] = useState("");
-    const [password, setPassword] = useState("")
-    const [emailError, setEmailError] = useState("")
+const SignIn = ({navigation}: {navigation: any}) => {
+  const context = useAppContext();
+  const {login} = context as AppContextType;
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [emailError, setEmailError] = useState('');
 
-    const [showPass, setShowPass] = useState(false)
-    const [saveMe, setSaveMe] = useState(false)
-    const [loading, setLoading] = useState(false);
-    const [tenant, setTenant] = useState("");
-    const [inputedTenant, setInputedTenant] = useState("");
+  const [showPass, setShowPass] = useState(false);
+  const [saveMe, setSaveMe] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [tenant, setTenant] = useState('');
+  const [inputedTenant, setInputedTenant] = useState('');
+  const [showAlert, setShowAlert] = useState(false);
+  const [alertMessage, setAlertMessage] = useState('');
 
-    useEffect(() => {
-        const checkEmail = async () => {
-            const verifiedEmail = await getVerifiedEmail();
-            const email = await getEmail();
-            const tenant = await getTenant();
-            console.log('tenant', tenant);
+  useEffect(() => {
+    const checkEmail = async () => {
+      const verifiedEmail = await getVerifiedEmail();
+      const email = await getEmail();
+      const tenant = await getTenant();
+      console.log('tenant', tenant);
 
-            if (tenant) {
-                console.log('tenant', tenant);
-                setTenant(tenant);
-            }
-            if (verifiedEmail === 'false') {
-                navigation.navigate("Otp", { email: email })
-            }
+      if (tenant) {
+        console.log('tenant', tenant);
+        setTenant(tenant);
+      }
+      if (verifiedEmail === 'false') {
+        navigation.navigate('Otp', {email: email});
+      }
+    };
+    checkEmail();
+  }, []);
+
+  function isEnableSignIn() {
+    return email !== '' && password !== '' && emailError === '';
+  }
+
+  const handleSubmit = async () => {
+    if (isEnableSignIn()) {
+      const userCredentials = {email, password};
+      setLoading(true);
+      try {
+        if (inputedTenant) {
+          setTenantOnLogin(inputedTenant);
         }
-        checkEmail();
-    }, [])
+        const response = await login(userCredentials);
+        if (response && response.access) {
+          // Navigate to Home screen and replace the current screen
+          navigation.replace('Home');
+          Toast.show({
+            text1: 'Login Successful',
+            text2: `Welcome, ${email}!`,
+            type: 'success',
+          });
+        } else {
+          Toast.show({
+            text1: 'Login Failed',
+            text2: 'Invalid credentials. Please try again.',
+            type: 'error',
+          });
+        }
+      } catch (error: any) {
+        if (error.customMessage) {
+          setAlertMessage(error.customMessage);
+          setShowAlert(true);
+        }
+        handleError(error);
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      console.warn('Please fill in all fields correctly.');
+    }
+  };
 
-    function isEnableSignIn() {
-        return email !== "" && password !== "" && emailError === "";
+  const handleError = (error: any) => {
+    let title = 'Login Failed';
+    let message = 'An unexpected error occurred';
+    let type = 'error';
+
+    // Network error
+    if (error.response?.status === 500) {
+      title = 'Network Error';
+      message = 'Please check your internet connection and try again';
+    } 
+    // Invalid credentials
+    else if (error.response?.status === 401) {
+      title = 'Invalid Credentials';
+      message = 'The email or password you entered is incorrect';
+    }
+    // Custom error message from backend
+    else if (error.customMessage) {
+      message = error.customMessage;
+    }
+    // Other errors
+    else if (typeof error === 'string') {
+      message = error;
     }
 
-    const handleSubmit = async () => {
-        if (isEnableSignIn()) {
-            const userCredentials = { email, password };
-            setLoading(true);
-            try {
-                if (inputedTenant) {
-                    setTenantOnLogin(inputedTenant);
-                }
-                const response = await login(userCredentials);
-                if (response && response.access) {
-                    // Navigate to Home screen and replace the current screen
-                    navigation.replace("Home");
-                    Toast.show({
-                        text1: 'Login Successful',
-                        text2: `Welcome, ${email}!`,
-                        type: 'success',
-                    });
-                } else {
-                    Toast.show({
-                        text1: 'Login Failed',
-                        text2: 'Invalid credentials. Please try again.',
-                        type: 'error',
-                    });
-                }
-            } catch (error) {
-                Toast.show({
-                    text1: 'Login Failed',
-                    text2: 'Please check your credentials and try again.',
-                    type: 'error',
-                });
-            } finally {
-                setLoading(false);
-            }
-        } else {
-            console.warn('Please fill in all fields correctly.');
-        }
-    };
+    Toast.show({
+      type,
+      text1: title,
+      text2: message,
+      visibilityTime: 4000,
+      position: 'top',
+      topOffset: 50,
+      props: {
+        style: {
+          borderLeftColor: COLORS.red,
+          borderLeftWidth: 6,
+        },
+        contentContainerStyle: {
+          paddingHorizontal: 15,
+        },
+        text1Style: {
+          fontSize: 16,
+          fontWeight: 'bold',
+          color: COLORS.darkGray,
+        },
+        text2Style: {
+          fontSize: 30,
+          color: COLORS.black,
+        },
+      }
+    });
+  };
 
-    return (
-        <KeyboardAvoidingView
-            style={{ flex: 1 }}
-            behavior={Platform.OS === "ios" ? "padding" : "height"}
-            keyboardVerticalOffset={Platform.OS === "ios" ? 40 : 0}
-        >
-            <ScrollView
-                contentContainerStyle={{ flexGrow: 1 }}
-                keyboardShouldPersistTaps="handled"
-            >
-                <AuthLayout
-                    titleContainerStyle={{
-                        marginBottom: SIZES.radius
+  return (
+    <KeyboardAvoidingView
+      style={{flex: 1}}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 40 : 0}>
+      <ScrollView
+        contentContainerStyle={{flexGrow: 1}}
+        keyboardShouldPersistTaps="handled">
+        <AuthLayout
+          titleContainerStyle={{
+            marginBottom: SIZES.radius,
+          }}
+          title="Let's Sign You In"
+          subtitle="Welcome back, you've been missed!">
+          <View
+            style={{
+              flex: 1,
+              marginTop: SIZES.height > 800 ? SIZES.padding * 2 : SIZES.radius,
+            }}>
+            {tenant && (
+              // <Text style={{ color: COLORS.black, ...FONTS.body4, marginTop: SIZES.radius }}>{tenant}</Text>}
+
+              <FormInput
+                label="Company Name"
+                value={inputedTenant ? inputedTenant : tenant}
+                placeholder="Enter your Company Name"
+                containerStyle={{marginTop: SIZES.radius}}
+                inputContainerStyle={{
+                  borderBottomWidth: 0,
+                  borderBottomColor: COLORS.gray,
+                }}
+                inputStyle={{fontSize: 16, color: COLORS.black}}
+                prependComponent={''}
+                appendComponent={''}
+                secureTextEntry={false}
+                maxLength={100}
+                onChange={(value: string) => {
+                  setInputedTenant(value.replace(/\s+/g, ''));
+                }}
+                helperText="companyname should be in lower case"
+              />
+            )}
+            {!tenant && (
+              <FormInput
+                label="Company Name"
+                value={inputedTenant}
+                placeholder="Enter your Company Name"
+                containerStyle={{marginTop: SIZES.radius}}
+                inputContainerStyle={{
+                  borderBottomWidth: 0,
+                  borderBottomColor: COLORS.gray,
+                }}
+                inputStyle={{fontSize: 16, color: COLORS.black}}
+                prependComponent={''}
+                appendComponent={''}
+                secureTextEntry={false}
+                maxLength={100}
+                onChange={(value: string) =>
+                  setInputedTenant(value.replace(/\s+/g, ''))
+                }
+                helperText="companyname should be in lower case"
+              />
+            )}
+
+            <FormInput
+              label="Email"
+              value={email}
+              placeholder="Enter your email"
+              containerStyle={{marginTop: SIZES.radius}}
+              inputContainerStyle={{
+                borderBottomWidth: 0,
+                borderBottomColor: COLORS.gray,
+              }}
+              inputStyle={{fontSize: 16, color: COLORS.black}}
+              prependComponent={''}
+              appendComponent={''}
+              secureTextEntry={false}
+              maxLength={100}
+              onChange={(value: string) => {
+                utils.validateEmail(value, setEmailError);
+                setEmail(value);
+              }}
+            />
+            {emailError && (
+              <Text style={{color: COLORS.red, ...FONTS.body4, marginTop: 4}}>
+                {emailError}
+              </Text>
+            )}
+
+            <FormInput
+              label="Password"
+              secureTextEntry={!showPass}
+              autoCompleteType="password"
+              containerStyle={{marginTop: SIZES.radius}}
+              value={password}
+              onChange={(value: string) => setPassword(value)}
+              placeholder="Enter your password"
+              inputContainerStyle={{
+                marginBottom: 12,
+                borderBottomWidth: 0,
+                borderBottomColor: COLORS.gray,
+              }}
+              inputStyle={{fontSize: 16, color: COLORS.black}}
+              maxLength={100}
+              prependComponent={''}
+              appendComponent={
+                <TouchableOpacity
+                  style={{
+                    width: 40,
+                    alignItems: 'flex-end',
+                    justifyContent: 'center',
+                  }}
+                  onPress={() => setShowPass(!showPass)}>
+                  <Image
+                    source={showPass ? icons.eye_close : icons.eye}
+                    style={{
+                      height: 20,
+                      width: 20,
+                      tintColor: COLORS.gray,
                     }}
-                    title="Let's Sign You In"
-                    subtitle="Welcome back, you've been missed!"
-                >
-                    <View
-                        style={{
-                            flex: 1,
-                            marginTop: SIZES.height > 800 ? SIZES.padding * 2 : SIZES.radius
-                        }}
-                    >
+                  />
+                </TouchableOpacity>
+              }
+            />
 
-                        {tenant && <Text style={{ color: COLORS.black, ...FONTS.body4, marginTop: SIZES.radius }}>{tenant}</Text>}
-                        { !tenant &&
-                            <FormInput
-                                label="Tenant"
-                                value={inputedTenant}
-                                placeholder="Enter your tenant"
-                                containerStyle={{ marginTop: SIZES.radius }}
-                                inputContainerStyle={{ borderBottomWidth: 0, borderBottomColor: COLORS.gray }}
-                                inputStyle={{ fontSize: 16, color: COLORS.black }}
-                                prependComponent={''}
-                                appendComponent={''}
-                                secureTextEntry={false}
-                                maxLength={100}
-                                onChange={(value: string) => setInputedTenant(value)}
-                            />
-                        }
+            {loading && (
+              <ActivityIndicator
+                size="large"
+                color={COLORS.primary}
+                style={{marginTop: SIZES.radius}}
+              />
+            )}
 
-                        <FormInput
-                            label="Email"
-                            value={email}
-                            placeholder="Enter your email"
-                            containerStyle={{ marginTop: SIZES.radius }}
-                            inputContainerStyle={{ borderBottomWidth: 0, borderBottomColor: COLORS.gray }}
-                            inputStyle={{ fontSize: 16, color: COLORS.black }}
-                            prependComponent={''}
-                            appendComponent={''}
-                            secureTextEntry={false}
-                            maxLength={100}
+            <View
+              style={{
+                flexDirection: 'row',
+                marginTop: SIZES.radius,
+                justifyContent: 'space-between',
+              }}>
+              <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                <CustomSwitch
+                  label="Save Me"
+                  value={saveMe}
+                  onChange={(value: boolean) => setSaveMe(value)}
+                />
+                /
+              </View>
+              <TextButton
+                label="Forgot Password?"
+                buttonContainerStyle={{backgroundColor: null}}
+                labelStyle={{color: COLORS.primary, ...FONTS.body4}}
+                onPress={() => navigation.navigate('ForgotPassword')}
+                disabled={false}
+              />
+            </View>
 
-                            onChange={(value: string) => {
-                                utils.validateEmail(value, setEmailError)
-                                setEmail(value)
-                            }}
-                        />
-                        {emailError && <Text style={{ color: COLORS.red, ...FONTS.body4, marginTop: 4 }}>{emailError}</Text>}
+            <TextButton
+              label="Sign In"
+              disabled={!isEnableSignIn() || loading}
+              labelStyle={{color: COLORS.white, ...FONTS.body4}}
+              buttonContainerStyle={{
+                height: 55,
+                alignItems: 'center',
+                marginTop: SIZES.padding,
+                borderRadius: SIZES.radius,
+                backgroundColor:
+                  isEnableSignIn() && !loading
+                    ? COLORS.primary2
+                    : COLORS.transparentPrimary2,
+              }}
+              onPress={handleSubmit}
+            />
 
+            {/* Sign Up */}
+            <View
+              style={{
+                flexDirection: 'row',
+                marginTop: SIZES.radius,
+                justifyContent: 'center',
+              }}>
+              <Text style={{color: COLORS.darkGray, ...FONTS.body3}}>
+                Don't have an account?{' '}
+              </Text>
+              <TextButton
+                disabled={loading}
+                label="Sign Up"
+                buttonContainerStyle={{backgroundColor: null}}
+                labelStyle={{color: COLORS.primary, ...FONTS.h3}}
+                onPress={() => navigation.navigate('SignUp')}
+              />
+            </View>
+          </View>
 
-
-
-                        <FormInput
-                            label="Password"
-                            secureTextEntry={!showPass}
-                            autoCompleteType="password"
-                            containerStyle={{ marginTop: SIZES.radius }}
-                            value={password}
-                            onChange={(value: string) => setPassword(value)}
-                            placeholder="Enter your password"
-                            inputContainerStyle={{ marginBottom: 12, borderBottomWidth: 0, borderBottomColor: COLORS.gray }}
-                            inputStyle={{ fontSize: 16, color: COLORS.black }}
-                            maxLength={100}
-                            prependComponent={''}
-                            appendComponent={
-                                <TouchableOpacity
-                                    style={{
-                                        width: 40,
-                                        alignItems: 'flex-end',
-                                        justifyContent: 'center',
-                                    }}
-                                    onPress={() => setShowPass(!showPass)}
-                                >
-                                    <Image
-                                        source={showPass ? icons.eye_close : icons.eye}
-                                        style={{
-                                            height: 20,
-                                            width: 20,
-                                            tintColor: COLORS.gray
-                                        }}
-                                    />
-                                </TouchableOpacity>
-                            }
-                        />
-
-
-                        {loading && <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: SIZES.radius }} />}
-
-
-                        <View
-                            style={{
-                                flexDirection: 'row',
-                                marginTop: SIZES.radius,
-                                justifyContent: 'space-between'
-                            }}
-                        >
-                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                <CustomSwitch
-                                    label="Save Me"
-                                    value={saveMe}
-                                    onChange={(value: boolean) => setSaveMe(value)}
-                                />
-                            </View>
-                            <TextButton
-                                label="Forgot Password?"
-                                buttonContainerStyle={{ backgroundColor: null }}
-                                labelStyle={{ color: COLORS.primary, ...FONTS.body4 }}
-                                onPress={() => navigation.navigate("ForgotPassword")}
-                                disabled={false}
-                            />
-                        </View>
-
-
-                        <TextButton
-                            label="Sign In"
-                            disabled={!isEnableSignIn() || loading}
-                            labelStyle={{ color: COLORS.white, ...FONTS.body4 }}
-                            buttonContainerStyle={{
-                                height: 55,
-                                alignItems: 'center',
-                                marginTop: SIZES.padding,
-                                borderRadius: SIZES.radius,
-                                backgroundColor: isEnableSignIn() && !loading ? COLORS.primary2 : COLORS.transparentPrimary2,
-                            }}
-                            onPress={handleSubmit}
-                        />
-
-                        {/* Sign Up */}
-                        <View
-                            style={{
-                                flexDirection: 'row',
-                                marginTop: SIZES.radius,
-                                justifyContent: 'center'
-                            }}
-                        >
-                            <Text style={{ color: COLORS.darkGray, ...FONTS.body3 }}>Don't have an account? </Text>
-                            <TextButton
-                                disabled={loading}
-                                label="Sign Up"
-                                buttonContainerStyle={{ backgroundColor: null }}
-                                labelStyle={{ color: COLORS.primary, ...FONTS.h3 }}
-                                onPress={() => navigation.navigate("SignUp")}
-                            />
-                        </View>
-                    </View>
-
-                    {/* Footer */}
-                    <View>
+          {/* Footer */}
+          {/* <View>
                         <TextIconButton
                             containerStyle={{
                                 height: 50,
@@ -274,12 +379,18 @@ const SignIn = ({ navigation }: { navigation: any }) => {
                             labelStyle={{ marginLeft: SIZES.radius, color: 'black' }}
                             onPress={() => { }}
                         />
-                    </View>
-                </AuthLayout>
-            </ScrollView>
-            <Toast />
-        </KeyboardAvoidingView>
-    )
-}
+                    </View> */}
+        </AuthLayout>
+      </ScrollView>
+      <CustomAlert
+        visible={showAlert}
+        title="Login Failed"
+        message={alertMessage}
+        onClose={() => setShowAlert(false)}
+      />
+      <Toast />
+    </KeyboardAvoidingView>
+  );
+};
 
-export default SignIn
+export default SignIn;

@@ -42,7 +42,7 @@ export const loginUser = async (credentials: {
     }
 
     return response.data;
-  } catch (error) {
+  } catch (error: any) {
     throw error;
   }
 };

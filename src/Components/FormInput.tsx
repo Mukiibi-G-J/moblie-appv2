@@ -2,11 +2,31 @@ import React from 'react';
 import {
     View,
     Text,
-    TextInput
+    TextInput,
+    ViewStyle,
+    KeyboardTypeOptions,
+    TextStyle
 } from 'react-native';
 
 import { FONTS, SIZES, COLORS } from "../constants"
-
+interface FormInputProps {
+    containerStyle?: ViewStyle;
+    inputContainerStyle?: ViewStyle;
+    label?: string;
+    placeholder?: string;
+    inputStyle?: TextStyle;
+    value?: string;
+    prependComponent?: React.ReactNode;
+    appendComponent?: React.ReactNode;
+    onChange: (text: string) => void;
+    secureTextEntry?: boolean;
+    keyboardType?: KeyboardTypeOptions;
+    autoCompleteType?: string;
+    autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+    errorMsg?: string;
+    maxLength?: number;
+    helperText?: string;
+}   
 const FormInput = ({
     containerStyle,
     inputContainerStyle,
@@ -23,7 +43,8 @@ const FormInput = ({
     autoCapitalize = "none",
     errorMsg = "",
     maxLength,
-}) => {
+    helperText,
+}: FormInputProps) => {
     return (
         <View style={{ ...containerStyle }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
@@ -63,6 +84,7 @@ const FormInput = ({
                     appendComponent
                 }
             </View>
+            <Text style={{ color: COLORS.gray, ...FONTS.body4 }}>{helperText}</Text>
         </View>
     )
 }

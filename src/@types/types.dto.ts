@@ -112,3 +112,22 @@ export interface SalesPostData {
 export interface ItemJournalData {
   journal_ids: number[];
 }
+
+
+interface FormInputProps {
+  containerStyle?: ViewStyle;
+  inputContainerStyle?: ViewStyle;
+  label?: string;
+  placeholder?: string;
+  inputStyle?: TextStyle;
+  value?: string;
+  prependComponent?: React.ReactNode;
+  appendComponent?: React.ReactNode;
+  onChange: (text: string) => void;
+  secureTextEntry?: boolean;
+  keyboardType?: KeyboardTypeOptions;
+  autoCompleteType?: string;
+  autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+  errorMsg?: string;
+  maxLength?: number;
+}

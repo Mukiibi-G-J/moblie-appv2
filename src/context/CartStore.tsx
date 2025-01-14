@@ -8,6 +8,7 @@ interface CartItem {
     unit_price: number;
     quantity: number;
     item_images?: { url: string }[];
+    date_sold: string;
 }
 
 interface CartState {

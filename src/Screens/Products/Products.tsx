@@ -216,6 +216,7 @@ const Products = () => {
             setTotalPages(Math.ceil(response.count / itemsPerPage));
         } catch (error) {
             console.error('Error fetching products:', error);
+            setLoading(false)
         } finally {
             setLoading(false);
         }

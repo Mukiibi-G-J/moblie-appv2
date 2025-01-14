@@ -33,13 +33,12 @@ const AppNavigator = () => {
   useEffect(() => {
     const initializeApp = async () => {
       try {
-        // Check onboarding status
         const onboardingComplete = await AsyncStorage.getItem('@onboarding_complete');
-        if (onboardingComplete === 'true') {
+        if (accessToken) {
+          setInitialRoute('Home');
+        } else if (onboardingComplete === 'true') {
           setInitialRoute('SignIn');
         }
-
-        // Simulate any other initialization process
         await new Promise(resolve => setTimeout(resolve, 2000));
       } catch (error) {
         console.error('Error during app initialization:', error);
@@ -48,9 +47,8 @@ const AppNavigator = () => {
       }
     };
     NetworkManager.getInstance();
-
     initializeApp();
-  }, []);
+  }, [accessToken]);
 
   if (isLoading) {
     return <SplashScreen />;
@@ -58,95 +56,78 @@ const AppNavigator = () => {
 
   return (
     <>
-
       <Stack.Navigator initialRouteName={initialRoute}>
-        {accessToken ? (
-          <>
-            <Stack.Screen
-              name="Home"
-              component={CustomDrawer}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="Sales"
-              component={Sales}
-              options={{ headerShown: false }}
-            />
-
-            <Stack.Screen
-              name="Cart"
-              component={Cart}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="Settings"
-              component={Settings}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="Expenses"
-              component={Expenses}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="MyWallet"
-              component={MyWallet}
-              options={{ headerShown: false }}
-
-            />
-            <Stack.Screen
-              name="Reports"
-              component={Reports}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="Products"
-              component={Products}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="PrintLabels"
-              component={PrintLabels}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="ItemJournal"
-              component={ItemJournal}
-              options={{ headerShown: false }}
-            />
-             <Stack.Screen
-              name="SignIn"
-              component={SignIn}
-              options={{ headerShown: false }}
-            />
-          </>
-        ) : (
-          <>
-            <Stack.Screen
-              name='OnBoarding'
-              component={OnBoarding}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="Otp"
-              component={Otp}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="SignIn"
-              component={SignIn}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="SignUp"
-              component={SignUp}
-              options={{ headerShown: false }}
-            />
-          </>
-        )}
+        <Stack.Screen
+          name="OnBoarding"
+          component={OnBoarding}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="SignIn"
+          component={SignIn}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="SignUp"
+          component={SignUp}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="Otp"
+          component={Otp}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="Home"
+          component={CustomDrawer}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="Sales"
+          component={Sales}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="Cart"
+          component={Cart}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="Settings"
+          component={Settings}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="Expenses"
+          component={Expenses}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="MyWallet"
+          component={MyWallet}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="Reports"
+          component={Reports}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="Products"
+          component={Products}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="PrintLabels"
+          component={PrintLabels}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="ItemJournal"
+          component={ItemJournal}
+          options={{ headerShown: false }}
+        />
       </Stack.Navigator>
-
-
       <Toast />
     </>
   );

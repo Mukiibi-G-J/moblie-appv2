@@ -27,13 +27,32 @@ const createAxiosInstance = (tenant?: string) => {
   instance.interceptors.response.use(
     response => response,
     async error => {
-      console.log('error', error);
-      console.log('Axios interceptor caught error:', error.response?.status);
-      if (error.response && (error.response.status === 401 || error.response.status === 403)) {
+      console.log('Full error object:', {
+        message: error.message,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        url: error.config?.url,
+        method: error.config?.method,
+        data: error.response?.data,
+      });
+      if (error.response?.data.detail) {
+        return Promise.reject(error.response?.data.detail);
+      }
+
+      if (
+        error.response &&
+        (error.response.status === 401 || error.response.status === 403)
+      ) {
         console.log('Clearing tokens and navigating to SignIn');
         // await AsyncStorage.removeItem('accessToken');
         // await AsyncStorage.removeItem('cartItems');
         // navigate('Auth', { screen: 'SignIn' });
+      }
+      if (error.message === 'Network Error') {
+        return Promise.reject({
+          ...error,
+          customMessage: 'Please check your internet connection and try again.',
+        });
       }
       return Promise.reject(error);
     },

@@ -214,7 +214,8 @@ const Cart = ({ navigation }: { navigation: any }) => {
                                 handleSearch(itemCode);
                             }
                             //if  it contains alphabets
-                        } else if (/^[a-zA-Z]+$/.test(itemCode)) {
+                        // } else if (/^[a-zA-Z]+$/.test(itemCode)) {
+                        } else if (itemCode.length) {
                             setSearchQuery(itemCode);
                         }
                     }}
@@ -321,8 +322,11 @@ const Cart = ({ navigation }: { navigation: any }) => {
                     description: item.item_name,
                     quantity: item.quantity,
                     unit_amount: item.unit_price,
-                    date: new Date().toISOString().split('T')[0],
+                    date: item.date_sold instanceof Date 
+                        ? item.date_sold.toISOString().split('T')[0]
+                        : new Date().toISOString().split('T')[0],
                     user: auth.user_id
+                  
                 })
             })
             if (data.length > 0) {
@@ -358,6 +362,9 @@ const Cart = ({ navigation }: { navigation: any }) => {
             }
 
             if (printReceipt) {
+                // if it sunmi anrodid
+                
+                
                 await handlePrint(cartItems, total, auth.username)
             }
             await new Promise(resolve => setTimeout(resolve, 2000));
@@ -371,7 +378,7 @@ const Cart = ({ navigation }: { navigation: any }) => {
 
 
         } catch (error) {
-            console.error('Error placing order:', error);
+            console.log('error', error);
             Toast.show({
                 type: 'error',
                 text1: 'Error',
@@ -440,8 +447,8 @@ const Cart = ({ navigation }: { navigation: any }) => {
                                 />
                                 <View style={{ marginLeft: 16 }}>
                                     <Text style={{ fontWeight: '600', color: COLORS.gray }}>
-                                        {item.item_name.length > 12
-                                            ? `${item.item_name.substring(0, 12)}...`
+                                        {item.item_name.length > 24
+                                            ? `${item.item_name.substring(0, 24)}...`
                                             : item.item_name}
                                     </Text>
                                     <Text style={{ color: 'gray' }}>Stock: {item.inventory}</Text>
@@ -478,6 +485,7 @@ const Cart = ({ navigation }: { navigation: any }) => {
                 unit_price: parseFloat(newPrice),
                 date_sold: selectedDate
             };
+       
             // Update the item in your cart state
             // This will depend on how you're managing state in your app
             // For example, if using useCart hook:
@@ -523,7 +531,9 @@ const Cart = ({ navigation }: { navigation: any }) => {
                             mode="date"
                             display="default"
                             onChange={onDateChange}
-                            themeVariant={colorScheme}
+                            themeVariant={colorScheme || 'light'}
+                            style={{ backgroundColor: colorScheme === 'dark' ? COLORS.darkGray : COLORS.white }}
+
                         />
                     )}
                     <View style={styles.modalButtons}>

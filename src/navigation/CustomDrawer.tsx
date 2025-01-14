@@ -225,7 +225,7 @@ const CustomDrawerContent = ({ navigation, selectedTab, setSelectedTab }: { navi
                         }}
                     /> */}
 
-                    {/* <CustomDrawerItem
+                    {/*I <CustomDrawertem
                         label="My Orders"
                         icon={icons.location}
                         onPress={() => {

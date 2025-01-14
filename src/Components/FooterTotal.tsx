@@ -102,7 +102,7 @@ const FooterTotal: React.FC<FooterTotalProps> = ({ subTotal, totalQuantity, tota
                         borderRadius: SIZES.radius,
                         backgroundColor: COLORS.primary2
                     }}
-                    label="Complete Order"
+                    label="Complete Sale"
                     onPress={onPress}
                     disabled={isLoading}
                 />
