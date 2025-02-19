@@ -1,15 +1,15 @@
-import React, { useState, useEffect } from 'react';
-import { NavigationContainer } from '@react-navigation/native';
-import { createStackNavigator } from '@react-navigation/stack';
+import React, {useState, useEffect} from 'react';
+import {NavigationContainer} from '@react-navigation/native';
+import {createStackNavigator} from '@react-navigation/stack';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import SplashScreen from './src/Screens/SplashScreen/SplashScreen';
 import OnBoarding from './src/OnBoarding/OnBoarding';
 import SignIn from './src/Screens/Authentication/SignIn';
-import { AppProvider, useAuth } from './src/context/Store';
+import {AppProvider, useAuth} from './src/context/Store';
 import CustomDrawer from './src/navigation/CustomDrawer';
 import Cart from './src/Screens/Cart/Cart';
-import { CartProvider } from './src/context/CartStore';
-import { navigationRef } from './src/hooks/NavigationService';
+import {CartProvider} from './src/context/CartStore';
+import {navigationRef} from './src/hooks/NavigationService';
 import Sales from './src/Screens/Sales/Sales';
 import Settings from './src/Screens/Settings/Settings';
 import Expenses from './src/Screens/Expenses/Expenses';
@@ -22,18 +22,21 @@ import Otp from './src/Screens/Otp/Otp';
 import ItemJournal from './src/Screens/ItemJournal/ItemJournal';
 import NetworkManager from './src/utils/networkManager';
 import Toast from 'react-native-toast-message';
+import Login from './src/Screens/Authentication/Login';
 
 const Stack = createStackNavigator();
 
 const AppNavigator = () => {
-  const { accessToken } = useAuth();
+  const {accessToken} = useAuth();
   const [isLoading, setIsLoading] = useState(true);
   const [initialRoute, setInitialRoute] = useState('OnBoarding');
 
   useEffect(() => {
     const initializeApp = async () => {
       try {
-        const onboardingComplete = await AsyncStorage.getItem('@onboarding_complete');
+        const onboardingComplete = await AsyncStorage.getItem(
+          '@onboarding_complete',
+        );
         if (accessToken) {
           setInitialRoute('Home');
         } else if (onboardingComplete === 'true') {
@@ -60,72 +63,72 @@ const AppNavigator = () => {
         <Stack.Screen
           name="OnBoarding"
           component={OnBoarding}
-          options={{ headerShown: false }}
+          options={{headerShown: false}}
         />
         <Stack.Screen
           name="SignIn"
-          component={SignIn}
-          options={{ headerShown: false }}
+          component={Login}
+          options={{headerShown: false}}
         />
         <Stack.Screen
           name="SignUp"
           component={SignUp}
-          options={{ headerShown: false }}
+          options={{headerShown: false}}
         />
         <Stack.Screen
           name="Otp"
           component={Otp}
-          options={{ headerShown: false }}
+          options={{headerShown: false}}
         />
         <Stack.Screen
           name="Home"
           component={CustomDrawer}
-          options={{ headerShown: false }}
+          options={{headerShown: false}}
         />
         <Stack.Screen
           name="Sales"
           component={Sales}
-          options={{ headerShown: false }}
+          options={{headerShown: false}}
         />
         <Stack.Screen
           name="Cart"
           component={Cart}
-          options={{ headerShown: false }}
+          options={{headerShown: false}}
         />
         <Stack.Screen
           name="Settings"
           component={Settings}
-          options={{ headerShown: false }}
+          options={{headerShown: false}}
         />
         <Stack.Screen
           name="Expenses"
           component={Expenses}
-          options={{ headerShown: false }}
+          options={{headerShown: false}}
         />
         <Stack.Screen
           name="MyWallet"
           component={MyWallet}
-          options={{ headerShown: false }}
+          options={{headerShown: false}}
         />
         <Stack.Screen
           name="Reports"
           component={Reports}
-          options={{ headerShown: false }}
+          options={{headerShown: false}}
         />
         <Stack.Screen
           name="Products"
           component={Products}
-          options={{ headerShown: false }}
+          options={{headerShown: false}}
         />
         <Stack.Screen
           name="PrintLabels"
           component={PrintLabels}
-          options={{ headerShown: false }}
+          options={{headerShown: false}}
         />
         <Stack.Screen
           name="ItemJournal"
           component={ItemJournal}
-          options={{ headerShown: false }}
+          options={{headerShown: false}}
         />
       </Stack.Navigator>
       <Toast />

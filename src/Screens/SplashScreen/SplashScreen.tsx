@@ -1,28 +1,101 @@
-import React, { useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated, Image } from 'react-native';
+import React, {useEffect, useRef} from 'react';
+import {
+  View,
+  StyleSheet,
+  Animated,
+  Image,
+  Dimensions,
+  StatusBar,
+} from 'react-native';
+import LinearGradient from 'react-native-linear-gradient';
+import images from '../../constants/images';
+
+const {width, height} = Dimensions.get('window');
 
 const SplashScreen = () => {
-  const translateX = useRef(new Animated.Value(-500)).current; // Starting off-screen
+  // Animation values
+  const fadeIn = useRef(new Animated.Value(0)).current;
+  const scale = useRef(new Animated.Value(0.3)).current;
+  const iconOpacity = useRef(new Animated.Value(0)).current;
+  const iconScale = useRef(new Animated.Value(0.1)).current;
 
   useEffect(() => {
-    // Animation to move the logo text from left to right
-    Animated.timing(translateX, {
-      toValue: 0, // End position (center screen)
-      duration: 2000, // Animation duration (2 seconds)
-      useNativeDriver: true, // Enable native driver for better performance
-    }).start();
-  }, [translateX]);
+    // Sequence of animations
+    Animated.sequence([
+      // 1. Fade in and scale up the main logo
+      Animated.parallel([
+        Animated.timing(fadeIn, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+        Animated.spring(scale, {
+          toValue: 1,
+          friction: 8,
+          tension: 40,
+          useNativeDriver: true,
+        }),
+      ]),
+      // 2. Fade in and scale up the icon
+      Animated.parallel([
+        Animated.timing(iconOpacity, {
+          toValue: 1,
+          duration: 800,
+          useNativeDriver: true,
+        }),
+        Animated.spring(iconScale, {
+          toValue: 1,
+          friction: 8,
+          tension: 40,
+          useNativeDriver: true,
+        }),
+      ]),
+    ]).start();
+  }, []);
 
   return (
-    <View style={styles.container}>
-      <Animated.View style={{ transform: [{ translateX }] }}>
+    <LinearGradient
+      colors={['#00A3FF', '#0066CC', '#0047AB']} // Zentro brand colors
+      style={styles.container}
+      start={{x: 0, y: 0}}
+      end={{x: 1, y: 1}}>
+      <StatusBar
+        translucent
+        backgroundColor="transparent"
+        barStyle="light-content"
+      />
+      {/* Main Logo */}
+      <Animated.View
+        style={[
+          styles.logoContainer,
+          {
+            opacity: fadeIn,
+            transform: [{scale}],
+          },
+        ]}>
         <Image
-          source={require('../../assets/images/icon.png')} // Add your image path here
+          source={images.logo_zentro}
           style={styles.logo}
           resizeMode="contain"
         />
       </Animated.View>
-    </View>
+
+      {/* Icon */}
+      <Animated.View
+        style={[
+          styles.iconContainer,
+          {
+            opacity: iconOpacity,
+            transform: [{scale: iconScale}],
+          },
+        ]}>
+        <Image
+          source={images.logo_icon}
+          style={styles.logoIcon}
+          resizeMode="contain"
+        />
+      </Animated.View>
+    </LinearGradient>
   );
 };
 
@@ -31,11 +104,29 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#fff', // White background
+  },
+  logoContainer: {
+    alignItems: 'center',
+    marginBottom: 20,
   },
   logo: {
-    width: 300, // Adjust the logo size as needed
-    height: 100, // Adjust the logo size as needed
+    width: width * 0.7,
+    height: height * 0.15,
+    tintColor: '#FFFFFF', // Make logo white, remove if your logo has colors
+  },
+  iconContainer: {
+    position: 'absolute',
+    bottom: height * 0.1,
+  },
+  icon: {
+    width: 60,
+    height: 60,
+    tintColor: '#FFFFFF', // Make icon white, remove if your icon has colors
+  },
+  logoIcon: {
+    width: 40,
+    height: 40,
+    tintColor: '#FFFFFF', // Make icon white, remove if your icon has colors
   },
 });
 

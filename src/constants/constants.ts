@@ -2,42 +2,42 @@ const onboarding_screens = [
   {
     id: 1,
     backgroundImage: require('../assets/images/background_01.png'),
-    bannerImage: require('../assets/images/onBoarding_Second.png'),
-    title: 'Effortless Sales Management',
+    bannerImage: require('../assets/images/onBoarding_First.jpg'),
+    title: 'Modern POS Solution',
     description:
-      'Streamline sales, inventory, and customer data in one intuitive system.',
+      'Streamline your daily transactions with our integrated point of sale system',
   },
   {
     id: 2,
     backgroundImage: require('../assets/images/background_02.png'),
     bannerImage: require('../assets/images/onBoarding_Second.png'),
-    title: 'Real-time Inventory Tracking',
+    title: 'Inventory Control',
     description:
-      'Monitor stock levels, get low inventory alerts, and automate reordering.',
+      'Track stock levels in real-time with automated alerts and reporting',
   },
   {
     id: 3,
     backgroundImage: require('../assets/images/background_01.png'),
-    bannerImage: require('../assets/images/onBoarding_Second.png'),
-    title: 'Seamless Payment Processing',
+    bannerImage: require('../assets/images/onBoarding_Third.jpg'),
+    title: 'Secure Transactions',
     description:
-      'Accept multiple payment methods with fast, secure transactions.',
+      'Process payments safely with multi-payment support and instant verification',
   },
   {
     id: 4,
     backgroundImage: require('../assets/images/background_01.png'),
-    bannerImage: require('../assets/images/onBoarding_Second.png'),
-    title: 'Insightful Analytics',
+    bannerImage: require('../assets/images/onBoarding_Fourth.jpg'),
+    title: 'Business Analytics',
     description:
-      'Track sales trends and customer behavior for data-driven decisions.',
+      'Access detailed sales reports and performance metrics for informed decisions',
   },
   {
     id: 5,
     backgroundImage: require('../assets/images/background_01.png'),
-    bannerImage: require('../assets/images/onBoarding_Second.png'),
-    title: 'Customer Relationship Management',
+    bannerImage: require('../assets/images/onBoarding_Fifth.jpg'),
+    title: 'Customer Management',
     description:
-      'Manage loyalty programs and personalize customer experiences.',
+      'Enhance customer relations with integrated loyalty and profile tracking',
   },
 ];
 

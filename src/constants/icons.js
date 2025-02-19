@@ -60,6 +60,11 @@ const product = require("../assets/icons/product.png")
 const product2 = require("../assets/icons/product2.png")
 const reports = require("../assets/icons/reports.png")
 const itemJournal = require("../assets/icons/wallet.png")
+const email = require("../assets/icons/email.png")
+const company = require("../assets/icons/office-building.png")
+const lock = require("../assets/icons/padlock.png")
+const printer = require("../assets/icons/label-printer.png")
+// const eye = require("../assets/icons/view.png")
 
 export default {
     apple,
@@ -69,6 +74,7 @@ export default {
     coupon,
     cross,
     cancel,
+    company,
     cart,
     check_off,
     check_on,
@@ -85,6 +91,8 @@ export default {
     down_arrow,
     eye,
     eye_close,
+    email,
+    printer,
     favourite,
     fb,
     google,
@@ -124,4 +132,5 @@ export default {
     product2,
     reports,
     itemJournal,
+    lock,
 }

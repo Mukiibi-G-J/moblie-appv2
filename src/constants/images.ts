@@ -9,7 +9,8 @@ const logo_02 = require('../assets/images/logo_02.png');
 const profile = require('../assets/images/profile.png');
 const success = require('../assets/images/success.png');
 const coupon = require('../assets/images/coupon.png');
-const logo_zentro = require('../assets/images/icon.png');
+const logo_zentro = require('../assets/images/logo.png');
+const logo_icon = require('../assets/images/logo-icon.png');
 const profile2 = require('../assets/images/profile2.png');
 const person = require('../assets/images/person.png');
 // const semunalogo = require('../assets/images/semunalogo.png');
@@ -27,6 +28,7 @@ export default {
   success,
   coupon,
   logo_zentro,
+  logo_icon,
   profile2,
   person,
   // semunalogo,

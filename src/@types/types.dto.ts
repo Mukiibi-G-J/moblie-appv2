@@ -131,3 +131,9 @@ interface FormInputProps {
   errorMsg?: string;
   maxLength?: number;
 }
+
+
+export type RootStackParamList = {
+  Login: undefined;
+  Home: undefined;
+};

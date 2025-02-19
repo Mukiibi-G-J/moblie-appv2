@@ -111,7 +111,7 @@ const SignIn = ({navigation}: {navigation: any}) => {
     if (error.response?.status === 500) {
       title = 'Network Error';
       message = 'Please check your internet connection and try again';
-    } 
+    }
     // Invalid credentials
     else if (error.response?.status === 401) {
       title = 'Invalid Credentials';
@@ -150,7 +150,7 @@ const SignIn = ({navigation}: {navigation: any}) => {
           fontSize: 30,
           color: COLORS.black,
         },
-      }
+      },
     });
   };
 
