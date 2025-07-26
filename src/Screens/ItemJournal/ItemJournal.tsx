@@ -127,6 +127,7 @@ const ItemJournal = () => {
     const [journals, setJournals] = useState < ItemJournal[] > ([]);
     const [loading, setLoading] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
     const itemsPerPage = 10;
 
     const loadJournals = async () => {

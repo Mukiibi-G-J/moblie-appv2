@@ -221,6 +221,7 @@ const SignIn = ({navigation}: {navigation: any}) => {
             <FormInput
               label="Email"
               value={email}
+              autoCompleteType="email"
               placeholder="Enter your email"
               containerStyle={{marginTop: SIZES.radius}}
               inputContainerStyle={{

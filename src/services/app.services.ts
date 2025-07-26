@@ -9,13 +9,14 @@ export const searchItems = async (searchQuery: string) => {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
     const axiosInstance = createAxiosInstance(tenant) || undefined;
     const response = await axiosInstance.get(
-      `/api/items/filter/?q=${encodeURIComponent(searchQuery)}`,
+      `/api/items/?q=${encodeURIComponent(searchQuery)}`,
     );
     return response.data.results; // Return the product data
   } catch (error) {
     throw error; // Handle errors
   }
 };
+
 
 // New function to fetch sales data
 export const fetchSalesData = async (filters?: {
@@ -43,12 +44,11 @@ export const createSales = async (salesData: SalesPostData[]) => {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
     const axiosInstance = createAxiosInstance(tenant) || undefined;
     const response = await axiosInstance.post(
-      '/api/items/sales/create/',
+      '/api/sales/create-sale/',
       salesData,
     );
     return response;
   } catch (error) {
-    console.log('error', error.response.data);
     throw error;
   }
 };
@@ -58,7 +58,7 @@ export const postItemJournal = async (itemJournalData: ItemJournalData) => {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
     const axiosInstance = createAxiosInstance(tenant) || undefined;
     const response = await axiosInstance.post(
-      '/api/items/post-item-journal/',
+      '/api/sales/post-item-journal/',
       itemJournalData,
     );
     return response;
@@ -81,6 +81,7 @@ export const fetchProducts = async (
         q: searchQuery.trim(),
       },
     });
+    console.log('response', response.data);
     return response.data;
   } catch (error) {
     console.error('Error fetching products:', error);
@@ -159,7 +160,7 @@ export const updateItemJournal = async (
     console.log('request url', response.config.url);
     return response;
   } catch (error) {
-    console.log
+    console.log;
     throw error;
   }
 };

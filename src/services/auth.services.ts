@@ -119,7 +119,7 @@ class AuthService {
       const api = ApiService.getInstance(cleanTenant);
       const response = await api
         .getAxiosInstance()
-        .post<LoginResponse>(`https://${cleanTenant}.zentroapp.app/api/auth/token/`, {
+        .post<LoginResponse>(`https://${cleanTenant}.zentroapp-backend.com/api/auth/token/`, {
           email: credentials.email,
           password: credentials.password,
         });
@@ -146,7 +146,7 @@ class AuthService {
       const api = ApiService.getInstance();
       const response = await api
         .getAxiosInstance()
-        .post('/api/auth/is-company-exists/', {
+        .post('api/company/check-company-exists/', {
           company_name: companyName.trim().toLowerCase(),
         });
 

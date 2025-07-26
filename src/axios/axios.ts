@@ -18,8 +18,8 @@ interface CustomError extends AxiosError {
 
 const createAxiosInstance = (tenant?: string) => {
   const baseURL = tenant
-    ? `https://${tenant}.zentroapp.app`
-    : 'https://zentroapp.app';
+    ? `https://${tenant}.zentroapp-backend.com`
+    : 'https://zentroapp-backend.com';
   // :'https://0f4c-41-75-190-104.ngrok-free.app'
 
   const instance = axios.create({baseURL});
@@ -100,7 +100,7 @@ class ApiService {
   }
 
   private getBaseUrl(tenant?: string): string {
-    return tenant ? `https://${tenant}.zentroapp.app` : 'https://zentroapp.app';
+    return tenant ? `https://${tenant}.zentroapp-backend.com` : 'https://zentroapp-backend.com/';
   //   return tenant
   //     ? `https://${tenant}.a728-196-43-138-183.ngrok-free.app`
   //     : `https://a728-196-43-138-183.ngrok-free.app`;

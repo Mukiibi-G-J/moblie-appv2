@@ -3,11 +3,19 @@ import {
     View,
     TouchableOpacity,
     Image,
-    Text
+    Text,
+    ViewStyle,
+    ImageStyle
 } from 'react-native';
 import { COLORS, FONTS, SIZES, icons } from '../constants';
 
-const CartQuantityButton = ({ containerStyle, iconStyle, quantity, onPress }) => {
+interface CartQuantityButtonProps {
+    containerStyle?: ViewStyle;
+    iconStyle?: ImageStyle;
+    quantity: number;
+    onPress: () => void;
+}
+const CartQuantityButton: React.FC<CartQuantityButtonProps> = ({ containerStyle, iconStyle, quantity, onPress }) => {
     return (
         <TouchableOpacity
             style={{

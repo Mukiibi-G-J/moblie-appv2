@@ -288,7 +288,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({
         </View>
 
         {/* Footer */}
-        <View style={{height: 100, justifyContent: 'flex-end'}}>
+        <View style={{height: 60, justifyContent: 'flex-end'}}>
           {/* Shadow */}
           <LinearGradient
             start={{x: 0, y: 0}}
@@ -312,6 +312,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({
               flexDirection: 'row',
               paddingHorizontal: SIZES.radius,
               paddingBottom: 10,
+              paddingTop: 4,
               borderTopLeftRadius: 20,
               borderTopRightRadius: 20,
               backgroundColor: COLORS.white,

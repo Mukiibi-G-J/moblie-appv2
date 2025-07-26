@@ -24,13 +24,6 @@ export interface ButtonProps extends TouchableOpacityProps {
   buttonContainerStyle?: string;
 }
 
-declare type AuthLayoutProps = {
-  title: string;
-  subtitle?: string;
-  titleContainerStyle?: CSSProperties;
-  children?: ReactNode;
-};
-
 declare interface FormInputProps {
   containerStyle?: ViewStyle;
   inputContainerStyle?: ViewStyle;
@@ -110,30 +103,61 @@ export interface SalesPostData {
 }
 
 export interface ItemJournalData {
-  journal_ids: number[];
+  document_ids: number[];
 }
 
-
-interface FormInputProps {
-  containerStyle?: ViewStyle;
-  inputContainerStyle?: ViewStyle;
-  label?: string;
-  placeholder?: string;
-  inputStyle?: TextStyle;
-  value?: string;
-  prependComponent?: React.ReactNode;
-  appendComponent?: React.ReactNode;
-  onChange: (text: string) => void;
-  secureTextEntry?: boolean;
-  keyboardType?: KeyboardTypeOptions;
-  autoCompleteType?: string;
-  autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
-  errorMsg?: string;
-  maxLength?: number;
+export interface CartItem {
+  item_id: number;
+  system_id: string;
+  item_name: string;
+  unit_price: number;
+  quantity: number;
+  inventory: number;
+  item_images?: {
+    id: number;
+    created_at: string;
+    system_id: string;
+    updated_at: string;
+    alt_text: string;
+    url: string;
+    item: number;
+  }[];
+  date_sold: string;
+  bar_code_no?: string;
 }
 
+export interface CartState {
+  cartItems: CartItem[];
+}
+
+export type CartAction =
+  | {type: 'CART_ADD_ITEM'; payload: CartItem}
+  | {type: 'REMOVE_FROM_CART'; payload: {system_id: string}}
+  | {
+      type: 'UPDATE_CART_ITEM_QUANTITY';
+      payload: {system_id: string; quantity: number};
+    }
+  | {type: 'CART_UPDATE_ITEM'; payload: CartItem}
+  | {type: 'CLEAR_CART'};
 
 export type RootStackParamList = {
   Login: undefined;
   Home: undefined;
 };
+
+export interface MenuItem {
+  id: number;
+  name: string;
+  description: string;
+  categories: number[];
+  price: number;
+  calories: number;
+  isFavourite: boolean;
+  image: any;
+}
+
+export interface MenuCategory {
+  id: number;
+  name: string;
+  list: MenuItem[];
+}

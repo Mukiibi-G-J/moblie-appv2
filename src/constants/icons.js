@@ -64,6 +64,7 @@ const email = require("../assets/icons/email.png")
 const company = require("../assets/icons/office-building.png")
 const lock = require("../assets/icons/padlock.png")
 const printer = require("../assets/icons/label-printer.png")
+const emptycart = require("../assets/icons/empty-cart.png")
 // const eye = require("../assets/icons/view.png")
 
 export default {
@@ -83,6 +84,7 @@ export default {
     discount,
     dollar,
     dotted_line,
+    emptycart,
     menu,
     menu1,
     minus,

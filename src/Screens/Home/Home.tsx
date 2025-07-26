@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useState, useEffect} from 'react';
 import {
   View,
   Text,
@@ -14,126 +14,61 @@ import {FONTS, SIZES, COLORS, icons, dummyData} from '../../constants';
 import Options from './Options';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {ScrollView} from 'react-native-gesture-handler';
+import {MenuItem, MenuCategory} from '../../@types/types.dto';
+import {jwtDecode} from 'jwt-decode';
+import {useAuth} from '../../context/Store';
 
-const Section = ({title, onPress, children}) => {
-  return (
-    <View>
-      {/* Header */}
-      <View
-        style={{
-          flexDirection: 'row',
-          marginHorizontal: SIZES.padding,
-          marginTop: 30,
-          marginBottom: 20,
-        }}>
-        <Text style={{flex: 1, ...FONTS.h3}}>{title}</Text>
-
-        <TouchableOpacity onPress={onPress}>
-          <Text style={{color: COLORS.primary, ...FONTS.body3}}>Show All</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Content */}
-      {children}
-    </View>
-  );
-};
-
-export default function Home({selectedTab}) {
-  const [selectedCategoryId, setSelectedCategoryId] = React.useState(1);
-  const [selectedMenuType, setSelectedMenuType] = React.useState(1);
-  const [popular, setPopular] = React.useState([]);
-  const [recommends, setRecommends] = React.useState([]);
-  const [menuList, setMenuList] = React.useState([]);
-
-  const [showFilterModal, setShowFilterModal] = React.useState(false);
-
-  const navigation = useNavigation();
+export default function Home() {
+  const [selectedCategoryId, setSelectedCategoryId] = React.useState<number>(1);
+  const [selectedMenuType, setSelectedMenuType] = React.useState<number>(1);
+  const [popular, setPopular] = React.useState<MenuItem[]>([]);
+  const [recommends, setRecommends] = React.useState<MenuItem[]>([]);
+  const [menuList, setMenuList] = React.useState<MenuItem[]>([]);
+  const {auth} = useAuth();
+  const [currentDateTime, setCurrentDateTime] = useState(new Date());
 
   React.useEffect(() => {
     handleChangeCategory(selectedCategoryId, selectedMenuType);
   }, []);
 
-  React.useEffect(() => {
-    if (selectedTab == 'Home') {
-    }
-  }, [selectedTab]);
+  // Add useEffect for the timer
+  useEffect(() => {
+    // Update date at midnight
+    const timer = setInterval(() => {
+      setCurrentDateTime(new Date());
+    }, 86400000); // 24 hours in milliseconds
 
-  // Handler
+    // Cleanup on component unmount
+    return () => clearInterval(timer);
+  }, []);
 
-  function handleChangeCategory(categoryId, menuTypeId) {
-    // Retrieve the popular menu
-    let selectedPopular = dummyData.menu.find(a => a.name == 'Popular');
-
-    // Retrieve the recommended menu
-    let selectedRecommend = dummyData.menu.find(a => a.name == 'Recommended');
-
-    // Find the menu based on the menuTypeId
-    let selectedMenu = dummyData.menu.find(a => a.id == menuTypeId);
+  function handleChangeCategory(categoryId: number, menuTypeId: number) {
+    // Type the menu finds
+    const selectedPopular = (dummyData.menu as MenuCategory[]).find(
+      a => a.name === 'Popular',
+    );
+    const selectedRecommend = (dummyData.menu as MenuCategory[]).find(
+      a => a.name === 'Recommended',
+    );
+    const selectedMenu = (dummyData.menu as MenuCategory[]).find(
+      a => a.id === menuTypeId,
+    );
 
     // Set the popular menu based on the categoryId
     setPopular(
-      selectedPopular?.list.filter(a => a.categories.includes(categoryId)),
+      selectedPopular?.list.filter(a => a.categories.includes(categoryId)) ||
+        [],
     );
 
     // Set the recommended menu based on the categoryId
     setRecommends(
-      selectedRecommend?.list.filter(a => a.categories.includes(categoryId)),
+      selectedRecommend?.list.filter(a => a.categories.includes(categoryId)) ||
+        [],
     );
 
     // Set the menu based on the categoryId
     setMenuList(
-      selectedMenu?.list.filter(a => a.categories.includes(categoryId)),
-    );
-  }
-
-  // Render
-
-  function renderSearch() {
-    return (
-      <View
-        style={{
-          flexDirection: 'row',
-          height: 40,
-          alignItems: 'center',
-          marginHorizontal: SIZES.padding,
-          marginVertical: SIZES.base,
-          paddingHorizontal: SIZES.radius,
-          borderRadius: SIZES.radius,
-          backgroundColor: COLORS.lightGray2,
-        }}>
-        {/* Icon */}
-        <Image
-          source={icons.search}
-          style={{
-            height: 20,
-            width: 20,
-            tintColor: COLORS.black,
-          }}
-        />
-
-        {/* Text Input */}
-        <TextInput
-          style={{
-            flex: 1,
-            marginLeft: SIZES.radius,
-            ...FONTS.body3,
-          }}
-          placeholder="search food..."
-        />
-
-        {/* Filter Button */}
-        <TouchableOpacity onPress={() => setShowFilterModal(true)}>
-          <Image
-            source={icons.filter}
-            style={{
-              height: 20,
-              width: 20,
-              tintColor: COLORS.black,
-            }}
-          />
-        </TouchableOpacity>
-      </View>
+      selectedMenu?.list.filter(a => a.categories.includes(categoryId)) || [],
     );
   }
 
@@ -141,7 +76,7 @@ export default function Home({selectedTab}) {
     return (
       <FlatList
         horizontal
-        data={dummyData.menu}
+        data={dummyData.menu as MenuCategory[]}
         keyExtractor={item => `${item.id}`}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{
@@ -173,10 +108,10 @@ export default function Home({selectedTab}) {
     );
   }
   const renderHeader = () => {
-    const currentTime = new Date().toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
+    const formattedDate = currentDateTime.toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
     });
 
     return (
@@ -186,7 +121,7 @@ export default function Home({selectedTab}) {
             {/* Left side - Welcome message */}
             <View style={styles.welcomeContainer}>
               <Text style={styles.welcomeText}>Welcome back</Text>
-              <Text style={styles.nameText}>Daurice</Text>
+              <Text style={styles.nameText}>{auth.username}</Text>
               <View style={styles.roleContainer}>
                 <View style={styles.roleBadge}>
                   <Text style={styles.roleText}>Store Manager</Text>
@@ -196,7 +131,7 @@ export default function Home({selectedTab}) {
 
             {/* Right side - Quick Info */}
             <View style={styles.quickInfo}>
-              <Text style={styles.timeText}>{currentTime}</Text>
+              <Text style={styles.dateText}>{formattedDate}</Text>
               <View style={styles.statusBadge}>
                 <View style={styles.statusDot} />
                 <Text style={styles.statusText}>Store Open</Text>
@@ -216,98 +151,89 @@ export default function Home({selectedTab}) {
     }).format(amount);
   };
 
-  const renderQuickStats = () => {
-    const todaySales = 1234000;
-    const salesChange = +15.8;
-    const totalProducts = 156;
-    const productsSold = 45; // Number of products sold today
-    const lowStockCount = 12;
+  // const renderQuickStats = () => {
+  //   const todaySales = 1234000;
+  //   const salesChange = +15.8;
+  //   const totalProducts = 156;
+  //   const productsSold = 45; // Number of products sold today
+  //   const lowStockCount = 12;
 
-    return (
-      <View style={styles.statsSection}>
-        {/* Main Sales Card - Make it prominent */}
-        <View style={styles.mainStatsCard}>
-          <View style={styles.salesHeader}>
-            <View>
-              <Text style={styles.salesLabel}>Today's Revenue</Text>
-              <Text style={styles.salesAmount}>
-                {formatCurrency(todaySales)}
-              </Text>
-            </View>
-            <View
-              style={[
-                styles.trendBadge,
-                salesChange >= 0 ? styles.positiveTrend : styles.negativeTrend,
-              ]}>
-              <Image
-                source={salesChange >= 0 ? icons.trendUp : icons.trendDown}
-                style={styles.trendIcon}
-              />
-              <Text
-                style={[
-                  styles.trendText,
-                  salesChange >= 0 ? styles.positiveText : styles.negativeText,
-                ]}>
-                {Math.abs(salesChange)}%
-              </Text>
-            </View>
-          </View>
-          <Text style={styles.comparedText}>Compared to yesterday</Text>
-        </View>
+  //   return (
+  //     <View style={styles.statsSection}>
+  //       {/* Main Sales Card - Make it prominent */}
+  //       <View style={styles.mainStatsCard}>
+  //         <View style={styles.salesHeader}>
+  //           <View>
+  //             <Text style={styles.salesLabel}>Today's Revenue</Text>
+  //             <Text style={styles.salesAmount}>
+  //               {formatCurrency(todaySales)}
+  //             </Text>
+  //           </View>
+  //           <View
+  //             style={[
+  //               styles.trendBadge,
+  //               salesChange >= 0 ? styles.positiveTrend : styles.negativeTrend,
+  //             ]}>
+  //             <Image
+  //               source={salesChange >= 0 ? icons.trendUp : icons.trendDown}
+  //               style={styles.trendIcon}
+  //             />
+  //             <Text
+  //               style={[
+  //                 styles.trendText,
+  //                 salesChange >= 0 ? styles.positiveText : styles.negativeText,
+  //               ]}>
+  //               {Math.abs(salesChange)}%
+  //             </Text>
+  //           </View>
+  //         </View>
+  //         <Text style={styles.comparedText}>Compared to yesterday</Text>
+  //       </View>
 
-        {/* Secondary Stats Row */}
-        <View style={styles.secondaryStatsContainer}>
-          {/* Products Sold Today */}
-          <View style={styles.statCard}>
-            <View style={styles.statHeader}>
-              <Image
-                source={icons.sales}
-                style={[styles.statIcon, {tintColor: COLORS.primary}]}
-              />
-              <Text style={styles.statValue}>{productsSold}</Text>
-            </View>
-            <Text style={styles.statLabel}>Products Sold Today</Text>
-            <View style={styles.progressBar}>
-              <View
-                style={[
-                  styles.progressFill,
-                  {width: `${(productsSold / totalProducts) * 100}%`},
-                ]}
-              />
-            </View>
-          </View>
+  //       {/* Secondary Stats Row */}
+  //       <View style={styles.secondaryStatsContainer}>
+  //         {/* Products Sold Today */}
+  //         <View style={styles.statCard}>
+  //           <View style={styles.statHeader}>
+  //             <Image
+  //               source={icons.sales}
+  //               style={[styles.statIcon, {tintColor: COLORS.primary}]}
+  //             />
+  //             <Text style={styles.statValue}>{productsSold}</Text>
+  //           </View>
+  //           <Text style={styles.statItemLabel}>Products Sold Today</Text>
+  //           <View style={styles.progressBar}>
+  //             <View
+  //               style={[
+  //                 styles.progressFill,
+  //                 {width: `${(productsSold / totalProducts) * 100}%`},
+  //               ]}
+  //             />
+  //           </View>
+  //         </View>
 
-          {/* Inventory Status */}
-          <View style={styles.statCard}>
-            <View style={styles.statHeader}>
-              <Image
-                source={icons.products}
-                style={[styles.statIcon, {tintColor: COLORS.success}]}
-              />
-              <Text style={styles.statValue}>{totalProducts}</Text>
-            </View>
-            <Text style={styles.statLabel}>Total Products</Text>
-            {lowStockCount > 0 && (
-              <View style={styles.alertBadge}>
-                <Text style={styles.alertText}>{lowStockCount} Low Stock</Text>
-              </View>
-            )}
-          </View>
-        </View>
-      </View>
-    );
-  };
+  //         {/* Inventory Status */}
+  //         <View style={styles.statCard}>
+  //           <View style={styles.statHeader}>
+  //             <Image
+  //               source={icons.products}
+  //               style={[styles.statIcon, {tintColor: COLORS.success}]}
+  //             />
+  //             <Text style={styles.statValue}>{totalProducts}</Text>
+  //           </View>
+  //           <Text style={styles.statItemLabel}>Total Products</Text>
+  //           {lowStockCount > 0 && (
+  //             <View style={styles.alertBadge}>
+  //               <Text style={styles.alertText}>{lowStockCount} Low Stock</Text>
+  //             </View>
+  //           )}
+  //         </View>
+  //       </View>
+  //     </View>
+  //   );
+  // };
 
   return (
-    // <View
-    //   style={{
-    //     flex: 1,
-    //     // backgroundColor: '#F5F5F5', // Light background color
-    //   }}>
-    //   {/* Search */}
-    //   {/* {renderSearch()} */}
-    //   <Options />
-    // </View>
     <SafeAreaView style={styles.container}>
       <ScrollView
         showsVerticalScrollIndicator={false}
@@ -335,135 +261,41 @@ export default function Home({selectedTab}) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F6F8',
+    backgroundColor: '#F5F5F5',
   },
   scrollContent: {
     flexGrow: 1,
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: SIZES.padding,
-    paddingTop: SIZES.padding,
-    paddingBottom: SIZES.base,
-  },
-
-  greetingSection: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  waveIcon: {
-    width: 22,
-    height: 22,
-    marginRight: 8,
-  },
-
-  profileIcon: {
-    width: 24,
-    height: 24,
-    tintColor: COLORS.primary,
-  },
-  statsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: SIZES.padding,
-    marginTop: SIZES.padding,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: COLORS.white,
-    marginHorizontal: 4,
-    padding: SIZES.base,
-    borderRadius: 12,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 3,
-  },
-  statAmount: {
-    ...FONTS.h3,
-    color: COLORS.primary,
-    marginBottom: 4,
-  },
-  statLabel: {
-    ...FONTS.body4,
-    color: COLORS.darkgray,
-  },
-  mainContent: {
-    flex: 1,
-    marginTop: 12,
-  },
-  recentSection: {
-    marginTop: SIZES.padding,
-    paddingHorizontal: SIZES.padding,
-    paddingBottom: SIZES.padding * 2,
-  },
-  sectionTitle: {
-    ...FONTS.h3,
-    color: COLORS.black,
-    marginBottom: SIZES.base,
-  },
-  recentTransactions: {
-    backgroundColor: COLORS.white,
-    borderRadius: 12,
-    padding: SIZES.padding,
-    minHeight: 100,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  placeholderText: {
-    ...FONTS.body4,
-    color: COLORS.darkgray,
-  },
   headerSection: {
-    paddingHorizontal: SIZES.padding,
-    paddingTop: SIZES.padding,
-    paddingBottom: SIZES.base,
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'ios' ? 0 : 16,
   },
   headerCard: {
-    backgroundColor: COLORS.white,
+    backgroundColor: '#fff',
     borderRadius: 16,
-    padding: SIZES.padding,
+    padding: 20,
     shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
+    shadowOffset: {width: 0, height: 2},
     shadowOpacity: 0.1,
-    shadowRadius: 3,
+    shadowRadius: 8,
     elevation: 3,
   },
   headerMain: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'flex-start',
   },
   welcomeContainer: {
     flex: 1,
   },
   welcomeText: {
     ...FONTS.body3,
-    color: COLORS.darkgray,
-    letterSpacing: 0.5,
-    fontSize: 16,
+    color: COLORS.gray,
     marginBottom: 4,
-    fontFamily: Platform.OS === 'ios' ? 'SF Pro Display' : 'sans-serif-medium',
   },
   nameText: {
     ...FONTS.h2,
-    fontSize: 28,
-    color: COLORS.black,
+    color: COLORS.darkGray,
     marginBottom: 8,
-    letterSpacing: 0.3,
-    fontFamily: Platform.OS === 'ios' ? 'SF Pro Display' : 'sans-serif',
-    fontWeight: '600',
   },
   roleContainer: {
     flexDirection: 'row',
@@ -480,17 +312,14 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
     fontSize: 14,
     fontWeight: '600',
-    fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'sans-serif-medium',
-    letterSpacing: 0.3,
   },
   quickInfo: {
     alignItems: 'flex-end',
   },
-  timeText: {
-    ...FONTS.h4,
-    color: COLORS.darkgray,
+  dateText: {
+    ...FONTS.body4,
+    color: COLORS.gray,
     marginBottom: 8,
-    fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'sans-serif',
   },
   statusBadge: {
     flexDirection: 'row',
@@ -512,7 +341,9 @@ const styles = StyleSheet.create({
     color: COLORS.success,
     fontSize: 14,
     fontWeight: '600',
-    fontFamily: Platform.OS === 'ios' ? 'SF Pro Text' : 'sans-serif-medium',
+  },
+  mainContent: {
+    padding: 16,
   },
   statsSection: {
     padding: 16,
@@ -579,7 +410,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: COLORS.darkGray,
   },
-  statLabel: {
+  statItemLabel: {
     fontSize: 13,
     color: COLORS.gray,
     marginBottom: 8,
@@ -635,5 +466,23 @@ const styles = StyleSheet.create({
     color: COLORS.error,
     fontSize: 12,
     fontWeight: '500',
+  },
+  recentSection: {
+    padding: 16,
+  },
+  sectionTitle: {
+    ...FONTS.h3,
+    color: COLORS.darkGray,
+    marginBottom: 16,
+  },
+  recentTransactions: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+  },
+  placeholderText: {
+    ...FONTS.body4,
+    color: COLORS.gray,
+    textAlign: 'center',
   },
 });
