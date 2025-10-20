@@ -1,0 +1,1 @@
+cd /c/PROJECTS/zentroapp && npm uninstall @heasy/react-native-sunmi-printer react-native-printer-sunmi

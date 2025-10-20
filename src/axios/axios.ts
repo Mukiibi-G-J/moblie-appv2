@@ -57,10 +57,10 @@ const createAxiosInstance = (tenant?: string) => {
         error.response &&
         (error.response.status === 401 || error.response.status === 403)
       ) {
-        console.log('Clearing tokens and navigating to SignIn');
-        // await AsyncStorage.removeItem('accessToken');
-        // await AsyncStorage.removeItem('cartItems');
-        // navigate('Auth', { screen: 'SignIn' });
+        console.log('Token expired or invalid - logging out user');
+        await AsyncStorage.multiRemove(['accessToken', 'cartItems']);
+        // Navigate to SignIn screen - AuthGuard will handle the rest
+        navigate('Auth', {screen: 'SignIn'});
       }
       if (error.message === 'Network Error') {
         return Promise.reject({
@@ -100,10 +100,12 @@ class ApiService {
   }
 
   private getBaseUrl(tenant?: string): string {
-    return tenant ? `https://${tenant}.zentroapp-backend.com` : 'https://zentroapp-backend.com/';
-  //   return tenant
-  //     ? `https://${tenant}.a728-196-43-138-183.ngrok-free.app`
-  //     : `https://a728-196-43-138-183.ngrok-free.app`;
+    return tenant
+      ? `https://${tenant}.zentroapp-backend.com`
+      : 'https://zentroapp-backend.com/';
+    //   return tenant
+    //     ? `https://${tenant}.a728-196-43-138-183.ngrok-free.app`
+    //     : `https://a728-196-43-138-183.ngrok-free.app`;
   }
 
   public static getInstance(tenant?: string): ApiService {
@@ -160,9 +162,12 @@ class ApiService {
       data: error.response?.data,
     };
 
-
-    if (error.response?.data?.detail) {
-      return Promise.reject(error.response.data.detail);
+    if (
+      error.response?.data &&
+      typeof error.response.data === 'object' &&
+      'detail' in error.response.data
+    ) {
+      return Promise.reject((error.response.data as any).detail);
     }
 
     if (error.response?.status === 401 || error.response?.status === 403) {

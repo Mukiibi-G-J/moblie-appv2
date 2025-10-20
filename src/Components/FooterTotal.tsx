@@ -37,9 +37,7 @@ const FooterTotal: React.FC<FooterTotalProps> = ({
   const handleCheckout = () => {
     Alert.alert(
       'Confirm Sale',
-      `Are you sure you want to complete this sale?\n${
-        printReceipt ? 'Receipt will be printed' : 'No receipt will be printed'
-      }`,
+      `Are you sure you want to complete this sale?`,
       [
         {
           text: 'Cancel',
@@ -67,13 +65,24 @@ const FooterTotal: React.FC<FooterTotalProps> = ({
 
       {/* Right side - Actions */}
       <View style={styles.actionsContainer}>
-        <TouchableOpacity
-          style={[styles.actionButton, styles.printButton]}
+        {/* <TouchableOpacity
+          style={[
+            styles.actionButton,
+            printReceipt
+              ? styles.printButtonActive
+              : styles.printButtonInactive,
+          ]}
           onPress={() => setPrintReceipt(!printReceipt)}>
-          <Text style={styles.printButtonText}>
-            {printReceipt ? 'No Print' : 'Print'}
+          <Text
+            style={[
+              styles.printButtonText,
+              printReceipt
+                ? styles.printButtonTextActive
+                : styles.printButtonTextInactive,
+            ]}>
+            {printReceipt ? 'Print' : 'No Print'}
           </Text>
-        </TouchableOpacity>
+        </TouchableOpacity> */}
 
         <TouchableOpacity
           style={[
@@ -129,13 +138,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  printButton: {
+  printButtonActive: {
+    backgroundColor: COLORS.success,
+  },
+  printButtonInactive: {
     backgroundColor: COLORS.lightGray2,
   },
   printButtonText: {
     ...FONTS.body4,
-    color: COLORS.darkGray,
     fontWeight: '600',
+  },
+  printButtonTextActive: {
+    color: COLORS.white,
+  },
+  printButtonTextInactive: {
+    color: COLORS.darkGray,
   },
   checkoutButton: {
     backgroundColor: COLORS.primary,

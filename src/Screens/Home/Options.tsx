@@ -26,9 +26,9 @@ const Options = () => {
     {
       icon: icons.product,
       iconColor: COLORS.secondary,
-      title: 'Products',
+      title: 'Items',
       subtitle: 'Inventory & stock',
-      link: 'Products',
+      link: 'Items',
       color: 'rgba(33, 150, 243, 0.1)',
       borderColor: 'rgba(33, 150, 243, 0.3)',
     },

@@ -102,17 +102,42 @@ export interface SalesPostData {
   user: number;
 }
 
+export interface SalesInvoiceData {
+  customer: number;
+  customer_name: string;
+  document_date: string;
+  status: 'Open';
+  total_amount: number;
+  amount_received: number;
+  change_amount: number;
+  payment_method: number;
+  user?: number;
+  lines: Array<{
+    id: number;
+    item: string; // Changed back to string - should be item.no
+    item_no: string; // Required field
+    item_name: string;
+    quantity: string;
+    unit_price: string;
+    total_amount: string;
+    unit_of_measure: string;
+    tracking_code: string;
+    description: string;
+  }>;
+}
+
 export interface ItemJournalData {
   document_ids: number[];
 }
 
 export interface CartItem {
-  item_id: number;
+  item_id?: number;
   system_id: string;
   item_name: string;
   unit_price: number;
   quantity: number;
   inventory: number;
+  no?: string; // Add the item number field
   item_images?: {
     id: number;
     created_at: string;

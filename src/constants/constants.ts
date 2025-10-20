@@ -51,6 +51,7 @@ const screens = {
   my_wallet: 'My Wallet',
   settings: 'Settings',
   itemJournal: 'Item Journal',
+  items: 'Items',
   sales: 'Sales',
   inventory: 'Inventory',
   reports: 'Reports',

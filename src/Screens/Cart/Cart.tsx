@@ -42,6 +42,9 @@ import {useIsFocused} from '@react-navigation/native';
 import {handlePrint} from '../../Components/HandlePrint';
 import {SalesPostData, CartItem} from '../../@types/types.dto';
 import SearchBar from '../../Components/SearchBar';
+import SalesCompletionModal from '../../Components/SalesCompletionModal';
+// import {SaleResult} from '../../services/SalesService';
+// PrinterTestButton import removed - keeping test code in PrintService
 
 const formatDate = (date: Date | string | undefined) => {
   if (!date) return '';
@@ -70,20 +73,12 @@ const Cart = ({navigation}: {navigation: any}) => {
 
   const searchInputRef = useRef<TextInput>(null);
   const {state, dispatch} = useCart();
-  const {auth} = useAppContext();
+  const appContext = useAppContext();
   const {cartItems} = state;
+  const auth = appContext?.auth;
   const isFocused = useIsFocused();
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
-
-  useEffect(() => {
-    if (isFocused) {
-      // Use a small delay to ensure the input is rendered
-      const timer = setTimeout(() => {
-        searchInputRef.current?.focus();
-      }, 100);
-      return () => clearTimeout(timer);
-    }
-  }, [isFocused]);
+  const [showSalesModal, setShowSalesModal] = useState(false);
 
   useEffect(() => {
     const keyboardDidShowListener = Keyboard.addListener(
@@ -105,6 +100,31 @@ const Cart = ({navigation}: {navigation: any}) => {
     };
   }, []);
 
+  // Handle modal visibility with keyboard
+  useEffect(() => {
+    if (isModalVisible && isKeyboardVisible) {
+      // Keep modal open when keyboard is visible
+      // The modal will adjust its position automatically
+    }
+  }, [isModalVisible, isKeyboardVisible]);
+
+  // Ensure keyboard stays focused when modal opens
+  useEffect(() => {
+    if (isModalVisible) {
+      // Keep the search input focused when modal opens
+      const focusInterval = setInterval(() => {
+        searchInputRef.current?.focus();
+      }, 100);
+
+      // Clear interval after 1 second
+      setTimeout(() => {
+        clearInterval(focusInterval);
+      }, 1000);
+
+      return () => clearInterval(focusInterval);
+    }
+  }, [isModalVisible]);
+
   const addToCart = (item: CartItem) => {
     const existItem = cartItems.find(
       (x: CartItem) => x.system_id === item.system_id,
@@ -114,8 +134,19 @@ const Cart = ({navigation}: {navigation: any}) => {
     if (quantity > item.inventory) {
       Toast.show({
         type: 'error',
-        text1: 'Error',
-        text2: `Sorry, only ${item.inventory} items available in stock.`,
+        text1: '⚠️ Stock Limit Reached',
+        text2: `Only ${item.inventory} items available`,
+        text1Style: {
+          fontSize: 16,
+          fontWeight: '600',
+          color: '#E53935',
+        },
+        text2Style: {
+          fontSize: 14,
+          color: '#666',
+        },
+        visibilityTime: 2500,
+        position: 'top',
       });
       return;
     }
@@ -127,7 +158,6 @@ const Cart = ({navigation}: {navigation: any}) => {
       type: 'CART_ADD_ITEM',
       payload: {
         ...item,
-        id: item.id, // Use existing id or convert system_id to number
         quantity,
         date_sold: currentDate,
       },
@@ -145,6 +175,19 @@ const Cart = ({navigation}: {navigation: any}) => {
           type: 'error',
           text1: 'Error',
           text2: 'Please enter a search query.',
+          text1Style: {
+            fontSize: 13,
+            fontWeight: '600',
+            color: '#FF3B30',
+            textAlign: 'center',
+          },
+          text2Style: {
+            fontSize: 11,
+            color: '#666',
+            textAlign: 'center',
+          },
+          visibilityTime: 4000,
+          position: 'top',
         });
         return;
       }
@@ -161,6 +204,20 @@ const Cart = ({navigation}: {navigation: any}) => {
           type: 'info',
           text1: 'No Results',
           text2: 'No items found for your search.',
+          text1Style: {
+            fontSize: 20,
+            fontWeight: 'bold',
+            color: '#007AFF', // iOS-style blue for info
+            textAlign: 'center',
+          },
+          text2Style: {
+            fontSize: 17,
+            color: '#666',
+            textAlign: 'center',
+            lineHeight: 22,
+          },
+          visibilityTime: 4000,
+          position: 'top',
         });
       }
     } catch (error) {
@@ -168,6 +225,20 @@ const Cart = ({navigation}: {navigation: any}) => {
         type: 'error',
         text1: 'Error',
         text2: `Error: ${error}`,
+        text1Style: {
+          fontSize: 20,
+          fontWeight: 'bold',
+          color: '#FF3B30',
+          textAlign: 'center',
+        },
+        text2Style: {
+          fontSize: 17,
+          color: '#666',
+          textAlign: 'center',
+          lineHeight: 22,
+        },
+        visibilityTime: 4000,
+        position: 'top',
       });
     } finally {
       setIsLoading(false);
@@ -176,17 +247,6 @@ const Cart = ({navigation}: {navigation: any}) => {
         searchInputRef.current?.focus();
       }, 100);
     }
-  };
-
-  const handleBackspace = (text: string) => {
-    // If text is empty or just one character, clear it completely
-    if (text.length <= 1) {
-      setSearchQuery('');
-      return;
-    }
-
-    // Otherwise, remove the last character
-    setSearchQuery(text);
   };
 
   const updateQuantityHandler = (systemId: string, newQty: number) => {
@@ -198,15 +258,31 @@ const Cart = ({navigation}: {navigation: any}) => {
       if (newQty > existItem.inventory) {
         Toast.show({
           type: 'error',
-          text1: 'Error',
-          text2: `Sorry, only ${existItem.inventory} items available in stock.`,
+          text1: '⚠️ Inventory Alert',
+          text2: `Only ${existItem.inventory} items left in stock`,
+          text1Style: {
+            fontSize: 16,
+            fontWeight: '600',
+            color: '#E53935',
+            textAlign: 'left',
+          },
+          text2Style: {
+            fontSize: 11,
+            color: '#555',
+            textAlign: 'left',
+          },
+          visibilityTime: 3000,
+          position: 'top',
         });
         return;
       }
 
       dispatch({
-        type: 'CART_ADD_ITEM',
-        payload: {...existItem, quantity: newQty},
+        type: 'UPDATE_CART_ITEM_QUANTITY',
+        payload: {
+          system_id: systemId,
+          quantity: newQty,
+        },
       });
     } else {
       console.error('Item not found in cart:', systemId);
@@ -214,100 +290,34 @@ const Cart = ({navigation}: {navigation: any}) => {
   };
 
   function toggleModal() {
-    setIsModalVisible(!isModalVisible); // This toggles the modal visibility
+    setIsModalVisible(!isModalVisible);
   }
 
   const handlePlaceOrder = async (total: number) => {
     if (isPlacingOrder) return;
 
-    setIsPlacingOrder(true);
+    // Show sales completion modal
+    setShowSalesModal(true);
+  };
 
-    try {
-      let data: SalesPostData[] = [];
-      cartItems.forEach(item => {
-        // Format date as YYYY-M-D
-        const dateObj = item.date_sold ? new Date(item.date_sold) : new Date();
-        const formattedDate = `${dateObj.getFullYear()}-${
-          dateObj.getMonth() + 1
-        }-${dateObj.getDate()}`;
+  const handleSaleSuccess = (result: any) => {
+    // Clear cart after successful sale
+    dispatch({type: 'CLEAR_CART'});
 
-        data.push({
-          item: item.item_id,
-          entry_type: 'Sales',
-          description: item.item_name,
-          quantity: item.quantity,
-          unit_amount: item.unit_price,
-          date: formattedDate,
-          user: auth.user_id,
-        });
-      });
-
-      if (data.length > 0) {
-        console.log(data);
-        const response = await createSales(data);
-        if (response.status === 201) {
-          // Format journal data correctly
-          const journal_data = {
-            document_ids: response.data.map((item: any) => item.id),
-          };
-
-          const responsePostItemJournal = await postItemJournal(journal_data);
-          if (
-            'status' in responsePostItemJournal &&
-            responsePostItemJournal.status === 200
-          ) {
-            Toast.show({
-              type: 'success',
-              text1: 'Sales Created',
-              text2: 'Sales have been created successfully.',
-            });
-            dispatch({type: 'CLEAR_CART'});
-          } else {
-            Toast.show({
-              type: 'error',
-              text1: 'Error',
-              text2: 'Failed to create sales. Please try again.',
-            });
-          }
-        } else if (response.data.status === '400') {
-          Toast.show({
-            type: 'error',
-            text1: 'Error',
-            text2: 'Failed to create sales. Please try again.',
-          });
-        }
-      }
-
-      if (printReceipt) {
-        await handlePrint(cartItems, total, auth.username);
-      }
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
-      Toast.show({
-        type: 'success',
-        text1: 'Order Placed',
-        text2: 'Your order has been placed successfully.',
-      });
-    } catch (error) {
-      console.log('error', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Failed to place order. Please try again.',
-      });
-    } finally {
-      setIsPlacingOrder(false);
-    }
+    // Navigate back to home
+    setTimeout(() => {
+      navigation.navigate('Cart');
+    }, 2000);
   };
 
   function renderFooter() {
     const subQuantity = cartItems.reduce(
-      (a: number, c: {quantity: number}) => a + c.quantity,
+      (a: number, c: {quantity: number}) => a + (Number(c.quantity) || 0),
       0,
     );
     const subTotal = cartItems.reduce(
       (sum: number, item: {unit_price: number; quantity: number}) =>
-        sum + item.unit_price * item.quantity,
+        sum + (item.unit_price || 0) * (Number(item.quantity) || 0),
       0,
     );
     const total = subTotal;
@@ -330,65 +340,120 @@ const Cart = ({navigation}: {navigation: any}) => {
       animationIn="slideInUp"
       animationOut="slideOutDown"
       onBackdropPress={toggleModal}
-      style={styles.modal}>
-      <View style={styles.modalView}>
+      style={styles.modal}
+      avoidKeyboard={false}
+      propagateSwipe={true}
+      backdropOpacity={0.3}
+      useNativeDriver={true}
+      hideModalContentWhileAnimating={false}
+      onModalShow={() => {
+        // Ensure keyboard stays focused when modal shows
+        setTimeout(() => {
+          searchInputRef.current?.focus();
+        }, 100);
+      }}
+      onModalHide={() => {
+        // Ensure keyboard stays focused when modal closes
+        setTimeout(() => {
+          searchInputRef.current?.focus();
+        }, 100);
+      }}
+      onBackButtonPress={() => {
+        toggleModal();
+        return true;
+      }}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.modalView}>
         <View style={styles.modalHeader}>
-          <Text style={styles.modalTitle}>Select a Product</Text>
+          <Text style={styles.modalTitle}>
+            {searchQuery
+              ? `Search Results for "${searchQuery}"`
+              : 'Select an Item'}
+          </Text>
           <TouchableOpacity onPress={toggleModal} style={styles.closeButton}>
             <Image source={icons.cross} style={styles.closeIcon} />
           </TouchableOpacity>
         </View>
 
-        <FlatList
-          data={modalItems}
-          renderItem={({item}: {item: CartItem}) => (
-            <TouchableOpacity
-              style={styles.modalItemContainer}
-              onPress={() => {
-                addToCart(item);
-                Toast.show({
-                  type: 'success',
-                  text1: 'Item Added',
-                  text2: `${item.item_name} has been added to your cart.`,
-                });
-                toggleModal();
-              }}>
-              <View style={styles.modalImageContainer}>
-                <Image
-                  source={{uri: item.item_images?.[0]?.url}}
-                  style={styles.modalItemImage}
-                  resizeMode="cover"
-                />
-              </View>
-              <View style={styles.modalItemDetails}>
-                <Text style={styles.modalItemName} numberOfLines={1}>
-                  {item.item_name}
-                </Text>
-                <View style={styles.modalItemInfo}>
-                  <Text style={styles.modalStockText}>
-                    Stock: {item.inventory}
-                  </Text>
-                  <Text style={styles.modalPriceText}>
-                    UGX {item.unit_price?.toLocaleString()}
-                  </Text>
+        <ScrollView
+          style={{flex: 1}}
+          keyboardShouldPersistTaps="always"
+          keyboardDismissMode="none"
+          showsVerticalScrollIndicator={false}
+          nestedScrollEnabled={true}>
+          <FlatList
+            data={modalItems}
+            renderItem={({item}: {item: CartItem}) => (
+              <TouchableOpacity
+                style={styles.modalItemContainer}
+                onPress={() => {
+                  addToCart(item);
+                  Toast.show({
+                    type: 'success',
+                    text1: 'Item Added',
+                    text2: `${item.item_name} has been added to your cart.`,
+                    text1Style: {
+                      fontSize: 13,
+                      fontWeight: '600',
+                      color: '#4CD964', // iOS-style green for success
+                      textAlign: 'center',
+                    },
+                    text2Style: {
+                      fontSize: 11,
+                      color: '#666',
+                      textAlign: 'center',
+                    },
+                    visibilityTime: 4000,
+                    position: 'top',
+                  });
+                  toggleModal();
+                }}>
+                <View style={styles.modalImageContainer}>
+                  <Image
+                    source={{uri: item.item_images?.[0]?.url}}
+                    style={styles.modalItemImage}
+                    resizeMode="cover"
+                  />
                 </View>
+                <View style={styles.modalItemDetails}>
+                  <Text style={styles.modalItemName} numberOfLines={1}>
+                    {item.item_name}
+                  </Text>
+                  <View style={styles.modalItemInfo}>
+                    <Text style={styles.modalStockText}>
+                      Stock: {item.inventory}
+                    </Text>
+                    <Text style={styles.modalPriceText}>
+                      UGX {item.unit_price?.toLocaleString()}
+                    </Text>
+                  </View>
+                </View>
+              </TouchableOpacity>
+            )}
+            keyExtractor={item => item.system_id}
+            ListEmptyComponent={
+              <View style={styles.emptyListContainer}>
+                <Image source={icons.search} style={styles.emptyListIcon} />
+                <Text style={styles.emptyListText}>
+                  {searchQuery
+                    ? `No items found for "${searchQuery}"`
+                    : 'No items found'}
+                </Text>
               </View>
-            </TouchableOpacity>
-          )}
-          keyExtractor={item => item.system_id}
-          ListEmptyComponent={
-            <View style={styles.emptyListContainer}>
-              <Image source={icons.search} style={styles.emptyListIcon} />
-              <Text style={styles.emptyListText}>No products found</Text>
-            </View>
-          }
-          contentContainerStyle={styles.modalListContainer}
-        />
-      </View>
+            }
+            contentContainerStyle={styles.modalListContainer}
+            keyboardShouldPersistTaps="always"
+            keyboardDismissMode="none"
+            scrollEnabled={false}
+            nestedScrollEnabled={true}
+          />
+        </ScrollView>
+      </KeyboardAvoidingView>
     </ReactNativeModal>
   );
 
-  const openPriceModal = item => {
+  const openPriceModal = (item: any) => {
     setSelectedItem(item);
     setNewPrice(item.unit_price.toString());
     setSelectedDate(new Date());
@@ -408,7 +473,7 @@ const Cart = ({navigation}: {navigation: any}) => {
     setPriceModalVisible(false);
   };
 
-  const onDateChange = (event, selectedDate) => {
+  const onDateChange = (event: any, selectedDate: any) => {
     const currentDate = selectedDate || new Date();
     setShowDatePicker(Platform.OS === 'ios');
     setSelectedDate(currentDate);
@@ -430,7 +495,7 @@ const Cart = ({navigation}: {navigation: any}) => {
           ]}>
           <Text
             style={[
-              styles.modalTitle,
+              styles.priceModalTitle,
               {color: colorScheme === 'dark' ? COLORS.white : COLORS.black},
             ]}>
             Update Price
@@ -495,7 +560,13 @@ const Cart = ({navigation}: {navigation: any}) => {
             showBack={true}
             onBackPress={() => navigation.goBack()}
             rightComponent={
-              <CartQuantityButton quantity={3} onPress={() => {}} />
+              <CartQuantityButton
+                quantity={cartItems.reduce(
+                  (a: number, c: any) => a + (Number(c.quantity) || 0),
+                  0,
+                )}
+                onPress={() => {}}
+              />
             }
             containerStyle={{
               zIndex: -1,
@@ -503,20 +574,17 @@ const Cart = ({navigation}: {navigation: any}) => {
           />
           <SearchBar
             searchQuery={searchQuery}
-            onChangeText={text => {
-              if (text.length < searchQuery.length) {
-                handleBackspace(text);
-              } else {
-                setSearchQuery(text);
-              }
-            }}
+            onChangeText={setSearchQuery}
             onSubmit={() => handleSearch(searchQuery)}
             isLoading={isLoading}
             inputRef={searchInputRef}
+            onFocus={() => navigation.navigate('SearchPage' as never)}
+            onPress={() => navigation.navigate('SearchPage' as never)}
           />
 
           <SwipeListView
             data={cartItems}
+            extraData={cartItems}
             keyExtractor={(item: any) => `${item.system_id}`}
             renderItem={({item}: {item: any}) => (
               <View style={styles.cartItemWrapper}>
@@ -552,7 +620,7 @@ const Cart = ({navigation}: {navigation: any}) => {
                         </Text>
                       </TouchableOpacity>
                       <Text style={styles.quantityText}>
-                        Qty: {item.quantity}
+                        Qty: {Number(item.quantity) || 1}
                       </Text>
                     </View>
                   </View>
@@ -565,16 +633,17 @@ const Cart = ({navigation}: {navigation: any}) => {
                         backgroundColor: COLORS.lightGray2,
                         borderRadius: 8,
                       }}
-                      value={item.quantity}
+                      value={Number(item.quantity) || 1}
                       onAdd={() =>
-                        updateQuantityHandler(item.system_id, item.quantity + 1)
+                        updateQuantityHandler(
+                          item.system_id,
+                          (Number(item.quantity) || 1) + 1,
+                        )
                       }
                       onMinus={() => {
-                        if (item.quantity > 1) {
-                          updateQuantityHandler(
-                            item.system_id,
-                            item.quantity - 1,
-                          );
+                        const currentQty = Number(item.quantity) || 1;
+                        if (currentQty > 1) {
+                          updateQuantityHandler(item.system_id, currentQty - 1);
                         }
                       }}
                     />
@@ -582,7 +651,7 @@ const Cart = ({navigation}: {navigation: any}) => {
                 </View>
               </View>
             )}
-            renderHiddenItem={(data, rowMap) => (
+            renderHiddenItem={(data: any, rowMap: any) => (
               <View style={styles.hiddenItemContainer}>
                 <TouchableOpacity
                   style={styles.deleteButton}
@@ -615,24 +684,39 @@ const Cart = ({navigation}: {navigation: any}) => {
               </View>
             }
           />
-        </View>
 
-        {/* Footer */}
-        {cartItems.length > 0 && !isKeyboardVisible && (
-          <View style={styles.footerContainer}>{renderFooter()}</View>
-        )}
+          {/* Footer */}
+          {cartItems.length > 0 && !isKeyboardVisible && (
+            <View style={styles.footerContainer}>{renderFooter()}</View>
+          )}
+
+          {isPlacingOrder && (
+            <ActivityIndicator
+              size="large"
+              color={COLORS.primary2}
+              style={{position: 'absolute', top: '50%', left: '50%'}}
+            />
+          )}
+
+          <ModalPopup />
+          {renderPriceModal()}
+
+          <SalesCompletionModal
+            isVisible={showSalesModal}
+            onClose={() => setShowSalesModal(false)}
+            onSuccess={handleSaleSuccess}
+            cartItems={cartItems}
+            total={cartItems.reduce(
+              (sum, item) => sum + item.quantity * item.unit_price,
+              0,
+            )}
+            username={auth?.username || 'Unknown'}
+            userId={Number(auth?.user_id) || 0}
+          />
+
+          <Toast />
+        </View>
       </KeyboardAvoidingView>
-      {isPlacingOrder && (
-        <ActivityIndicator
-          size="large"
-          color={COLORS.primary2}
-          style={{position: 'absolute', top: '50%', left: '50%'}}
-        />
-      )}
-      {/* Modal Popup */}
-      <ModalPopup />
-      {renderPriceModal()}
-      <Toast />
     </SafeAreaView>
   );
 };
@@ -743,7 +827,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     width: '80%',
   },
-  modalTitle: {
+  priceModalTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     marginBottom: 10,
@@ -795,8 +879,10 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: '80%',
+    maxHeight: '70%',
+    minHeight: '30%',
     paddingTop: 16,
+    paddingBottom: Platform.OS === 'ios' ? 20 : 10,
   },
   modalHeader: {
     flexDirection: 'row',
@@ -822,6 +908,7 @@ const styles = StyleSheet.create({
   modalListContainer: {
     paddingHorizontal: 16,
     paddingBottom: 24,
+    flexGrow: 1,
   },
   modalItemContainer: {
     flexDirection: 'row',
@@ -880,6 +967,17 @@ const styles = StyleSheet.create({
   emptyListText: {
     ...FONTS.body4,
     color: COLORS.gray,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  loadingText: {
+    ...FONTS.body4,
+    color: COLORS.gray,
+    marginTop: 12,
   },
 });
 

@@ -1,0 +1,39 @@
+# Zentro App - Quick Reference Rules
+
+## 🪙 Currency: UGX (Ugandan Shillings)
+
+- Use `UGX` prefix, no decimal places
+- Format: `UGX {(price || 0).toFixed(0)}`
+- Large numbers: `.toLocaleString()`
+
+## 🔌 API Endpoints (Fixed)
+
+- Items: `/api/items/` (NOT `/api/items/item-update/`)
+- Categories: `/api/categories/` (NOT `/api/items/item-categories/`)
+- Journals: `/api/item-journals/` (NOT `/api/items/item-journal/`)
+
+## 📱 Naming Conventions
+
+- Components: PascalCase (`Items.tsx`)
+- Variables: camelCase (`selectedItem`)
+- Functions: camelCase (`handleEditItem`)
+
+## 🛡️ Error Handling
+
+- Always check `response && response.results && Array.isArray(response.results)`
+- Use optional chaining: `item?.id?.toString()`
+- Reset state on errors: `setItems([])`, `setTotalPages(0)`
+
+## 🔄 Loading States
+
+- Main items loading: Shows spinner with "Loading items..." text
+- Search loading: Shows small spinner in search bar
+- Categories loading: Shows spinner in category picker
+- Use `loading`, `searchLoading`, `categoriesLoading` states
+
+## 🏗️ Multi-Tenant
+
+- Base URL: `https://{tenant}.zentroapp-backend.com`
+- Fallback: `https://zentroapp-backend.com`
+
+See `.cursor/rules` for complete documentation.

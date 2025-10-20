@@ -35,3 +35,8 @@ npm install react-native-confirmation-code-field
 
 
   
+
+  .\gradlew clean
+  cd android && .\gradlew assembleRelease
+
+cd android && ./gradlew clean

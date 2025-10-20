@@ -17,6 +17,7 @@ import {ScrollView} from 'react-native-gesture-handler';
 import {MenuItem, MenuCategory} from '../../@types/types.dto';
 import {jwtDecode} from 'jwt-decode';
 import {useAuth} from '../../context/Store';
+import {getRoleDisplayName} from '../../utils/utils';
 
 export default function Home() {
   const [selectedCategoryId, setSelectedCategoryId] = React.useState<number>(1);
@@ -24,8 +25,51 @@ export default function Home() {
   const [popular, setPopular] = React.useState<MenuItem[]>([]);
   const [recommends, setRecommends] = React.useState<MenuItem[]>([]);
   const [menuList, setMenuList] = React.useState<MenuItem[]>([]);
-  const {auth} = useAuth();
+  const {auth, accessToken} = useAuth();
   const [currentDateTime, setCurrentDateTime] = useState(new Date());
+  const [isAuthLoading, setIsAuthLoading] = React.useState(true);
+  const navigation = useNavigation();
+
+  // Debug auth state and handle loading
+  React.useEffect(() => {
+    console.log('Home component auth state:', auth);
+    console.log('Home component accessToken:', accessToken);
+
+    // Set loading to false after auth data is available
+    if (auth.username && auth.user_id) {
+      setIsAuthLoading(false);
+    } else if (!accessToken) {
+      // If no access token, we're not logged in, so stop loading
+      setIsAuthLoading(false);
+    }
+  }, [auth, accessToken]);
+
+  // Timeout to prevent infinite loading
+  React.useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (isAuthLoading) {
+        console.log('Auth loading timeout, forcing stop');
+        setIsAuthLoading(false);
+      }
+    }, 3000); // 3 second timeout
+
+    return () => clearTimeout(timeout);
+  }, [isAuthLoading]);
+
+  // Prevent going back to login page
+  React.useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', e => {
+      // Prevent going back to login page
+      if (
+        e.target &&
+        (e.target.includes('SignIn') || e.target.includes('OnBoarding'))
+      ) {
+        e.preventDefault();
+      }
+    });
+
+    return unsubscribe;
+  }, [navigation]);
 
   React.useEffect(() => {
     handleChangeCategory(selectedCategoryId, selectedMenuType);
@@ -121,10 +165,16 @@ export default function Home() {
             {/* Left side - Welcome message */}
             <View style={styles.welcomeContainer}>
               <Text style={styles.welcomeText}>Welcome back</Text>
-              <Text style={styles.nameText}>{auth.username}</Text>
+              <Text style={styles.nameText}>
+                {isAuthLoading ? 'Loading...' : auth.username || 'User'}
+              </Text>
               <View style={styles.roleContainer}>
                 <View style={styles.roleBadge}>
-                  <Text style={styles.roleText}>Store Manager</Text>
+                  <Text style={styles.roleText}>
+                    {isAuthLoading
+                      ? 'Loading...'
+                      : getRoleDisplayName(auth.authority || [])}
+                  </Text>
                 </View>
               </View>
             </View>

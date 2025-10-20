@@ -74,8 +74,12 @@ const SignIn = ({navigation}: {navigation: any}) => {
         }
         const response = await login(userCredentials);
         if (response && response.access) {
-          // Navigate to Home screen and replace the current screen
-          navigation.replace('Home');
+          console.log('response', response);
+          // Navigate to Home screen and reset the entire navigation stack
+          navigation.reset({
+            index: 0,
+            routes: [{name: 'Home'}],
+          });
           Toast.show({
             text1: 'Login Successful',
             text2: `Welcome, ${email}!`,

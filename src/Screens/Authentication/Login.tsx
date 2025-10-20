@@ -17,14 +17,19 @@ import FormInput from '../../Components/FormInput2';
 import {COLORS} from '../../constants';
 import {authService} from '../../services/auth.services';
 import Toast from 'react-native-toast-message';
-import { RootStackParamList } from '../../@types/types.dto';
+import {RootStackParamList} from '../../@types/types.dto';
+import {useAppContext, AppContextType} from '../../context/Store';
 
 const {width} = Dimensions.get('window');
 
-type LoginScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Login'>;
+type LoginScreenNavigationProp = NativeStackNavigationProp<
+  RootStackParamList,
+  'Login'
+>;
 
 const Login = () => {
   const navigation = useNavigation<LoginScreenNavigationProp>();
+  const context = useAppContext();
   const [tenant, setTenant] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -42,8 +47,6 @@ const Login = () => {
         } ${!password ? 'enter password' : ''}`,
       });
       return;
-
-
     }
 
     setLoading(true);
@@ -54,12 +57,46 @@ const Login = () => {
         Toast.show({
           type: 'success',
           text1: 'Login successful',
+          text2: 'Redirecting to dashboard...',
         });
+
+        // Keep loading state active during context update and navigation
+        // Update the context to trigger navigation change
+        // This will make the 'Home' screen available in the navigation stack
+        await context?.login({email, password});
+
+        // Add a timeout to ensure loading state is cleared if navigation takes too long
+        setTimeout(() => {
           setLoading(false);
-          navigation.navigate('Home');
+        }, 5000); // 5 second timeout as fallback
+      } else {
+        setLoading(false);
+        Toast.show({
+          type: 'error',
+          text1: 'Login failed',
+          text2: 'Please check your credentials and try again',
+        });
       }
-    } catch (error) {
+    } catch (error: any) {
       console.log(error);
+      setLoading(false);
+
+      // Handle specific error types
+      let errorMessage = 'An error occurred. Please try again.';
+      if (error.message) {
+        errorMessage = error.message;
+      } else if (error.response?.status === 401) {
+        errorMessage =
+          'Invalid credentials. Please check your email and password.';
+      } else if (error.response?.status === 404) {
+        errorMessage = 'Company not found. Please check your company name.';
+      }
+
+      Toast.show({
+        type: 'error',
+        text1: 'Login failed',
+        text2: errorMessage,
+      });
     }
   };
 

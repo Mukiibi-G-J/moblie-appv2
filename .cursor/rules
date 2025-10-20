@@ -1,0 +1,117 @@
+# Zentro App Development Rules
+
+## 🪙 Currency Standards
+
+- **Primary Currency**: UGX (Ugandan Shillings)
+- **Display Format**: No decimal places needed (e.g., "UGX 1500" not "UGX 15.00")
+- **Price Fields**: Use `unit_price` with integer values
+- **Formatting**: Use `.toFixed(0)` for price displays, `.toLocaleString()` for large numbers
+
+## 🔌 API Endpoints
+
+Based on the Django backend structure at `zentro-backend`, use these correct endpoints:
+
+### Items Management
+
+- `GET /api/items/` - List all items
+- `POST /api/items/` - Create new item
+- `GET /api/items/{id}/` - Get specific item
+- `PUT /api/items/{id}/` - Update item
+- `DELETE /api/items/{id}/` - Delete item
+
+### Categories
+
+- `GET /api/categories/` - List item categories (NOT `/api/items/item-categories/`)
+
+### Item Journals
+
+- `GET /api/item-journals/` - List item journal entries (NOT `/api/items/item-journal/`)
+- `PUT /api/item-journals/{id}/` - Update item journal (NOT `/api/items/item-journal/{id}/`)
+
+### Sales
+
+- `GET /api/sales/` - List sales
+- `POST /api/sales/` - Create sale
+- `GET /api/sales/generate-invoice-no/` - Generate invoice number
+
+### Authentication
+
+- `POST /api/auth/token/` - Login & get JWT
+- `POST /api/auth/verify-otp/` - Verify OTP
+- `GET /api/auth/profile/` - Get user profile
+
+## 🏗️ Multi-Tenant Architecture
+
+- **Base URL Pattern**: `https://{tenant}.zentroapp-backend.com`
+- **Fallback URL**: `https://zentroapp-backend.com`
+- **Tenant Storage**: Use AsyncStorage key 'tenant'
+- **Axios Instance**: Create tenant-specific instances using `createAxiosInstance(tenant)`
+
+## 📱 React Native Conventions
+
+- **Component Naming**: Use PascalCase (e.g., `Items.tsx`, `EditItemModal`)
+- **State Variables**: Use camelCase (e.g., `selectedItem`, `items`)
+- **Function Names**: Use camelCase (e.g., `handleEditItem`, `loadItems`)
+- **Interface Names**: Use PascalCase (e.g., `Item`, `PaginatedResponse`)
+- **Loading States**: Use descriptive names (e.g., `loading`, `searchLoading`, `categoriesLoading`)
+
+## 🛡️ Error Handling
+
+- **API Responses**: Always check `response && response.results && Array.isArray(response.results)`
+- **Null Safety**: Use optional chaining (`item?.id?.toString()`) and fallbacks
+- **State Management**: Reset arrays to `[]` and counts to `0` on errors
+- **User Feedback**: Show meaningful error messages, not technical details
+
+## 🔒 Security
+
+- **JWT Tokens**: Store in AsyncStorage, include in Authorization header
+- **API Keys**: Never hardcode, use environment variables
+- **Input Validation**: Validate all user inputs before API calls
+- **Error Logging**: Log errors for debugging but don't expose sensitive data
+
+## 📊 Data Models
+
+- **Item Structure**: `{ id, item_name, unit_price, inventory, item_images, ... }`
+- **Pagination**: Use `page` parameter with `itemsPerPage` limit
+- **Search**: Use `q` parameter for search queries
+- **Images**: Handle `item_images` array with fallback to placeholder
+
+## 🎨 UI/UX Standards
+
+- **Loading States**: Show loading indicators during API calls
+  - Main content loading: Large spinner with descriptive text ("Loading items...")
+  - Search loading: Small spinner in search bar during search operations
+  - Form loading: Spinners in specific form sections (e.g., category picker)
+  - Use `ActivityIndicator` with appropriate sizes and colors
+- **Empty States**: Display helpful messages when no data exists
+- **Refresh Control**: Implement pull-to-refresh for lists
+- **Form Validation**: Validate forms before submission
+- **Success Feedback**: Show confirmation messages after successful operations
+
+## 🧪 Testing
+
+- **Unit Tests**: Test individual components and functions
+- **Integration Tests**: Test API interactions
+- **Error Scenarios**: Test error handling and edge cases
+- **Performance**: Monitor API response times and app performance
+
+## 📝 Documentation
+
+- **Code Comments**: Explain complex logic and business rules
+- **API Documentation**: Keep endpoint documentation updated
+- **Change Log**: Document breaking changes and new features
+- **README**: Maintain project setup and usage instructions
+
+## 🚀 Performance
+
+- **Image Optimization**: Use appropriate image sizes and formats
+- **API Caching**: Implement caching for frequently accessed data
+- **Lazy Loading**: Load data only when needed
+- **Bundle Size**: Keep dependencies minimal and optimized
+
+## 🔄 Version Control
+
+- **Commit Messages**: Use descriptive, conventional commit format
+- **Branch Naming**: Use feature/ prefix for new features
+- **Code Review**: Require review before merging to main
+- **Hotfixes**: Use hotfix/ prefix for urgent fixes
