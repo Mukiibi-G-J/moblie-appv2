@@ -8,7 +8,6 @@ npm install react-native-image-picker
 npm install react-native-keyboard-aware-scroll-view
 npm install react-native-linear-gradient
 
-
 npm install react-native-phone-input
 npm install react-native-phone-number-input
 
@@ -31,12 +30,13 @@ npm install @react-native-community/netinfo
 npm install @react-native-picker/picker
 npm install @twotalltotems/react-native-otp-input
 npm install react-native-country-picker-modal
-npm install react-native-confirmation-code-field    
+npm install react-native-confirmation-code-field
 
-
-  
-
-  .\gradlew clean
-  cd android && .\gradlew assembleRelease
+.\gradlew clean
+cd android && .\gradlew assembleRelease
 
 cd android && ./gradlew clean
+.\gradlew assembleRelease
+# Port forwarding: Forward Android device port 8000 to host port 8000 (for Django backend)
+
+adb reverse tcp:8000 tcp:8000

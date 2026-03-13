@@ -21,6 +21,9 @@ export const signUpUser = async (data: {
   phone_number: string;
 }) => {
   try {
+    // Get tenant from storage
+    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+    const axiosInstance = createAxiosInstance(tenant);
     const response = await axiosInstance.post('/api/auth/sign-up/', data);
     return response;
   } catch (error) {
@@ -41,14 +44,16 @@ export const loginUser = async (credentials: {
       return {error: 'Tenant not found'};
     }
 
-    const axiosInstance = createAxiosInstance(tenant);
+    // Trim tenant to remove any leading/trailing spaces
+    const cleanTenant = tenant.trim();
+    const axiosInstance = createAxiosInstance(cleanTenant);
 
     const response = await axiosInstance.post('/api/auth/token/', credentials);
     await AsyncStorage.setItem('accessToken', response.data.access);
 
-    // Store/update tenant info if not already stored
-    if (tenant) {
-      await AsyncStorage.setItem('tenant', tenant);
+    // Store/update tenant info if not already stored (store trimmed version)
+    if (cleanTenant) {
+      await AsyncStorage.setItem('tenant', cleanTenant);
     }
 
     return response.data;
@@ -76,7 +81,8 @@ export const verifyOtp = async (email: string, otp: string) => {
 export const resendOtp = async (email: string) => {
   try {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const axiosInstance = createAxiosInstance(tenant);
+    const cleanTenant = tenant?.trim();
+    const axiosInstance = createAxiosInstance(cleanTenant);
     const response = await axiosInstance.post('/api/auth/resend-otp/', {email});
     return response;
   } catch (error) {
@@ -112,14 +118,14 @@ class AuthService {
       if (!tenant) {
         throw this.createError('Tenant is required', 'TENANT_REQUIRED');
       }
-      
+
       // Clean up the tenant string - remove spaces and convert to lowercase
       const cleanTenant = tenant.trim().toLowerCase();
-      
+
       const api = ApiService.getInstance(cleanTenant);
       const response = await api
         .getAxiosInstance()
-        .post<LoginResponse>(`https://${cleanTenant}.zentroapp-backend.com/api/auth/token/`, {
+        .post<LoginResponse>('/api/auth/token/', {
           email: credentials.email,
           password: credentials.password,
         });
@@ -146,7 +152,7 @@ class AuthService {
       const api = ApiService.getInstance();
       const response = await api
         .getAxiosInstance()
-        .post('api/company/check-company-exists/', {
+        .post('/api/company/check-company-exists/', {
           company_name: companyName.trim().toLowerCase(),
         });
 
@@ -175,7 +181,9 @@ class AuthService {
 
   private async resolveTenant(providedTenant?: string): Promise<string | null> {
     try {
-      return providedTenant || (await AsyncStorage.getItem('tenant'));
+      const tenant = providedTenant || (await AsyncStorage.getItem('tenant'));
+      // Trim tenant to remove any leading/trailing spaces
+      return tenant?.trim() || null;
     } catch (error) {
       console.error('Error resolving tenant:', error);
       return null;

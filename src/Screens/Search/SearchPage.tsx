@@ -96,19 +96,28 @@ const SearchPage = () => {
     // Add current date as date_sold
     const currentDate = new Date().toISOString();
 
+    const trackingConfig =
+      item.tracking_code ?? existItem?.tracking_code ?? null;
+    const selectedTrackingCode =
+      existItem?.selectedTrackingCode ?? item.selectedTrackingCode ?? null;
+    const trackingDetails = existItem?.trackingDetails ?? item.trackingDetails;
+
     dispatch({
       type: 'CART_ADD_ITEM',
       payload: {
         ...item,
         quantity,
         date_sold: currentDate,
+        tracking_code: trackingConfig,
+        selectedTrackingCode,
+        trackingDetails,
       },
     });
 
     Toast.show({
       type: 'success',
       text1: 'Item Added',
-      text2: `${item.item_name} has been added to your cart.`,
+      text2: `${item.item_name} has been added to sale.`,
     });
 
     // Clear search and go back to cart

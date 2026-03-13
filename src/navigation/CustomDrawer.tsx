@@ -1,6 +1,6 @@
 // src/navigation/CustomDrawer.tsx
 import React from 'react';
-import {View, Text, Image, TouchableOpacity} from 'react-native';
+import {View, Text, Image, TouchableOpacity, ScrollView} from 'react-native';
 
 import {COLORS, FONTS, SIZES, constants, icons, dummyData} from '../constants';
 import {
@@ -9,6 +9,7 @@ import {
 } from '@react-navigation/drawer';
 import MainLayout from '../Screens/MainLayout';
 import {useAppContext, useAuth} from '../context/Store';
+import {usePermissions} from '../hooks/usePermissions';
 import {useState} from 'react';
 import {useNavigation} from '@react-navigation/native';
 
@@ -33,7 +34,7 @@ const CustomDrawerItem = ({
         alignItems: 'center',
         paddingLeft: SIZES.radius,
         borderRadius: SIZES.base,
-        backgroundColor: isFocused ? COLORS.transparentBlack1 : null,
+        backgroundColor: isFocused ? COLORS.transparentBlack1 : undefined,
       }}
       onPress={onPress}>
       <Image
@@ -69,17 +70,270 @@ const CustomDrawerContent = ({
     auth: {username},
   } = useAuth();
   const {logout} = useAppContext();
+  const {isModuleVisible} = usePermissions();
+
+  // Quick Access - Links to bottom tabs (with indicator)
+  const quickAccessItems = [
+    {
+      key: 'home',
+      label: constants.screens.home,
+      icon: icons.home,
+      moduleCode: undefined,
+      action: () => {
+        setSelectedTab(constants.screens.home);
+        navigation.navigate('MainLayout');
+      },
+      isFocused: selectedTab === constants.screens.home,
+      isBottomTab: true,
+    },
+    {
+      key: 'sales',
+      label: constants.screens.sales,
+      icon: icons.cart,
+      moduleCode: 'sales',
+      action: () => {
+        setSelectedTab(constants.screens.sales);
+        navigation.navigate('MainLayout');
+      },
+      isFocused: selectedTab === constants.screens.sales,
+      isBottomTab: true,
+    },
+    {
+      key: 'items',
+      label: constants.screens.items,
+      icon: icons.product,
+      moduleCode: 'items',
+      action: () => {
+        setSelectedTab(constants.screens.items);
+        navigation.navigate('MainLayout');
+      },
+      isFocused: selectedTab === constants.screens.items,
+      isBottomTab: true,
+    },
+    {
+      key: 'customers',
+      label: constants.screens.customers,
+      icon: icons.profile,
+      moduleCode: 'customers',
+      action: () => {
+        setSelectedTab(constants.screens.customers);
+        navigation.navigate('MainLayout');
+      },
+      isFocused: selectedTab === constants.screens.customers,
+      isBottomTab: true,
+    },
+    {
+      key: 'reports',
+      label: constants.screens.reports,
+      icon: icons.reports,
+      moduleCode: 'reports',
+      action: () => {
+        setSelectedTab(constants.screens.reports);
+        navigation.navigate('MainLayout');
+      },
+      isFocused: selectedTab === constants.screens.reports,
+      isBottomTab: true,
+    },
+  ];
+
+  // Operations Section
+  const operationsItems = [
+    {
+      key: 'purchases',
+      label: constants.screens.purchases,
+      icon: icons.cart, // Reuse cart icon or add new
+      moduleCode: 'purchases',
+      action: () => {
+        navigation.navigate('Purchases');
+      },
+      isFocused: false,
+    },
+    {
+      key: 'suppliers',
+      label: constants.screens.suppliers,
+      icon: icons.product, // Reuse product icon or add truck icon
+      moduleCode: 'purchases', // Suppliers share purchases module
+      action: () => {
+        navigation.navigate('Suppliers');
+      },
+      isFocused: false,
+    },
+    {
+      key: 'itemCategories',
+      label: constants.screens.itemCategories,
+      icon: icons.product, // Reuse product icon
+      moduleCode: 'items',
+      action: () => {
+        navigation.navigate('ItemCategories');
+      },
+      isFocused: false,
+    },
+    {
+      key: 'itemJournal',
+      label: constants.screens.itemJournal,
+      icon: icons.itemJournal,
+      moduleCode: 'inventory',
+      action: () => {
+        navigation.navigate('ItemJournal');
+      },
+      isFocused: selectedTab === constants.screens.itemJournal,
+    },
+  ];
+
+  // Financial Section
+  const financialItems = [
+    {
+      key: 'payments',
+      label: constants.screens.payments,
+      icon: icons.wallet,
+      moduleCode: 'payments',
+      action: () => {
+        navigation.navigate('Payments');
+      },
+      isFocused: false,
+    },
+    {
+      key: 'bankAccounts',
+      label: constants.screens.bankAccounts,
+      icon: icons.wallet,
+      moduleCode: 'payments',
+      action: () => {
+        navigation.navigate('BankAccounts');
+      },
+      isFocused: false,
+    },
+    {
+      key: 'loans',
+      label: constants.screens.loans,
+      icon: icons.wallet,
+      moduleCode: 'payments',
+      action: () => {
+        navigation.navigate('Loans');
+      },
+      isFocused: false,
+    },
+    {
+      key: 'loanRepayments',
+      label: constants.screens.loanRepayments,
+      icon: icons.wallet,
+      moduleCode: 'payments',
+      action: () => {
+        navigation.navigate('LoanRepayments');
+      },
+      isFocused: false,
+    },
+    {
+      key: 'expenses',
+      label: constants.screens.expenses,
+      icon: icons.coupon,
+      moduleCode: 'expenses',
+      action: () => {
+        navigation.navigate('Expenses');
+      },
+      isFocused: selectedTab === constants.screens.expenses,
+    },
+    {
+      key: 'expenseHistory',
+      label: constants.screens.expenseHistory,
+      icon: icons.coupon,
+      moduleCode: 'expenses',
+      action: () => {
+        navigation.navigate('ExpenseHistory');
+      },
+      isFocused: false,
+    },
+    {
+      key: 'prepayments',
+      label: constants.screens.prepayments,
+      icon: icons.coupon,
+      moduleCode: 'payments',
+      action: () => {
+        navigation.navigate('Prepayments');
+      },
+      isFocused: false,
+    },
+    {
+      key: 'bankAccountLedger',
+      label: constants.screens.bankAccountLedger,
+      icon: icons.reports,
+      moduleCode: 'payments',
+      action: () => {
+        navigation.navigate('BankAccountLedger');
+      },
+      isFocused: false,
+    },
+    {
+      key: 'wallet',
+      label: constants.screens.my_wallet,
+      icon: icons.wallet,
+      moduleCode: 'payments',
+      action: () => {
+        navigation.navigate('MyWallet');
+      },
+      isFocused: selectedTab === constants.screens.my_wallet,
+    },
+    {
+      key: 'logout',
+      label: 'Logout',
+      icon: icons.logout,
+      moduleCode: undefined,
+      action: () => {
+        navigation.closeDrawer();
+        logout();
+      },
+      isFocused: false,
+    },
+  ];
+
+  // Management Section
+  const managementItems = [
+    {
+      key: 'userManagement',
+      label: constants.screens.userManagement,
+      icon: icons.profile,
+      moduleCode: 'userManagement',
+      action: () => {
+        navigation.navigate('UserManagement');
+      },
+      isFocused: false,
+    },
+  ];
+
+  // Settings & Support Section
+  const settingsItems = [
+    {
+      key: 'settings',
+      label: constants.screens.settings,
+      icon: icons.setting,
+      moduleCode: undefined,
+      action: () => {
+        navigation.navigate('Settings');
+      },
+      isFocused: selectedTab === constants.screens.settings,
+    },
+    {
+      key: 'helpSupport',
+      label: constants.screens.helpSupport,
+      icon: icons.help,
+      moduleCode: undefined,
+      action: () => {
+        // TODO: Navigate to help screen
+        navigation.navigate('Settings'); // Temporary
+      },
+      isFocused: false,
+    },
+  ];
   return (
-    <DrawerContentScrollView
-      scrollEnabled={true}
-      contentContainerStyle={{
+    <View
+      style={{
         flex: 1,
         backgroundColor: COLORS.primary2,
       }}>
+      {/* Fixed Header Section */}
       <View
         style={{
-          flex: 1,
           paddingHorizontal: SIZES.radius,
+          paddingTop: SIZES.radius,
         }}>
         {/* Close */}
         <View
@@ -110,24 +364,32 @@ const CustomDrawerContent = ({
             flexDirection: 'row',
             marginTop: SIZES.radius,
             alignItems: 'center',
+            justifyContent: 'center',
           }}
           onPress={() => {
             navigation.closeDrawer();
             navigation.navigate('MyAccount');
           }}>
-          <Image
-            source={icons.profile}
+          <View
             style={{
               width: 50,
               height: 50,
-              borderRadius: 50,
-              // backgroundColor: COLORS.white,
+              borderRadius: 25,
               borderWidth: 2,
-              borderColor: COLORS.primary2,
-              tintColor: COLORS.white,
-              marginLeft: 2,
-            }}
-          />
+              borderColor: COLORS.white,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: COLORS.transparentBlack1,
+            }}>
+            <Image
+              source={icons.profile}
+              style={{
+                width: 30,
+                height: 30,
+                tintColor: COLORS.white,
+              }}
+            />
+          </View>
 
           <View
             style={{
@@ -139,72 +401,188 @@ const CustomDrawerContent = ({
             </Text>
           </View>
         </TouchableOpacity>
+      </View>
 
-        {/* Drawer Items */}
+      {/* Scrollable Drawer Items Section */}
+      <ScrollView
+        style={{flex: 1}}
+        contentContainerStyle={{
+          paddingHorizontal: SIZES.radius,
+          paddingBottom: SIZES.height > 800 ? SIZES.padding : SIZES.radius,
+        }}
+        showsVerticalScrollIndicator={false}>
         <View
           style={{
-            flex: 1,
             marginTop: SIZES.height > 800 ? SIZES.padding : SIZES.radius,
           }}>
-          <CustomDrawerItem
-            label={constants.screens.home}
-            icon={icons.home}
-            isFocused={selectedTab == constants.screens.home}
-            onPress={() => {
-              setSelectedTab(constants.screens.home);
-              navigation.navigate('MainLayout');
-            }}
-          />
+          {/* Quick Access Section */}
+          <Text
+            style={{
+              color: COLORS.lightGray1,
+              ...FONTS.body5,
+              marginLeft: SIZES.radius,
+              marginBottom: SIZES.base,
+              opacity: 0.7,
+            }}>
+            QUICK ACCESS
+          </Text>
+          {quickAccessItems
+            .filter(item => {
+              if (!item.moduleCode) return true;
+              return isModuleVisible(item.moduleCode);
+            })
+            .map(item => (
+              <CustomDrawerItem
+                key={item.key}
+                label={item.label}
+                icon={item.icon}
+                isFocused={item.isFocused}
+                onPress={() => {
+                  navigation.closeDrawer();
+                  item.action();
+                }}
+              />
+            ))}
 
-          <CustomDrawerItem
-            label={constants.screens.my_wallet}
-            isFocused={selectedTab == constants.screens.my_wallet}
-            onPress={() => {
-              navigation.closeDrawer();
-              navigation.navigate('MyWallet');
-            }}
-            icon={icons.wallet}
-          />
-          <CustomDrawerItem
-            label="Reports"
-            icon={icons.reports}
-            isFocused={selectedTab == constants.screens.reports}
-            onPress={() => {
-              navigation.closeDrawer();
-              navigation.navigate('Reports');
-            }}
-          />
-          <CustomDrawerItem
-            label={constants.screens.itemJournal}
-            icon={icons.itemJournal}
-            isFocused={selectedTab == constants.screens.itemJournal}
-            onPress={() => {
-              navigation.closeDrawer();
-              navigation.navigate('ItemJournal');
-            }}
-          />
+          {/* Operations Section */}
+          {operationsItems.filter(item => {
+            if (!item.moduleCode) return true;
+            return isModuleVisible(item.moduleCode);
+          }).length > 0 && (
+            <>
+              <View
+                style={{
+                  height: 2,
+                  marginVertical:
+                    SIZES.height > 800 ? SIZES.radius : SIZES.base,
+                  marginLeft: SIZES.radius,
+                  backgroundColor: COLORS.lightGray1,
+                }}
+              />
+              <Text
+                style={{
+                  color: COLORS.lightGray1,
+                  ...FONTS.body5,
+                  marginLeft: SIZES.radius,
+                  marginBottom: SIZES.base,
+                  marginTop: SIZES.base,
+                  opacity: 0.7,
+                }}>
+                OPERATIONS
+              </Text>
+              {operationsItems
+                .filter(item => {
+                  if (!item.moduleCode) return true;
+                  return isModuleVisible(item.moduleCode);
+                })
+                .map(item => (
+                  <CustomDrawerItem
+                    key={item.key}
+                    label={item.label}
+                    icon={item.icon}
+                    isFocused={item.isFocused}
+                    onPress={() => {
+                      navigation.closeDrawer();
+                      item.action();
+                    }}
+                  />
+                ))}
+            </>
+          )}
 
-          {/* <CustomDrawerItem
-                        label={constants.screens.notification}
-                        icon={icons.notification}
-                        isFocused={selectedTab == constants.screens.notification}
-                        onPress={() => {
-                            setSelectedTab(constants.screens.notification)
-                            navigation.navigate("MainLayout")
-                        }}
-                    />
+          {/* Financial Section */}
+          {financialItems.filter(item => {
+            if (!item.moduleCode) return true;
+            return isModuleVisible(item.moduleCode);
+          }).length > 0 && (
+            <>
+              <View
+                style={{
+                  height: 2,
+                  marginVertical:
+                    SIZES.height > 800 ? SIZES.radius : SIZES.base,
+                  marginLeft: SIZES.radius,
+                  backgroundColor: COLORS.lightGray1,
+                }}
+              />
+              <Text
+                style={{
+                  color: COLORS.lightGray1,
+                  ...FONTS.body5,
+                  marginLeft: SIZES.radius,
+                  marginBottom: SIZES.base,
+                  marginTop: SIZES.base,
+                  opacity: 0.7,
+                }}>
+                FINANCIAL
+              </Text>
+              {financialItems
+                .filter(item => {
+                  if (!item.moduleCode) return true;
+                  return isModuleVisible(item.moduleCode);
+                })
+                .map(item => (
+                  <CustomDrawerItem
+                    key={item.key}
+                    label={item.label}
+                    icon={item.icon}
+                    isFocused={item.isFocused}
+                    onPress={() => {
+                      navigation.closeDrawer();
+                      item.action();
+                    }}
+                  />
+                ))}
+            </>
+          )}
 
-                    <CustomDrawerItem
-                        label={constants.screens.favourite}
-                        icon={icons.favourite}
-                        isFocused={selectedTab == constants.screens.favourite}
-                        onPress={() => {
-                            setSelectedTab(constants.screens.favourite)
-                            navigation.navigate("MainLayout")
-                        }}
-                    /> */}
+          {/* Management Section */}
+          {managementItems.filter(item => {
+            if (!item.moduleCode) return true;
+            return isModuleVisible(item.moduleCode);
+          }).length > 0 && (
+            <>
+              <View
+                style={{
+                  height: 2,
+                  marginVertical:
+                    SIZES.height > 800 ? SIZES.radius : SIZES.base,
+                  marginLeft: SIZES.radius,
+                  backgroundColor: COLORS.lightGray1,
+                }}
+              />
+              <Text
+                style={{
+                  color: COLORS.lightGray1,
+                  ...FONTS.body5,
+                  marginLeft: SIZES.radius,
+                  marginBottom: SIZES.base,
+                  marginTop: SIZES.base,
+                  opacity: 0.7,
+                }}>
+                MANAGEMENT
+              </Text>
+              {managementItems
+                .filter(item => {
+                  if (!item.moduleCode) return true;
+                  return isModuleVisible(item.moduleCode);
+                })
+                .map(item => (
+                  <CustomDrawerItem
+                    key={item.key}
+                    label={item.label}
+                    icon={item.icon}
+                    isFocused={item.isFocused}
+                    onPress={() => {
+                      navigation.closeDrawer();
+                      item.action();
+                    }}
+                  />
+                ))}
+            </>
+          )}
 
-          {/* Line Divider */}
+          {/* Settings & Support Section */}
           <View
             style={{
               height: 2,
@@ -213,68 +591,32 @@ const CustomDrawerContent = ({
               backgroundColor: COLORS.lightGray1,
             }}
           />
-
-          {/* <CustomDrawerItem
-                        label="Track Your Order"
-                        icon={icons.location}
-                        onPress={() => {
-                            navigation.closeDrawer()
-                            navigation.navigate("Map")
-                        }}
-                    /> */}
-
-          {/*I <CustomDrawertem
-                        label="My Orders"
-                        icon={icons.location}
-                        onPress={() => {
-                            navigation.closeDrawer()
-                            navigation.navigate("Order")
-                        }}
-                    /> */}
-
-          <CustomDrawerItem
-            label="Expenses"
-            icon={icons.coupon}
-            isFocused={selectedTab == constants.screens.expenses}
-            onPress={() => {
-              navigation.closeDrawer();
-              navigation.navigate('Expenses');
-            }}
-          />
-
-          <CustomDrawerItem
-            label="Settings"
-            icon={icons.setting}
-            isFocused={selectedTab == constants.screens.settings}
-            onPress={() => {
-              navigation.closeDrawer();
-              navigation.navigate('Settings');
-            }}
-          />
-
-          {/* <CustomDrawerItem
-                        label="Help Center"
-                        icon={icons.help}
-                    /> */}
+          <Text
+            style={{
+              color: COLORS.lightGray1,
+              ...FONTS.body5,
+              marginLeft: SIZES.radius,
+              marginBottom: SIZES.base,
+              marginTop: SIZES.base,
+              opacity: 0.7,
+            }}>
+            SETTINGS & SUPPORT
+          </Text>
+          {settingsItems.map(item => (
+            <CustomDrawerItem
+              key={item.key}
+              label={item.label}
+              icon={item.icon}
+              isFocused={item.isFocused}
+              onPress={() => {
+                navigation.closeDrawer();
+                item.action();
+              }}
+            />
+          ))}
         </View>
-
-        <View
-          style={{
-            marginBottom: SIZES.height > 800 ? SIZES.padding : 0,
-          }}>
-          <CustomDrawerItem
-            label="Logout"
-            icon={icons.logout}
-            isFocused={false}
-            onPress={() => {
-              navigation.closeDrawer();
-              logout();
-              // Don't navigate manually - let App.tsx handle it based on auth state
-            }}
-          />
-        </View>
+      </ScrollView>
       </View>
-    </DrawerContentScrollView>
   );
 };
 
@@ -299,9 +641,6 @@ const CustomDrawer = () => {
             backgroundColor: 'transparent',
           },
           drawerType: 'slide',
-          sceneContainerStyle: {
-            backgroundColor: 'transparent',
-          },
         }}
         initialRouteName="MainLayout"
         drawerContent={props => {

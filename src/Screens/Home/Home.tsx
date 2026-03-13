@@ -4,42 +4,103 @@ import {
   Text,
   TouchableOpacity,
   Image,
-  TextInput,
   FlatList,
   StyleSheet,
   Platform,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
-import {FONTS, SIZES, COLORS, icons, dummyData} from '../../constants';
+import {FONTS, SIZES, COLORS, icons, constants} from '../../constants';
 import Options from './Options';
 import {SafeAreaView} from 'react-native-safe-area-context';
-import {ScrollView} from 'react-native-gesture-handler';
-import {MenuItem, MenuCategory} from '../../@types/types.dto';
-import {jwtDecode} from 'jwt-decode';
-import {useAuth} from '../../context/Store';
+import {ScrollView} from 'react-native';
+import {useAuth, useAppContext} from '../../context/Store';
 import {getRoleDisplayName} from '../../utils/utils';
+import {usePermissions} from '../../hooks/usePermissions';
+import {
+  fetchKPIMetrics,
+  fetchRecentTransactions,
+  fetchLowStockItems,
+  fetchDraftSales,
+  fetchOutstandingReceivables,
+  fetchTopSellingItems,
+  KPIMetrics,
+} from '../../services/app.services';
+
+interface SalesInvoice {
+  id: number;
+  customer_invoice_no: string;
+  customer?: {name: string};
+  total_amount: number;
+  created_at: string;
+  status: string;
+}
 
 export default function Home() {
-  const [selectedCategoryId, setSelectedCategoryId] = React.useState<number>(1);
-  const [selectedMenuType, setSelectedMenuType] = React.useState<number>(1);
-  const [popular, setPopular] = React.useState<MenuItem[]>([]);
-  const [recommends, setRecommends] = React.useState<MenuItem[]>([]);
-  const [menuList, setMenuList] = React.useState<MenuItem[]>([]);
   const {auth, accessToken} = useAuth();
+  const {setSelectedTab} = useAppContext();
+  const {isModuleVisible, hasAnyPageAccess, canRead, canCreate} = usePermissions();
   const [currentDateTime, setCurrentDateTime] = useState(new Date());
   const [isAuthLoading, setIsAuthLoading] = React.useState(true);
   const navigation = useNavigation();
 
+  // KPI Data
+  const [kpiMetrics, setKpiMetrics] = useState<KPIMetrics | null>(null);
+  const [kpiLoading, setKpiLoading] = useState(false);
+
+  // Recent Transactions
+  const [recentTransactions, setRecentTransactions] = useState<SalesInvoice[]>(
+    [],
+  );
+  const [transactionsLoading, setTransactionsLoading] = useState(false);
+
+  // Low Stock
+  const [lowStockItems, setLowStockItems] = useState<any[]>([]);
+  const [lowStockLoading, setLowStockLoading] = useState(false);
+
+  // Draft Sales
+  const [draftSales, setDraftSales] = useState<any[]>([]);
+  const [draftLoading, setDraftLoading] = useState(false);
+
+  // Outstanding Receivables
+  const [outstandingReceivables, setOutstandingReceivables] = useState<{
+    total_amount: number;
+    count: number;
+  } | null>(null);
+  const [receivablesLoading, setReceivablesLoading] = useState(false);
+
+  // Top Selling Items
+  const [topSellingItems, setTopSellingItems] = useState<any[]>([]);
+  const [topItemsLoading, setTopItemsLoading] = useState(false);
+
+  // Refresh state
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Permission checks
+  const canViewKPIs =
+    isModuleVisible('sales') &&
+    (hasAnyPageAccess('Sales Dashboard') || hasAnyPageAccess('Sales'));
+
+  const canViewTransactions =
+    isModuleVisible('sales') &&
+    (hasAnyPageAccess('Sales History') || hasAnyPageAccess('Sales'));
+
+  const canViewItems =
+    isModuleVisible('items') && hasAnyPageAccess('Items');
+
+  const canViewDrafts =
+    isModuleVisible('sales') && canCreate('Sales');
+
+  const canViewReceivables =
+    (isModuleVisible('payments') || isModuleVisible('customers')) &&
+    (hasAnyPageAccess('Payments') || hasAnyPageAccess('Customer Management'));
+
   // Debug auth state and handle loading
   React.useEffect(() => {
-    console.log('Home component auth state:', auth);
-    console.log('Home component accessToken:', accessToken);
-
-    // Set loading to false after auth data is available
     if (auth.username && auth.user_id) {
       setIsAuthLoading(false);
     } else if (!accessToken) {
-      // If no access token, we're not logged in, so stop loading
       setIsAuthLoading(false);
     }
   }, [auth, accessToken]);
@@ -48,109 +109,155 @@ export default function Home() {
   React.useEffect(() => {
     const timeout = setTimeout(() => {
       if (isAuthLoading) {
-        console.log('Auth loading timeout, forcing stop');
         setIsAuthLoading(false);
       }
-    }, 3000); // 3 second timeout
-
+    }, 3000);
     return () => clearTimeout(timeout);
   }, [isAuthLoading]);
 
-  // Prevent going back to login page
-  React.useEffect(() => {
-    const unsubscribe = navigation.addListener('beforeRemove', e => {
-      // Prevent going back to login page
-      if (
-        e.target &&
-        (e.target.includes('SignIn') || e.target.includes('OnBoarding'))
-      ) {
-        e.preventDefault();
-      }
-    });
-
-    return unsubscribe;
-  }, [navigation]);
-
-  React.useEffect(() => {
-    handleChangeCategory(selectedCategoryId, selectedMenuType);
-  }, []);
-
-  // Add useEffect for the timer
+  // Update date at midnight
   useEffect(() => {
-    // Update date at midnight
     const timer = setInterval(() => {
       setCurrentDateTime(new Date());
-    }, 86400000); // 24 hours in milliseconds
-
-    // Cleanup on component unmount
+    }, 86400000);
     return () => clearInterval(timer);
   }, []);
 
-  function handleChangeCategory(categoryId: number, menuTypeId: number) {
-    // Type the menu finds
-    const selectedPopular = (dummyData.menu as MenuCategory[]).find(
-      a => a.name === 'Popular',
-    );
-    const selectedRecommend = (dummyData.menu as MenuCategory[]).find(
-      a => a.name === 'Recommended',
-    );
-    const selectedMenu = (dummyData.menu as MenuCategory[]).find(
-      a => a.id === menuTypeId,
-    );
+  // Fetch KPI Metrics
+  const loadKPIMetrics = async () => {
+    if (!canViewKPIs) return;
 
-    // Set the popular menu based on the categoryId
-    setPopular(
-      selectedPopular?.list.filter(a => a.categories.includes(categoryId)) ||
-        [],
-    );
+    setKpiLoading(true);
+    try {
+      const metrics = await fetchKPIMetrics();
+      setKpiMetrics(metrics);
+    } catch (error) {
+      console.error('Error loading KPI metrics:', error);
+    } finally {
+      setKpiLoading(false);
+    }
+  };
 
-    // Set the recommended menu based on the categoryId
-    setRecommends(
-      selectedRecommend?.list.filter(a => a.categories.includes(categoryId)) ||
-        [],
-    );
+  // Fetch Recent Transactions
+  const loadRecentTransactions = async () => {
+    if (!canViewTransactions) return;
 
-    // Set the menu based on the categoryId
-    setMenuList(
-      selectedMenu?.list.filter(a => a.categories.includes(categoryId)) || [],
-    );
-  }
+    setTransactionsLoading(true);
+    try {
+      const transactions = await fetchRecentTransactions(10);
+      setRecentTransactions(transactions);
+    } catch (error) {
+      console.error('Error loading recent transactions:', error);
+    } finally {
+      setTransactionsLoading(false);
+    }
+  };
 
-  function renderMenuTypes() {
-    return (
-      <FlatList
-        horizontal
-        data={dummyData.menu as MenuCategory[]}
-        keyExtractor={item => `${item.id}`}
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{
-          marginTop: 30,
-          marginBottom: 20,
-        }}
-        renderItem={({item, index}) => (
-          <TouchableOpacity
-            style={{
-              marginLeft: SIZES.padding,
-              marginRight:
-                index == dummyData.menu.length - 1 ? SIZES.padding : 0,
-            }}
-            onPress={() => {
-              setSelectedMenuType(item.id);
-              handleChangeCategory(selectedCategoryId, item.id);
-            }}>
-            <Text
-              style={{
-                color:
-                  selectedMenuType == item.id ? COLORS.primary : COLORS.black,
-                ...FONTS.h3,
-              }}>
-              {item.name}
-            </Text>
-          </TouchableOpacity>
-        )}
-      />
-    );
-  }
+  // Fetch Low Stock Items
+  const loadLowStockItems = async () => {
+    if (!canViewItems) return;
+
+    setLowStockLoading(true);
+    try {
+      const items = await fetchLowStockItems();
+      setLowStockItems(items);
+    } catch (error) {
+      console.error('Error loading low stock items:', error);
+    } finally {
+      setLowStockLoading(false);
+    }
+  };
+
+  // Fetch Draft Sales
+  const loadDraftSales = async () => {
+    if (!canViewDrafts) return;
+
+    setDraftLoading(true);
+    try {
+      const drafts = await fetchDraftSales();
+      setDraftSales(drafts);
+    } catch (error) {
+      console.error('Error loading draft sales:', error);
+    } finally {
+      setDraftLoading(false);
+    }
+  };
+
+  // Fetch Outstanding Receivables
+  const loadOutstandingReceivables = async () => {
+    if (!canViewReceivables) return;
+
+    setReceivablesLoading(true);
+    try {
+      const receivables = await fetchOutstandingReceivables();
+      setOutstandingReceivables(receivables);
+    } catch (error) {
+      console.error('Error loading outstanding receivables:', error);
+    } finally {
+      setReceivablesLoading(false);
+    }
+  };
+
+  // Fetch Top Selling Items
+  const loadTopSellingItems = async () => {
+    if (!canViewKPIs) return;
+
+    setTopItemsLoading(true);
+    try {
+      const items = await fetchTopSellingItems(5);
+      setTopSellingItems(items);
+    } catch (error) {
+      console.error('Error loading top selling items:', error);
+    } finally {
+      setTopItemsLoading(false);
+    }
+  };
+
+  // Load all data on mount
+  useEffect(() => {
+    if (!isAuthLoading) {
+      loadKPIMetrics();
+      loadRecentTransactions();
+      loadLowStockItems();
+      loadDraftSales();
+      loadOutstandingReceivables();
+      loadTopSellingItems();
+    }
+  }, [
+    isAuthLoading,
+    canViewKPIs,
+    canViewTransactions,
+    canViewItems,
+    canViewDrafts,
+    canViewReceivables,
+  ]);
+
+  // Pull to refresh handler
+  const onRefresh = React.useCallback(async () => {
+    setRefreshing(true);
+    try {
+      // Load all data in parallel
+      await Promise.all([
+        loadKPIMetrics(),
+        loadRecentTransactions(),
+        loadLowStockItems(),
+        loadDraftSales(),
+        loadOutstandingReceivables(),
+        loadTopSellingItems(),
+      ]);
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [
+    canViewKPIs,
+    canViewTransactions,
+    canViewItems,
+    canViewDrafts,
+    canViewReceivables,
+  ]);
+
   const renderHeader = () => {
     const formattedDate = currentDateTime.toLocaleDateString('en-US', {
       weekday: 'long',
@@ -162,7 +269,6 @@ export default function Home() {
       <View style={styles.headerSection}>
         <View style={styles.headerCard}>
           <View style={styles.headerMain}>
-            {/* Left side - Welcome message */}
             <View style={styles.welcomeContainer}>
               <Text style={styles.welcomeText}>Welcome back</Text>
               <Text style={styles.nameText}>
@@ -179,7 +285,6 @@ export default function Home() {
               </View>
             </View>
 
-            {/* Right side - Quick Info */}
             <View style={styles.quickInfo}>
               <Text style={styles.dateText}>{formattedDate}</Text>
               <View style={styles.statusBadge}>
@@ -192,6 +297,7 @@ export default function Home() {
       </View>
     );
   };
+
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('en-UG', {
       style: 'currency',
@@ -201,108 +307,364 @@ export default function Home() {
     }).format(amount);
   };
 
-  // const renderQuickStats = () => {
-  //   const todaySales = 1234000;
-  //   const salesChange = +15.8;
-  //   const totalProducts = 156;
-  //   const productsSold = 45; // Number of products sold today
-  //   const lowStockCount = 12;
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    return date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
 
-  //   return (
-  //     <View style={styles.statsSection}>
-  //       {/* Main Sales Card - Make it prominent */}
-  //       <View style={styles.mainStatsCard}>
-  //         <View style={styles.salesHeader}>
-  //           <View>
-  //             <Text style={styles.salesLabel}>Today's Revenue</Text>
-  //             <Text style={styles.salesAmount}>
-  //               {formatCurrency(todaySales)}
-  //             </Text>
-  //           </View>
-  //           <View
-  //             style={[
-  //               styles.trendBadge,
-  //               salesChange >= 0 ? styles.positiveTrend : styles.negativeTrend,
-  //             ]}>
-  //             <Image
-  //               source={salesChange >= 0 ? icons.trendUp : icons.trendDown}
-  //               style={styles.trendIcon}
-  //             />
-  //             <Text
-  //               style={[
-  //                 styles.trendText,
-  //                 salesChange >= 0 ? styles.positiveText : styles.negativeText,
-  //               ]}>
-  //               {Math.abs(salesChange)}%
-  //             </Text>
-  //           </View>
-  //         </View>
-  //         <Text style={styles.comparedText}>Compared to yesterday</Text>
-  //       </View>
+  // Render KPI Cards
+  const renderQuickStats = () => {
+    if (!canViewKPIs) return null;
 
-  //       {/* Secondary Stats Row */}
-  //       <View style={styles.secondaryStatsContainer}>
-  //         {/* Products Sold Today */}
-  //         <View style={styles.statCard}>
-  //           <View style={styles.statHeader}>
-  //             <Image
-  //               source={icons.sales}
-  //               style={[styles.statIcon, {tintColor: COLORS.primary}]}
-  //             />
-  //             <Text style={styles.statValue}>{productsSold}</Text>
-  //           </View>
-  //           <Text style={styles.statItemLabel}>Products Sold Today</Text>
-  //           <View style={styles.progressBar}>
-  //             <View
-  //               style={[
-  //                 styles.progressFill,
-  //                 {width: `${(productsSold / totalProducts) * 100}%`},
-  //               ]}
-  //             />
-  //           </View>
-  //         </View>
+    if (kpiLoading) {
+      return (
+        <View style={styles.statsSection}>
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={COLORS.primary} />
+            <Text style={styles.loadingText}>Loading metrics...</Text>
+          </View>
+        </View>
+      );
+    }
 
-  //         {/* Inventory Status */}
-  //         <View style={styles.statCard}>
-  //           <View style={styles.statHeader}>
-  //             <Image
-  //               source={icons.products}
-  //               style={[styles.statIcon, {tintColor: COLORS.success}]}
-  //             />
-  //             <Text style={styles.statValue}>{totalProducts}</Text>
-  //           </View>
-  //           <Text style={styles.statItemLabel}>Total Products</Text>
-  //           {lowStockCount > 0 && (
-  //             <View style={styles.alertBadge}>
-  //               <Text style={styles.alertText}>{lowStockCount} Low Stock</Text>
-  //             </View>
-  //           )}
-  //         </View>
-  //       </View>
-  //     </View>
-  //   );
-  // };
+    if (!kpiMetrics) {
+      return null;
+    }
+
+    const salesChange = kpiMetrics.revenue_growth;
+    const hasPositiveTrend = salesChange >= 0;
+
+    return (
+      <View style={styles.statsSection}>
+        {/* Main Sales Card */}
+        <View style={styles.mainStatsCard}>
+          <View style={styles.salesHeader}>
+            <View>
+              <Text style={styles.salesLabel}>Today's Revenue</Text>
+              <Text style={styles.salesAmount}>
+                {formatCurrency(kpiMetrics.today_revenue)}
+              </Text>
+            </View>
+            {salesChange !== 0 && (
+              <View
+                style={[
+                  styles.trendBadge,
+                  hasPositiveTrend ? styles.positiveTrend : styles.negativeTrend,
+                ]}>
+                <Text
+                  style={[
+                    styles.trendText,
+                    hasPositiveTrend ? styles.positiveText : styles.negativeText,
+                  ]}>
+                  {hasPositiveTrend ? '↑' : '↓'} {Math.abs(salesChange).toFixed(1)}%
+                </Text>
+              </View>
+            )}
+          </View>
+          <Text style={styles.comparedText}>Compared to yesterday</Text>
+        </View>
+
+        {/* Secondary Stats Row */}
+        <View style={styles.secondaryStatsContainer}>
+          {/* Orders Today */}
+          <View style={styles.statCard}>
+            <View style={styles.statHeader}>
+              <Image
+                source={icons.cart}
+                style={[styles.statIcon, {tintColor: COLORS.primary}]}
+              />
+              <Text style={styles.statValue}>{kpiMetrics.today_orders}</Text>
+            </View>
+            <Text style={styles.statItemLabel}>Orders Today</Text>
+          </View>
+
+          {/* Products Sold */}
+          <View style={styles.statCard}>
+            <View style={styles.statHeader}>
+              <Image
+                source={icons.product}
+                style={[styles.statIcon, {tintColor: COLORS.success}]}
+              />
+              <Text style={styles.statValue}>
+                {kpiMetrics.today_products_sold}
+              </Text>
+            </View>
+            <Text style={styles.statItemLabel}>Products Sold</Text>
+            {kpiMetrics.total_products > 0 && (
+              <View style={styles.progressBar}>
+                <View
+                  style={[
+                    styles.progressFill,
+                    {
+                      width: `${Math.min(
+                        (kpiMetrics.today_products_sold / kpiMetrics.total_products) *
+                          100,
+                        100,
+                      )}%`,
+                    },
+                  ]}
+                />
+              </View>
+            )}
+          </View>
+        </View>
+
+        {/* Outstanding Receivables Alert */}
+        {canViewReceivables &&
+          outstandingReceivables &&
+          outstandingReceivables.total_amount > 0 && (
+            <TouchableOpacity
+              style={[styles.alertCard, {borderLeftColor: COLORS.warning}]}
+              onPress={() => navigation.navigate('Payments' as never)}>
+              <View style={styles.alertContent}>
+                <Image
+                  source={icons.wallet}
+                  style={[styles.alertIcon, {tintColor: COLORS.warning}]}
+                />
+                <View style={styles.alertTextContainer}>
+                  <Text style={styles.alertTitle}>Outstanding Receivables</Text>
+                  <Text style={styles.alertText}>
+                    {formatCurrency(outstandingReceivables.total_amount)} from{' '}
+                    {outstandingReceivables.count} customer
+                    {outstandingReceivables.count !== 1 ? 's' : ''}
+                  </Text>
+                </View>
+                <Text style={styles.alertArrow}>→</Text>
+              </View>
+            </TouchableOpacity>
+          )}
+
+        {/* Low Stock Alert */}
+        {canViewItems && lowStockItems.length > 0 && (
+          <TouchableOpacity
+            style={styles.alertCard}
+            onPress={() => navigation.navigate('Items' as never)}>
+            <View style={styles.alertContent}>
+              <Image
+                source={icons.notification}
+                style={[styles.alertIcon, {tintColor: COLORS.error}]}
+              />
+              <View style={styles.alertTextContainer}>
+                <Text style={styles.alertTitle}>Low Stock Alert</Text>
+                <Text style={styles.alertText}>
+                  {lowStockItems.length} item{lowStockItems.length !== 1 ? 's' : ''}{' '}
+                  need attention
+                </Text>
+              </View>
+              <Text style={styles.alertArrow}>→</Text>
+            </View>
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+
+  // Render Draft Sales
+  const renderDraftSales = () => {
+    if (!canViewDrafts) return null;
+
+    if (draftLoading) {
+      return (
+        <View style={styles.recentSection}>
+          <Text style={styles.sectionTitle}>Draft Sales</Text>
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="small" color={COLORS.primary} />
+          </View>
+        </View>
+      );
+    }
+
+    if (draftSales.length === 0) {
+      return null;
+    }
+
+    return (
+      <View style={styles.recentSection}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Draft Sales</Text>
+          <TouchableOpacity onPress={() => navigation.navigate('Cart' as never)}>
+            <Text style={styles.seeAllText}>View All</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.recentTransactions}>
+          {draftSales.slice(0, 3).map((draft: any) => (
+            <TouchableOpacity
+              key={draft.id}
+              style={styles.transactionItem}
+              onPress={() => navigation.navigate('Cart' as never)}>
+              <View style={styles.transactionLeft}>
+                <View
+                  style={[
+                    styles.transactionIconContainer,
+                    {backgroundColor: COLORS.warning + '15'},
+                  ]}>
+                  <Image
+                    source={icons.cart}
+                    style={[styles.transactionIcon, {tintColor: COLORS.warning}]}
+                  />
+                </View>
+                <View style={styles.transactionInfo}>
+                  <Text style={styles.transactionNumber}>
+                    {draft.invoice_no || `Draft #${draft.id}`}
+                  </Text>
+                  <Text style={styles.transactionCustomer}>
+                    {draft.customer_name || 'Draft Sale'}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.transactionRight}>
+                <Text style={[styles.transactionAmount, {color: COLORS.warning}]}>
+                  {formatCurrency(draft.total_amount || 0)}
+                </Text>
+                <Text style={styles.transactionTime}>
+                  {new Date(draft.created_at).toLocaleDateString()}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+    );
+  };
+
+  // Render Top Selling Items
+  const renderTopSellingItems = () => {
+    if (!canViewKPIs || topSellingItems.length === 0) return null;
+
+    return (
+      <View style={styles.recentSection}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Top Selling Items Today</Text>
+          <TouchableOpacity onPress={() => navigation.navigate('Items' as never)}>
+            <Text style={styles.seeAllText}>View All</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.recentTransactions}>
+          {topSellingItems.map((item: any, index: number) => (
+            <View key={item.item_no || index} style={styles.transactionItem}>
+              <View style={styles.transactionLeft}>
+                <View
+                  style={[
+                    styles.transactionIconContainer,
+                    {backgroundColor: COLORS.success + '15'},
+                  ]}>
+                  <Text style={[styles.rankBadge, {color: COLORS.success}]}>
+                    #{index + 1}
+                  </Text>
+                </View>
+                <View style={styles.transactionInfo}>
+                  <Text style={styles.transactionNumber}>{item.name}</Text>
+                  <Text style={styles.transactionCustomer}>
+                    {item.quantity} sold • {formatCurrency(item.total)}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          ))}
+        </View>
+      </View>
+    );
+  };
+
+  // Render Recent Transactions
+  const renderRecentTransactions = () => {
+    if (!canViewTransactions) return null;
+
+    return (
+      <View style={styles.recentSection}>
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Recent Transactions</Text>
+          <TouchableOpacity onPress={() => navigation.navigate('SalesHistory' as never)}>
+            <Text style={styles.seeAllText}>See All</Text>
+          </TouchableOpacity>
+        </View>
+
+        {transactionsLoading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="small" color={COLORS.primary} />
+            <Text style={styles.loadingText}>Loading transactions...</Text>
+          </View>
+        ) : recentTransactions.length > 0 ? (
+          <View style={styles.recentTransactions}>
+            <FlatList
+              data={recentTransactions.slice(0, 5)}
+              keyExtractor={item => item.id.toString()}
+              scrollEnabled={false}
+              renderItem={({item}) => (
+                <TouchableOpacity
+                  style={styles.transactionItem}
+                  onPress={() => {
+                    // Navigate to sales history
+                    navigation.navigate('SalesHistory' as never);
+                  }}>
+                  <View style={styles.transactionLeft}>
+                    <View style={styles.transactionIconContainer}>
+                      <Image
+                        source={icons.cart}
+                        style={[styles.transactionIcon, {tintColor: COLORS.primary}]}
+                      />
+                    </View>
+                    <View style={styles.transactionInfo}>
+                      <Text style={styles.transactionNumber}>
+                        {item.customer_invoice_no || `#${item.id}`}
+                      </Text>
+                      <Text style={styles.transactionCustomer}>
+                        {item.customer?.name || 'Walk-in Customer'}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.transactionRight}>
+                    <Text style={styles.transactionAmount}>
+                      {formatCurrency(item.total_amount || 0)}
+                    </Text>
+                    <Text style={styles.transactionTime}>
+                      {formatDate(item.created_at)}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        ) : (
+          <View style={styles.recentTransactions}>
+            <Text style={styles.placeholderText}>No recent transactions</Text>
+          </View>
+        )}
+      </View>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}>
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            colors={[COLORS.primary]} // Android spinner color
+            tintColor={COLORS.primary} // iOS spinner color
+            title="Pull to refresh" // iOS text
+            titleColor={COLORS.gray} // iOS text color
+            progressBackgroundColor={COLORS.white} // Android background
+          />
+        }>
         {renderHeader()}
-        {/* {renderQuickStats()} */}
+        {renderQuickStats()}
 
         <View style={styles.mainContent}>
           <Options />
         </View>
 
-        <View style={styles.recentSection}>
-          <Text style={styles.sectionTitle}>Recent Transactions</Text>
-          {/* Add your recent transactions list here */}
-          <View style={styles.recentTransactions}>
-            {/* Placeholder for recent transactions */}
-            <Text style={styles.placeholderText}>No recent transactions</Text>
-          </View>
-        </View>
+        {renderDraftSales()}
+        {renderTopSellingItems()}
+        {renderRecentTransactions()}
       </ScrollView>
     </SafeAreaView>
   );
@@ -479,20 +841,15 @@ const styles = StyleSheet.create({
   negativeTrend: {
     backgroundColor: 'rgba(255, 59, 48, 0.1)',
   },
-  trendIcon: {
-    width: 12,
-    height: 12,
-    tintColor: COLORS.success,
+  trendText: {
+    fontWeight: '600',
+    fontSize: 12,
   },
   positiveText: {
     color: COLORS.success,
-    fontWeight: '600',
-    fontSize: 12,
   },
   negativeText: {
     color: COLORS.error,
-    fontWeight: '600',
-    fontSize: 12,
   },
   progressBar: {
     height: 4,
@@ -505,34 +862,138 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primary,
     borderRadius: 2,
   },
-  alertBadge: {
-    backgroundColor: 'rgba(255, 59, 48, 0.1)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
-    alignSelf: 'flex-start',
+  alertCard: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 1},
+    shadowOpacity: 0.05,
+    shadowRadius: 5,
+    elevation: 2,
+    borderLeftWidth: 4,
+    borderLeftColor: COLORS.error,
+  },
+  alertContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  alertIcon: {
+    width: 24,
+    height: 24,
+    marginRight: 12,
+  },
+  alertTextContainer: {
+    flex: 1,
+  },
+  alertTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: COLORS.darkGray,
+    marginBottom: 2,
   },
   alertText: {
-    color: COLORS.error,
     fontSize: 12,
-    fontWeight: '500',
+    color: COLORS.gray,
+  },
+  alertArrow: {
+    fontSize: 18,
+    color: COLORS.gray,
   },
   recentSection: {
     padding: 16,
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
   sectionTitle: {
     ...FONTS.h3,
     color: COLORS.darkGray,
-    marginBottom: 16,
+  },
+  seeAllText: {
+    ...FONTS.body4,
+    color: COLORS.primary,
+    fontWeight: '500',
   },
   recentTransactions: {
     backgroundColor: '#fff',
     borderRadius: 16,
     padding: 16,
   },
+  transactionItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  transactionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  transactionIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.primary + '15',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  transactionIcon: {
+    width: 20,
+    height: 20,
+  },
+  transactionInfo: {
+    flex: 1,
+  },
+  transactionNumber: {
+    ...FONTS.body3,
+    color: COLORS.darkGray,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  transactionCustomer: {
+    ...FONTS.body4,
+    color: COLORS.gray,
+  },
+  transactionRight: {
+    alignItems: 'flex-end',
+  },
+  transactionAmount: {
+    ...FONTS.body3,
+    color: COLORS.primary,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  transactionTime: {
+    ...FONTS.body5,
+    color: COLORS.gray,
+  },
   placeholderText: {
     ...FONTS.body4,
     color: COLORS.gray,
     textAlign: 'center',
+    paddingVertical: 20,
+  },
+  loadingContainer: {
+    padding: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingText: {
+    ...FONTS.body4,
+    color: COLORS.gray,
+    marginTop: 8,
+  },
+  rankBadge: {
+    ...FONTS.h3,
+    fontWeight: '700',
+    fontSize: 14,
   },
 });

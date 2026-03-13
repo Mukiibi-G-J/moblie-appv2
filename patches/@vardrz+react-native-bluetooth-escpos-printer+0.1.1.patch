@@ -1,0 +1,26 @@
+diff --git a/node_modules/@vardrz/react-native-bluetooth-escpos-printer/android/build.gradle b/node_modules/@vardrz/react-native-bluetooth-escpos-printer/android/build.gradle
+index 0468625..cf73f19 100644
+--- a/node_modules/@vardrz/react-native-bluetooth-escpos-printer/android/build.gradle
++++ b/node_modules/@vardrz/react-native-bluetooth-escpos-printer/android/build.gradle
+@@ -1,8 +1,10 @@
+ buildscript {
+     repositories {
+-        jcenter { url "https://jcenter.bintray.com/" }
++        // jcenter is deprecated, using mavenCentral instead
++        // jcenter { url "https://jcenter.bintray.com/" }
+         maven {url "https://repo.spring.io/plugins-release/"}
+         mavenCentral()
++        google()
+         maven {
+             // All of React Native (JS, Obj-C sources, Android binaries) is installed from npm
+             url "$rootDir/../node_modules/react-native/android"
+@@ -42,7 +44,8 @@ android {
+ 
+ repositories {
+     google()
+-    jcenter { url "https://jcenter.bintray.com/" }
++    // jcenter is deprecated, using mavenCentral instead
++    // jcenter { url "https://jcenter.bintray.com/" }
+     maven {url "https://repo.spring.io/plugins-release/"}
+     mavenCentral()
+     maven {

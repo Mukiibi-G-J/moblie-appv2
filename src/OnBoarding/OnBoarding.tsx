@@ -1,12 +1,26 @@
 import React, {useEffect} from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {View, Text, ImageBackground, Image, Animated} from 'react-native';
+import {
+  View,
+  Text,
+  Image,
+  Animated,
+  useWindowDimensions,
+} from 'react-native';
 
-// import { constants, images, FONTS, SIZES, COLORS } from "../../constants";
 import TextButton from '../Components/TextButton';
 import {COLORS, constants, FONTS, images, SIZES} from '../constants';
 
+const LARGE_SCREEN_BREAKPOINT = 600;
+const MAX_CONTENT_WIDTH = 900;
+
 const OnBoarding = ({navigation}: {navigation: any}) => {
+  const {width: screenWidth, height: screenHeight} = useWindowDimensions();
+  const isLargeScreen = screenWidth >= LARGE_SCREEN_BREAKPOINT;
+  const contentWidth = isLargeScreen
+    ? Math.min(screenWidth * 0.88, MAX_CONTENT_WIDTH)
+    : screenWidth;
+
   const scrollX = React.useRef(new Animated.Value(0)).current;
   const flatListRef = React.useRef(null);
 
@@ -19,7 +33,7 @@ const OnBoarding = ({navigation}: {navigation: any}) => {
   );
 
   const Dots = () => {
-    const dotPosition = Animated.divide(scrollX, SIZES.width);
+    const dotPosition = Animated.divide(scrollX, screenWidth);
 
     return (
       <View
@@ -63,11 +77,14 @@ const OnBoarding = ({navigation}: {navigation: any}) => {
   };
 
   function renderHeaderLogo() {
+    const logoWidth = isLargeScreen
+      ? Math.min(screenWidth * 0.35, 220)
+      : screenWidth * 0.5;
     return (
       <View
         style={{
           position: 'absolute',
-          top: SIZES.height > 800 ? 50 : 25,
+          top: screenHeight > 800 ? 50 : 25,
           left: 0,
           right: 0,
           alignItems: 'center',
@@ -82,7 +99,7 @@ const OnBoarding = ({navigation}: {navigation: any}) => {
           source={images.logo_zentro}
           resizeMode="contain"
           style={{
-            width: SIZES.width * 0.5,
+            width: logoWidth,
             height: 80,
             opacity: 0.9,
           }}
@@ -117,17 +134,9 @@ const OnBoarding = ({navigation}: {navigation: any}) => {
   };
 
   function renderFooter() {
-    return (
-      <View
-        style={{
-          height: 160,
-        }}>
-        {/* Pagination / Dots */}
-        <View
-          style={{
-            flex: 1,
-            justifyContent: 'center',
-          }}>
+    const footerContent = (
+      <>
+        <View style={{flex: 1, justifyContent: 'center'}}>
           <Dots />
         </View>
 
@@ -136,7 +145,7 @@ const OnBoarding = ({navigation}: {navigation: any}) => {
             style={{
               flexDirection: 'row',
               justifyContent: 'space-between',
-              paddingHorizontal: SIZES.padding,
+              paddingHorizontal: isLargeScreen ? SIZES.padding * 2 : SIZES.padding,
               marginVertical: SIZES.padding,
             }}>
             <TextButton
@@ -180,7 +189,7 @@ const OnBoarding = ({navigation}: {navigation: any}) => {
         {currentIndex == constants.onboarding_screens.length - 1 && (
           <View
             style={{
-              paddingHorizontal: SIZES.padding,
+              paddingHorizontal: isLargeScreen ? SIZES.padding * 2 : SIZES.padding,
               marginVertical: SIZES.padding,
             }}>
             <TextButton
@@ -192,6 +201,24 @@ const OnBoarding = ({navigation}: {navigation: any}) => {
               onPress={completeOnboarding}
             />
           </View>
+        )}
+      </>
+    );
+
+    return (
+      <View style={{height: 160}}>
+        {isLargeScreen ? (
+          <View
+            style={{
+              maxWidth: contentWidth,
+              width: '100%',
+              alignSelf: 'center',
+              flex: 1,
+            }}>
+            {footerContent}
+          </View>
+        ) : (
+          footerContent
         )}
       </View>
     );
@@ -212,27 +239,103 @@ const OnBoarding = ({navigation}: {navigation: any}) => {
         data={constants.onboarding_screens}
         scrollEventThrottle={16}
         snapToAlignment="center"
+        snapToInterval={screenWidth}
+        decelerationRate="fast"
         showsHorizontalScrollIndicator={false}
         onScroll={Animated.event(
           [{nativeEvent: {contentOffset: {x: scrollX}}}],
           {useNativeDriver: false},
         )}
         onViewableItemsChanged={onViewChangeRef.current}
+        viewabilityConfig={{viewAreaCoveragePercentThreshold: 50}}
+        getItemLayout={(_: any, index: number) => ({
+          length: screenWidth,
+          offset: screenWidth * index,
+          index,
+        })}
         keyExtractor={item => `${item.id}`}
         renderItem={({item, index}) => {
+          const titleSize = isLargeScreen ? 28 : 24;
+          const descSize = isLargeScreen ? 16 : 14;
+          const lineHeight = isLargeScreen ? 24 : 20;
+
+          if (isLargeScreen) {
+            return (
+              <View
+                style={{
+                  width: screenWidth,
+                  flex: 1,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  paddingHorizontal: SIZES.padding,
+                }}>
+                <View
+                  style={{
+                    width: contentWidth,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    flex: 1,
+                    maxHeight: screenHeight * 0.7,
+                  }}>
+                  <View
+                    style={{
+                      flex: 0.48,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}>
+                    <Image
+                      source={item.bannerImage}
+                      resizeMode="contain"
+                      style={{
+                        width: contentWidth * 0.45,
+                        maxWidth: 320,
+                        height: contentWidth * 0.45,
+                        maxHeight: 320,
+                      }}
+                    />
+                  </View>
+                  <View
+                    style={{
+                      flex: 0.52,
+                      paddingLeft: SIZES.padding * 1.5,
+                      justifyContent: 'center',
+                    }}>
+                    <Text
+                      style={{
+                        ...FONTS.h1,
+                        fontSize: titleSize,
+                        color: COLORS.primary,
+                        marginBottom: 12,
+                        fontWeight: '600',
+                        textAlign: 'left',
+                      }}>
+                      {item.title}
+                    </Text>
+                    <Text
+                      style={{
+                        marginTop: SIZES.base,
+                        textAlign: 'left',
+                        color: COLORS.darkGray,
+                        lineHeight,
+                        fontSize: descSize,
+                        ...FONTS.body3,
+                      }}>
+                      {item.description}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            );
+          }
+
           return (
             <View
               style={{
-                width: SIZES.width,
+                width: screenWidth,
               }}>
-              {/* Header */}
-              <View
-                style={{
-                  flex: 3,
-                }}>
+              <View style={{flex: 3}}>
                 <View
-                  // source={""}
-                  // resizeMode="stretch"
                   style={{
                     flex: 1,
                     alignItems: 'center',
@@ -245,20 +348,15 @@ const OnBoarding = ({navigation}: {navigation: any}) => {
                     resizeMode="contain"
                     style={{
                       width:
-                        SIZES.height > 800
-                          ? SIZES.width * 0.8
-                          : SIZES.width * 0.7,
+                        screenHeight > 800 ? screenWidth * 0.8 : screenWidth * 0.7,
                       height:
-                        SIZES.height > 800
-                          ? SIZES.width * 0.8
-                          : SIZES.width * 0.7,
+                        screenHeight > 800 ? screenWidth * 0.8 : screenWidth * 0.7,
                       marginBottom: -SIZES.padding,
                     }}
                   />
                 </View>
               </View>
 
-              {/* Detail */}
               <View
                 style={{
                   flex: 1,
@@ -270,7 +368,7 @@ const OnBoarding = ({navigation}: {navigation: any}) => {
                 <Text
                   style={{
                     ...FONTS.h1,
-                    fontSize: 24,
+                    fontSize: titleSize,
                     color: COLORS.primary,
                     marginBottom: 8,
                     fontWeight: '600',
@@ -284,8 +382,8 @@ const OnBoarding = ({navigation}: {navigation: any}) => {
                     textAlign: 'center',
                     color: COLORS.darkGray,
                     paddingHorizontal: SIZES.padding,
-                    lineHeight: 20,
-                    fontSize: 14,
+                    lineHeight,
+                    fontSize: descSize,
                     ...FONTS.body3,
                   }}>
                   {item.description}

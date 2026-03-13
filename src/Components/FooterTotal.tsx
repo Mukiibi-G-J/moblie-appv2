@@ -95,7 +95,7 @@ const FooterTotal: React.FC<FooterTotalProps> = ({
           {isLoading ? (
             <ActivityIndicator color={COLORS.white} />
           ) : (
-            <Text style={styles.checkoutButtonText}>Checkout</Text>
+            <Text style={styles.checkoutButtonText}>Complete Sale</Text>
           )}
         </TouchableOpacity>
       </View>

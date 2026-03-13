@@ -25,10 +25,10 @@ import {useAppContext} from '../context/Store';
 import {COLORS, FONTS, SIZES, icons, constants, dummyData} from '../constants';
 import Header from '../Components/Header';
 import Home from './Home/Home';
-// import { Search } from './Search/Search';
-// import { CartTab } from './Cart/CartTab';
-// import { Favourite } from './Favourite/Favourite';
-// import { Notification } from './Notification/Notification';
+import SalesHistory from './Sales/SalesHistory';
+import Items from './Items/Items';
+import Customers from './Customers/Customers';
+import Reports from './Reports/Reports';
 
 // Define types for props
 type TabButtonProps = {
@@ -141,48 +141,60 @@ const MainLayout: React.FC<MainLayoutProps> = ({
   // Reanimated Shared Value
   const homeTabFlex = useSharedValue(1);
   const homeTabColor = useSharedValue(COLORS.white);
-  const searchTabFlex = useSharedValue(1);
-  const searchTabColor = useSharedValue(COLORS.white);
-  const cartTabFlex = useSharedValue(1);
-  const cartTabColor = useSharedValue(COLORS.white);
-  const favouriteTabFlex = useSharedValue(1);
-  const favouriteTabColor = useSharedValue(COLORS.white);
-  const notificationTabFlex = useSharedValue(1);
-  const notificationTabColor = useSharedValue(COLORS.white);
+  const salesTabFlex = useSharedValue(1);
+  const salesTabColor = useSharedValue(COLORS.white);
+  const itemsTabFlex = useSharedValue(1);
+  const itemsTabColor = useSharedValue(COLORS.white);
+  const customersTabFlex = useSharedValue(1);
+  const customersTabColor = useSharedValue(COLORS.white);
+  const reportsTabFlex = useSharedValue(1);
+  const reportsTabColor = useSharedValue(COLORS.white);
 
   // Reanimated Animated Style
   const homeFlexStyle = useAnimatedStyle(() => ({flex: homeTabFlex.value}));
   const homeColorStyle = useAnimatedStyle(() => ({
     backgroundColor: homeTabColor.value,
   }));
-  const searchFlexStyle = useAnimatedStyle(() => ({flex: searchTabFlex.value}));
-  const searchColorStyle = useAnimatedStyle(() => ({
-    backgroundColor: searchTabColor.value,
+  const salesFlexStyle = useAnimatedStyle(() => ({flex: salesTabFlex.value}));
+  const salesColorStyle = useAnimatedStyle(() => ({
+    backgroundColor: salesTabColor.value,
   }));
-  const cartFlexStyle = useAnimatedStyle(() => ({flex: cartTabFlex.value}));
-  const cartColorStyle = useAnimatedStyle(() => ({
-    backgroundColor: cartTabColor.value,
+  const itemsFlexStyle = useAnimatedStyle(() => ({flex: itemsTabFlex.value}));
+  const itemsColorStyle = useAnimatedStyle(() => ({
+    backgroundColor: itemsTabColor.value,
   }));
-  const favouriteFlexStyle = useAnimatedStyle(() => ({
-    flex: favouriteTabFlex.value,
+  const customersFlexStyle = useAnimatedStyle(() => ({
+    flex: customersTabFlex.value,
   }));
-  const favouriteColorStyle = useAnimatedStyle(() => ({
-    backgroundColor: favouriteTabColor.value,
+  const customersColorStyle = useAnimatedStyle(() => ({
+    backgroundColor: customersTabColor.value,
   }));
-  const notificationFlexStyle = useAnimatedStyle(() => ({
-    flex: notificationTabFlex.value,
+  const reportsFlexStyle = useAnimatedStyle(() => ({
+    flex: reportsTabFlex.value,
   }));
-  const notificationColorStyle = useAnimatedStyle(() => ({
-    backgroundColor: notificationTabColor.value,
+  const reportsColorStyle = useAnimatedStyle(() => ({
+    backgroundColor: reportsTabColor.value,
   }));
 
   useEffect(() => {
-    setSelectedTab(constants.screens.home);
-  }, []);
+    const tabIndexMap: {[key: string]: number} = {
+      [constants.screens.home]: 0,
+      [constants.screens.sales]: 1,
+      [constants.screens.items]: 2,
+      [constants.screens.customers]: 3,
+      [constants.screens.reports]: 4,
+    };
 
-  useEffect(() => {
+    const currentIndex = tabIndexMap[selectedTab] ?? 0;
+    const offset = SIZES.width * currentIndex;
+
+    // Use scrollToOffset instead of scrollToIndex for better reliability
+    if (flatListRef.current) {
+      flatListRef.current.scrollToOffset({offset, animated: false});
+    }
+
+    // Update tab animations
     if (selectedTab === constants.screens.home) {
-      flatListRef.current?.scrollToIndex({index: 0, animated: false});
       homeTabFlex.value = withTiming(4, {duration: 500});
       homeTabColor.value = withTiming(COLORS.primary2, {duration: 500});
     } else {
@@ -190,40 +202,36 @@ const MainLayout: React.FC<MainLayoutProps> = ({
       homeTabColor.value = withTiming(COLORS.white, {duration: 500});
     }
 
-    if (selectedTab === constants.screens.search) {
-      flatListRef.current?.scrollToIndex({index: 1, animated: false});
-      searchTabFlex.value = withTiming(4, {duration: 500});
-      searchTabColor.value = withTiming(COLORS.primary2, {duration: 500});
+    if (selectedTab === constants.screens.sales) {
+      salesTabFlex.value = withTiming(4, {duration: 500});
+      salesTabColor.value = withTiming(COLORS.primary2, {duration: 500});
     } else {
-      searchTabFlex.value = withTiming(1, {duration: 500});
-      searchTabColor.value = withTiming(COLORS.white, {duration: 500});
+      salesTabFlex.value = withTiming(1, {duration: 500});
+      salesTabColor.value = withTiming(COLORS.white, {duration: 500});
     }
 
-    if (selectedTab === constants.screens.cart) {
-      flatListRef.current?.scrollToIndex({index: 2, animated: false});
-      cartTabFlex.value = withTiming(4, {duration: 500});
-      cartTabColor.value = withTiming(COLORS.primary2, {duration: 500});
+    if (selectedTab === constants.screens.items) {
+      itemsTabFlex.value = withTiming(4, {duration: 500});
+      itemsTabColor.value = withTiming(COLORS.primary2, {duration: 500});
     } else {
-      cartTabFlex.value = withTiming(1, {duration: 500});
-      cartTabColor.value = withTiming(COLORS.white, {duration: 500});
+      itemsTabFlex.value = withTiming(1, {duration: 500});
+      itemsTabColor.value = withTiming(COLORS.white, {duration: 500});
     }
 
-    if (selectedTab === constants.screens.favourite) {
-      flatListRef.current?.scrollToIndex({index: 3, animated: false});
-      favouriteTabFlex.value = withTiming(4, {duration: 500});
-      favouriteTabColor.value = withTiming(COLORS.primary2, {duration: 500});
+    if (selectedTab === constants.screens.customers) {
+      customersTabFlex.value = withTiming(4, {duration: 500});
+      customersTabColor.value = withTiming(COLORS.primary2, {duration: 500});
     } else {
-      favouriteTabFlex.value = withTiming(1, {duration: 500});
-      favouriteTabColor.value = withTiming(COLORS.white, {duration: 500});
+      customersTabFlex.value = withTiming(1, {duration: 500});
+      customersTabColor.value = withTiming(COLORS.white, {duration: 500});
     }
 
-    if (selectedTab === constants.screens.notification) {
-      flatListRef.current?.scrollToIndex({index: 4, animated: false});
-      notificationTabFlex.value = withTiming(4, {duration: 500});
-      notificationTabColor.value = withTiming(COLORS.primary2, {duration: 500});
+    if (selectedTab === constants.screens.reports) {
+      reportsTabFlex.value = withTiming(4, {duration: 500});
+      reportsTabColor.value = withTiming(COLORS.primary2, {duration: 500});
     } else {
-      notificationTabFlex.value = withTiming(1, {duration: 500});
-      notificationTabColor.value = withTiming(COLORS.white, {duration: 500});
+      reportsTabFlex.value = withTiming(1, {duration: 500});
+      reportsTabColor.value = withTiming(COLORS.white, {duration: 500});
     }
   }, [selectedTab]);
 
@@ -269,6 +277,20 @@ const MainLayout: React.FC<MainLayoutProps> = ({
             showsHorizontalScrollIndicator={false}
             data={constants.bottom_tabs}
             keyExtractor={item => `${item.id}`}
+            getItemLayout={(data, index) => ({
+              length: SIZES.width,
+              offset: SIZES.width * index,
+              index,
+            })}
+            onScrollToIndexFailed={info => {
+              const wait = new Promise(resolve => setTimeout(resolve, 500));
+              wait.then(() => {
+                flatListRef.current?.scrollToIndex({
+                  index: info.index,
+                  animated: false,
+                });
+              });
+            }}
             renderItem={({item}) => {
               return (
                 <View
@@ -277,10 +299,10 @@ const MainLayout: React.FC<MainLayoutProps> = ({
                     width: SIZES.width,
                   }}>
                   {item.label === constants.screens.home && <Home />}
-                  {/* {item.label === constants.screens.search && <Search />}
-                                    {item.label === constants.screens.cart && <CartTab />}
-                                    {item.label === constants.screens.favourite && <Favourite />}
-                                    {item.label === constants.screens.notification && <Notification />} */}
+                  {item.label === constants.screens.sales && <SalesHistory />}
+                  {item.label === constants.screens.items && <Items />}
+                  {item.label === constants.screens.customers && <Customers />}
+                  {item.label === constants.screens.reports && <Reports />}
                 </View>
               );
             }}
@@ -327,39 +349,39 @@ const MainLayout: React.FC<MainLayoutProps> = ({
             />
 
             <TabButton
-              label={constants.screens.search}
-              icon={icons.search}
-              isFocused={selectedTab === constants.screens.search}
-              outerContainerStyle={searchFlexStyle}
-              innerContainerStyle={searchColorStyle}
-              onPress={() => setSelectedTab(constants.screens.search)}
-            />
-
-            {/* <TabButton
-                            label={constants.screens.cart}
-                            icon={icons.cart}
-                            isFocused={selectedTab === constants.screens.cart}
-                            outerContainerStyle={cartFlexStyle}
-                            innerContainerStyle={cartColorStyle}
-                            onPress={() => setSelectedTab(constants.screens.cart)}
-                        /> */}
-
-            <TabButton
-              label={constants.screens.favourite}
-              icon={icons.favourite}
-              isFocused={selectedTab === constants.screens.favourite}
-              outerContainerStyle={favouriteFlexStyle}
-              innerContainerStyle={favouriteColorStyle}
-              onPress={() => setSelectedTab(constants.screens.favourite)}
+              label={constants.screens.sales}
+              icon={icons.cart}
+              isFocused={selectedTab === constants.screens.sales}
+              outerContainerStyle={salesFlexStyle}
+              innerContainerStyle={salesColorStyle}
+              onPress={() => setSelectedTab(constants.screens.sales)}
             />
 
             <TabButton
-              label={constants.screens.notification}
-              icon={icons.notification}
-              isFocused={selectedTab === constants.screens.notification}
-              outerContainerStyle={notificationFlexStyle}
-              innerContainerStyle={notificationColorStyle}
-              onPress={() => setSelectedTab(constants.screens.notification)}
+              label={constants.screens.items}
+              icon={icons.product}
+              isFocused={selectedTab === constants.screens.items}
+              outerContainerStyle={itemsFlexStyle}
+              innerContainerStyle={itemsColorStyle}
+              onPress={() => setSelectedTab(constants.screens.items)}
+            />
+
+            <TabButton
+              label={constants.screens.customers}
+              icon={icons.profile}
+              isFocused={selectedTab === constants.screens.customers}
+              outerContainerStyle={customersFlexStyle}
+              innerContainerStyle={customersColorStyle}
+              onPress={() => setSelectedTab(constants.screens.customers)}
+            />
+
+            <TabButton
+              label={constants.screens.reports}
+              icon={icons.reports}
+              isFocused={selectedTab === constants.screens.reports}
+              outerContainerStyle={reportsFlexStyle}
+              innerContainerStyle={reportsColorStyle}
+              onPress={() => setSelectedTab(constants.screens.reports)}
             />
           </View>
         </View>

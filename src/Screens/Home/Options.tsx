@@ -8,55 +8,94 @@ import {
   StyleSheet,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
-import {COLORS, icons} from '../../constants';
+import {COLORS, icons, constants} from '../../constants';
+import {usePermissions} from '../../hooks/usePermissions';
+import {useAppContext} from '../../context/Store';
 
 const Options = () => {
   const navigation = useNavigation();
+  const {setSelectedTab} = useAppContext();
+  const {isModuleVisible, hasAnyPageAccess, canCreate, canRead} = usePermissions();
 
-  const options = [
+  // Define all possible options with permission checks
+  const allOptions = [
     {
       icon: icons.cart,
       iconColor: COLORS.primary,
-      title: 'Sales',
-      subtitle: 'Manage sales',
-      link: 'Sales',
+      title: 'Sale History',
+      subtitle: 'View past sales',
+      link: constants.screens.sales,
       color: 'rgba(76, 175, 80, 0.1)',
       borderColor: 'rgba(76, 175, 80, 0.3)',
+      // Permission check: sales module + sales page access
+      hasPermission: () =>
+        isModuleVisible('sales') && hasAnyPageAccess('Sales'),
     },
     {
       icon: icons.product,
       iconColor: COLORS.secondary,
       title: 'Items',
       subtitle: 'Inventory & stock',
-      link: 'Items',
+      link: constants.screens.items,
       color: 'rgba(33, 150, 243, 0.1)',
       borderColor: 'rgba(33, 150, 243, 0.3)',
+      // Permission check: items module + items page access
+      hasPermission: () =>
+        isModuleVisible('items') && hasAnyPageAccess('Items'),
     },
     {
-      icon: icons.printer, // Assuming you have a label icon
+      icon: icons.printer,
       iconColor: COLORS.warning,
       title: 'Print Labels',
       subtitle: 'Generate labels',
       link: 'PrintLabels',
       color: 'rgba(255, 152, 0, 0.1)',
       borderColor: 'rgba(255, 152, 0, 0.3)',
+      // Permission check: items module + read permission
+      hasPermission: () => isModuleVisible('items') && canRead('Items'),
     },
     {
       icon: icons.cart,
       iconColor: COLORS.error,
-      title: 'Cart',
-      subtitle: 'Quick checkout',
+      title: 'Make Sale',
+      subtitle: 'Create new sale',
       link: 'Cart',
       color: 'rgba(244, 67, 54, 0.1)',
       borderColor: 'rgba(244, 67, 54, 0.3)',
+      // Permission check: sales module + create permission
+      hasPermission: () => isModuleVisible('sales') && canCreate('Sales'),
     },
   ];
 
-  const renderOption = ({item}) => (
-    <TouchableOpacity
-      style={styles.optionButton}
-      onPress={() => navigation.navigate(item.link)}
-      activeOpacity={0.7}>
+  // Filter options based on permissions
+  const options = allOptions.filter(option => option.hasPermission());
+
+  const renderOption = ({item}) => {
+    const handlePress = () => {
+      // Map tab names to screen names for navigation
+      const screenMap: {[key: string]: string} = {
+        [constants.screens.sales]: 'SalesHistory',
+        [constants.screens.items]: 'Items',
+      };
+      
+      // If it has a screen route, navigate to it (like Cart)
+      if (screenMap[item.link]) {
+        navigation.navigate(screenMap[item.link] as never);
+      } else if (item.link === 'Cart' || item.link === 'PrintLabels') {
+        // For other screens, use navigation directly
+        navigation.navigate(item.link as never);
+      } else {
+        // Fallback: try to switch tabs for other bottom tabs
+        console.log('Switching to tab:', item.link);
+        setSelectedTab(item.link);
+      }
+    };
+
+    return (
+      <TouchableOpacity
+        style={styles.optionButton}
+        onPress={handlePress}
+        activeOpacity={0.7}>
       <View
         style={[
           styles.iconContainer,
@@ -76,15 +115,18 @@ const Options = () => {
         <Text style={styles.subtitle}>{item.subtitle}</Text>
       </View>
     </TouchableOpacity>
-  );
+    );
+  };
+
+  // Don't render if no options available
+  if (options.length === 0) {
+    return null;
+  }
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerText}>Quick Actions</Text>
-        <TouchableOpacity>
-          <Text style={styles.seeAllText}>See All</Text>
-        </TouchableOpacity>
       </View>
       <View style={styles.gridContainer}>
         <FlatList

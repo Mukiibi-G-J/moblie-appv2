@@ -44,19 +44,29 @@ const onboarding_screens = [
 const screens = {
   main_layout: 'MainLayout',
   home: 'Home',
-  search: 'Search',
-  cart: 'Cart',
-  favourite: 'Favourite',
-  notification: 'Notification',
+  sales: 'Sales',
+  items: 'Items',
+  itemCategories: 'Item Categories',
+  customers: 'Customers',
+  reports: 'Reports',
   my_wallet: 'My Wallet',
   settings: 'Settings',
   itemJournal: 'Item Journal',
-  items: 'Items',
-  sales: 'Sales',
   inventory: 'Inventory',
-  reports: 'Reports',
   analytics: 'Analytics',
   expenses: 'Expenses',
+  expenseHistory: 'Expense History',
+  purchases: 'Purchases',
+  suppliers: 'Suppliers',
+  payments: 'Payments',
+  bankAccounts: 'Bank Accounts',
+  bankAccountLedger: 'Bank Account Ledger Entries',
+  loans: 'Loans',
+  loanRepayments: 'Loan Repayments',
+  prepayments: 'Prepayments',
+  financials: 'Financials',
+  userManagement: 'User Management',
+  helpSupport: 'Help & Support',
 };
 
 const bottom_tabs = [
@@ -66,39 +76,19 @@ const bottom_tabs = [
   },
   {
     id: 1,
-    label: screens.search,
-  },
-  {
-    id: 2,
-    label: screens.cart,
-  },
-  {
-    id: 3,
-    label: screens.favourite,
-  },
-  {
-    id: 4,
-    label: screens.notification,
-  },
-  {
-    id: 5,
-    label: screens.settings,
-  },
-  {
-    id: 6,
     label: screens.sales,
   },
   {
-    id: 7,
-    label: screens.inventory,
+    id: 2,
+    label: screens.items,
   },
   {
-    id: 8,
+    id: 3,
+    label: screens.customers,
+  },
+  {
+    id: 4,
     label: screens.reports,
-  },
-  {
-    id: 9,
-    label: screens.analytics,
   },
 ];
 

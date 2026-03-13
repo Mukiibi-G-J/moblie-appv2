@@ -1,8 +1,10 @@
-import { View, Text, StyleSheet, Modal, TouchableOpacity, FlatList, TextInput, ActivityIndicator, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Modal, TouchableOpacity, FlatList, TextInput, ActivityIndicator, ScrollView, Alert } from 'react-native';
 import React, { useState, useEffect } from 'react';
 import { fetchItemJournal, updateItemJournal } from '../../services/app.services';
-import { COLORS } from '../../constants';
+import { COLORS, FONTS, SIZES } from '../../constants';
 import Toast from 'react-native-toast-message';
+import {usePermissions} from '../../hooks/usePermissions';
+import {PAGE_NAMES} from '../../constants/pageNames';
 
 interface ItemJournal {
     id: number;
@@ -31,12 +33,14 @@ const EditJournalModal = ({
     visible,
     onClose,
     journal,
-    onSave
+    onSave,
+    canEdit
 }: {
     visible: boolean;
     onClose: () => void;
     journal: ItemJournal | null;
     onSave: (updatedJournal: ItemJournal) => void;
+    canEdit: boolean;
 }) => {
     const [editedJournal, setEditedJournal] = useState < ItemJournal | null > (null);
 
@@ -105,12 +109,14 @@ const EditJournalModal = ({
                             >
                                 <Text style={styles.buttonText}>Cancel</Text>
                             </TouchableOpacity>
-                            <TouchableOpacity
-                                style={[styles.button, styles.saveButton]}
-                                onPress={handleSave}
-                            >
-                                <Text style={styles.buttonText}>Save</Text>
-                            </TouchableOpacity>
+                            {canEdit && (
+                                <TouchableOpacity
+                                    style={[styles.button, styles.saveButton]}
+                                    onPress={handleSave}
+                                >
+                                    <Text style={styles.buttonText}>Save</Text>
+                                </TouchableOpacity>
+                            )}
                         </View>
                     </ScrollView>
                 </View>
@@ -120,6 +126,23 @@ const EditJournalModal = ({
 };
 
 const ItemJournal = () => {
+    const {canRead, canEdit} = usePermissions();
+    const PAGE_NAME = PAGE_NAMES.ITEM_JOURNAL;
+
+    // Early return if no read permission
+    if (!canRead(PAGE_NAME)) {
+        return (
+            <View style={styles.container}>
+                <View style={styles.accessDeniedContainer}>
+                    <Text style={styles.accessDeniedTitle}>Access Denied</Text>
+                    <Text style={styles.accessDeniedMessage}>
+                        You don't have permission to view item journal.
+                    </Text>
+                </View>
+            </View>
+        );
+    }
+
     const [editModal, setEditModal] = useState(false);
     const [selectedJournal, setSelectedJournal] = useState < ItemJournal | null > (null);
     const [currentPage, setCurrentPage] = useState(1);
@@ -164,6 +187,14 @@ const ItemJournal = () => {
     }, [currentPage]);
 
     const handleEditJournal = (journal: ItemJournal) => {
+        // Check permission before opening edit modal
+        if (!canEdit(PAGE_NAME)) {
+            Alert.alert(
+                'Access Denied',
+                'You do not have permission to edit journal entries.',
+            );
+            return;
+        }
         setSelectedJournal(journal);
         setEditModal(true);
     };
@@ -205,8 +236,12 @@ const ItemJournal = () => {
 
     const renderItem = ({ item }: { item: ItemJournal }) => (
         <TouchableOpacity
-            style={styles.tableRow}
+            style={[
+                styles.tableRow,
+                !canEdit(PAGE_NAME) && styles.disabledRow
+            ]}
             onPress={() => handleEditJournal(item)}
+            disabled={!canEdit(PAGE_NAME)}
         >
             <View style={styles.docColumn}>
                 <Text style={styles.text}>{item.document_no}</Text>
@@ -281,6 +316,7 @@ const ItemJournal = () => {
                 onClose={() => setEditModal(false)}
                 journal={selectedJournal}
                 onSave={handleSave}
+                canEdit={canEdit(PAGE_NAME)}
             />
             <Toast />
 
@@ -312,6 +348,26 @@ const styles = StyleSheet.create({
         padding: 16,
         backgroundColor: 'white',
     },
+    accessDeniedContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 20,
+        backgroundColor: COLORS.white,
+        margin: 16,
+        borderRadius: SIZES.radius,
+    },
+    accessDeniedTitle: {
+        ...FONTS.h2,
+        color: COLORS.error,
+        marginBottom: SIZES.base,
+        textAlign: 'center',
+    },
+    accessDeniedMessage: {
+        ...FONTS.body3,
+        color: COLORS.gray,
+        textAlign: 'center',
+    },
     tableHeader: {
         flexDirection: 'row',
         padding: 10,
@@ -325,6 +381,9 @@ const styles = StyleSheet.create({
         borderBottomWidth: 1,
         borderBottomColor: '#eee',
         backgroundColor: 'white',
+    },
+    disabledRow: {
+        opacity: 0.5,
     },
     docColumn: {
         width: 70,

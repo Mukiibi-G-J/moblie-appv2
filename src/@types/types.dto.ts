@@ -126,6 +126,22 @@ export interface SalesInvoiceData {
   }>;
 }
 
+export interface TrackingCodeRequirement {
+  system_id?: string;
+  code?: string;
+  description?: string;
+  require_serial_no?: boolean;
+  require_lot_no?: boolean;
+  require_expiry_date?: boolean;
+}
+
+export interface SelectedTrackingDetails {
+  lotNo?: string | null;
+  serialNo?: string | null;
+  expiryDate?: string | null;
+  code?: string | null;
+}
+
 export interface ItemJournalData {
   document_ids: number[];
 }
@@ -148,6 +164,9 @@ export interface CartItem {
     item: number;
   }[];
   date_sold: string;
+  tracking_code?: TrackingCodeRequirement | null;
+  selectedTrackingCode?: string | null;
+  trackingDetails?: SelectedTrackingDetails;
   bar_code_no?: string;
 }
 

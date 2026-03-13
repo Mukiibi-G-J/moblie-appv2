@@ -14,12 +14,21 @@ import {
   ScrollView,
   Modal,
   Button,
+  Alert,
 } from 'react-native';
 import {SwipeListView} from 'react-native-swipe-list-view';
 import {
   createSales,
   postItemJournal,
   searchItems,
+  fetchDraftSales,
+  getSalesInvoice,
+  updateSalesInvoice,
+  createSalesInvoice,
+  fetchCustomers,
+  fetchPaymentMethods,
+  Customer,
+  PaymentMethod,
 } from '../../services/app.services';
 import Toast from 'react-native-toast-message';
 import ReactNativeModal from 'react-native-modal';
@@ -79,6 +88,17 @@ const Cart = ({navigation}: {navigation: any}) => {
   const isFocused = useIsFocused();
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
   const [showSalesModal, setShowSalesModal] = useState(false);
+  const [globalSellingDate, setGlobalSellingDate] = useState(new Date());
+  const [showGlobalDatePicker, setShowGlobalDatePicker] = useState(false);
+  
+  // Drafts state
+  const [drafts, setDrafts] = useState<any[]>([]);
+  const [loadingDrafts, setLoadingDrafts] = useState(false);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [showDraftsSection, setShowDraftsSection] = useState(true);
+  const [loadingDraftIntoCart, setLoadingDraftIntoCart] = useState(false);
+  const [currentDraftId, setCurrentDraftId] = useState<number | null>(null); // Track loaded draft
+  const [currentDraftSystemId, setCurrentDraftSystemId] = useState<string | null>(null); // Track loaded draft system_id
 
   useEffect(() => {
     const keyboardDidShowListener = Keyboard.addListener(
@@ -99,6 +119,13 @@ const Cart = ({navigation}: {navigation: any}) => {
       keyboardDidShowListener.remove();
     };
   }, []);
+
+  // Load drafts when screen is focused
+  useEffect(() => {
+    if (isFocused) {
+      loadDrafts();
+    }
+  }, [isFocused]);
 
   // Handle modal visibility with keyboard
   useEffect(() => {
@@ -154,12 +181,21 @@ const Cart = ({navigation}: {navigation: any}) => {
     // Add current date as date_sold and include id field
     const currentDate = new Date().toISOString();
 
+    const trackingConfig =
+      item.tracking_code ?? existItem?.tracking_code ?? null;
+    const selectedTrackingCode =
+      existItem?.selectedTrackingCode ?? item.selectedTrackingCode ?? null;
+    const trackingDetails = existItem?.trackingDetails ?? item.trackingDetails;
+
     dispatch({
       type: 'CART_ADD_ITEM',
       payload: {
         ...item,
         quantity,
         date_sold: currentDate,
+        tracking_code: trackingConfig,
+        selectedTrackingCode,
+        trackingDetails,
       },
     });
 
@@ -303,11 +339,306 @@ const Cart = ({navigation}: {navigation: any}) => {
   const handleSaleSuccess = (result: any) => {
     // Clear cart after successful sale
     dispatch({type: 'CLEAR_CART'});
+    // Clear current draft ID and system_id if set
+    setCurrentDraftId(null);
+    setCurrentDraftSystemId(null);
+
+    // Refresh drafts after successful sale
+    loadDrafts();
 
     // Navigate back to home
     setTimeout(() => {
       navigation.navigate('Cart');
     }, 2000);
+  };
+
+  // Load drafts
+  const loadDrafts = async () => {
+    try {
+      setLoadingDrafts(true);
+      const draftList = await fetchDraftSales();
+      setDrafts(draftList);
+    } catch (error) {
+      console.error('Error loading drafts:', error);
+    } finally {
+      setLoadingDrafts(false);
+    }
+  };
+
+  // Save draft
+  const handleSaveDraft = async () => {
+    if (isSavingDraft || cartItems.length === 0) return;
+
+    try {
+      setIsSavingDraft(true);
+
+      // Get default customer (General)
+      const customersData = await fetchCustomers();
+      const generalCustomer = customersData.find(
+        customer =>
+          customer.name.toLowerCase().includes('general') ||
+          customer.no.toLowerCase().includes('gen'),
+      );
+
+      if (!generalCustomer) {
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: 'Please select a customer first',
+          visibilityTime: 3000,
+          position: 'top',
+        });
+        return;
+      }
+
+      // Get payment methods
+      const paymentMethodsData = await fetchPaymentMethods();
+      if (paymentMethodsData.length === 0) {
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: 'No payment methods available. Please contact your administrator.',
+          visibilityTime: 3000,
+          position: 'top',
+        });
+        return;
+      }
+
+      const totalAmount = cartItems.reduce(
+        (sum: number, item: CartItem) =>
+          sum + (item.unit_price || 0) * (Number(item.quantity) || 0),
+        0,
+      );
+
+      const salesInvoiceData = {
+        customer: generalCustomer.id,
+        customer_name: generalCustomer.name,
+        document_date: globalSellingDate.toISOString().split('T')[0],
+        status: 'Draft' as const,
+        total_amount: totalAmount,
+        payment_method: paymentMethodsData[0]?.id,
+        lines: cartItems.map((item, index) => ({
+          id: index + 1,
+          item: item.no || item.system_id,
+          item_no: item.no || item.system_id,
+          item_name: item.item_name,
+          quantity: item.quantity.toString(),
+          unit_price: item.unit_price.toString(),
+          total_amount: (item.unit_price * Number(item.quantity)).toString(),
+          unit_of_measure: item.unit_of_measure || 'PCS',
+          tracking_code: item.selectedTrackingCode || '',
+          description: '',
+        })),
+      };
+
+      let response;
+
+      // If we have a current draft ID, update it instead of creating new
+      if (currentDraftId) {
+        console.log('Updating existing draft:', currentDraftId, 'system_id:', currentDraftSystemId);
+        
+        // Include id and system_id in the update data (required by upsert endpoint)
+        const updateData = {
+          ...salesInvoiceData,
+          id: currentDraftId,
+          system_id: currentDraftSystemId || undefined,
+        };
+        
+        response = await updateSalesInvoice(currentDraftId, updateData);
+
+        Toast.show({
+          type: 'success',
+          text1: 'Draft Updated',
+          text2: `Draft has been updated successfully`,
+          visibilityTime: 3000,
+          position: 'top',
+        });
+
+        // Clear the current draft ID and system_id after successful update
+        setCurrentDraftId(null);
+        setCurrentDraftSystemId(null);
+      } else {
+        // Check if we already have 3 drafts before creating new
+        if (drafts.length >= 3) {
+          Toast.show({
+            type: 'error',
+            text1: 'Maximum Drafts Reached',
+            text2: 'You can only have 3 drafts. Please complete or delete an existing draft first.',
+            visibilityTime: 3000,
+            position: 'top',
+          });
+          return;
+        }
+
+        console.log('Creating new draft');
+        response = await createSalesInvoice(salesInvoiceData);
+
+        Toast.show({
+          type: 'success',
+          text1: 'Draft Saved',
+          text2: `Invoice No: ${response.data.invoice_no || 'Draft'}`,
+          visibilityTime: 3000,
+          position: 'top',
+        });
+      }
+
+      // Clear cart after saving draft
+      dispatch({type: 'CLEAR_CART'});
+      
+      // Clear current draft ID and system_id if they were set
+      setCurrentDraftId(null);
+      setCurrentDraftSystemId(null);
+
+      // Refresh drafts list
+      await loadDrafts();
+    } catch (error: any) {
+      console.error('Failed to save draft:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: error.response?.data?.message || 'Failed to save draft',
+        visibilityTime: 3000,
+        position: 'top',
+      });
+    } finally {
+      setIsSavingDraft(false);
+    }
+  };
+
+  // Select draft and load into cart
+  const handleSelectDraft = async (draft: any) => {
+    try {
+      setLoadingDraftIntoCart(true);
+
+      // Get full draft details with lines
+      const fullDraft = await getSalesInvoice(draft.id);
+
+      // Clear current cart
+      dispatch({type: 'CLEAR_CART'});
+
+      // Fetch current inventory for each item in the draft
+      const draftItemsWithInventory = await Promise.all(
+        (fullDraft.lines || []).map(async (line: any) => {
+          const itemNo = line.item_no || line.item;
+          const systemId = line.item_system_id || itemNo;
+
+          // Try to fetch current item details to get inventory
+          let inventory = 0;
+          let itemDetails: any = null;
+
+          try {
+            // Search for the item to get current inventory
+            const searchResults = await searchItems(itemNo);
+            itemDetails = searchResults.find(
+              (item: CartItem) =>
+                item.no === itemNo ||
+                item.system_id === systemId ||
+                item.bar_code_no === itemNo,
+            );
+
+            if (itemDetails) {
+              inventory = itemDetails.inventory || 0;
+            }
+          } catch (error) {
+            console.warn(`Failed to fetch inventory for item ${itemNo}:`, error);
+            // Continue with inventory = 0 if fetch fails
+          }
+
+          return {
+            system_id: systemId || `draft-${line.id}`,
+            no: itemNo,
+            item_name: line.item_name,
+            barcode: itemDetails?.bar_code_no || '',
+            quantity: parseInt(line.quantity) || 1,
+            unit_price: parseFloat(line.unit_price) || 0,
+            original_price: parseFloat(line.unit_price) || 0,
+            total: parseFloat(line.total_amount) || 0,
+            inventory: inventory,
+            unit_of_measure: line.unit_of_measure || 'PCS',
+            quantity_per_unit: itemDetails?.quantity_per_unit || 1,
+            selectedTrackingCode: line.tracking_code || '',
+            tracking_code: line.tracking_code || null,
+            date_sold: fullDraft.document_date || new Date().toISOString(),
+            item_images: itemDetails?.item_images || [],
+          };
+        }),
+      );
+
+      // Add items to cart
+      draftItemsWithInventory.forEach((item: CartItem) => {
+        dispatch({
+          type: 'CART_ADD_ITEM',
+          payload: item,
+        });
+      });
+
+      // Set global selling date
+      if (fullDraft.document_date) {
+        setGlobalSellingDate(new Date(fullDraft.document_date));
+      }
+
+      // Store the draft ID and system_id so we can update it later instead of creating new
+      setCurrentDraftId(draft.id);
+      setCurrentDraftSystemId(fullDraft.system_id || null);
+
+      Toast.show({
+        type: 'success',
+        text1: 'Draft Loaded',
+        text2: 'Draft has been loaded into sale. You can add more items and save to update.',
+        visibilityTime: 3000,
+        position: 'top',
+      });
+
+      // Hide drafts section
+      setShowDraftsSection(false);
+    } catch (error: any) {
+      console.error('Failed to load draft:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to load draft',
+        visibilityTime: 3000,
+        position: 'top',
+      });
+    } finally {
+      setLoadingDraftIntoCart(false);
+    }
+  };
+
+  // Delete draft
+  const handleDeleteDraft = async (draft: any) => {
+    try {
+      await updateSalesInvoice(draft.id, {
+        deleted: true,
+        system_id: draft.system_id,
+      });
+      
+      // Remove from local state
+      setDrafts(drafts.filter(d => d.id !== draft.id));
+
+      // If the deleted draft is the one currently loaded, clear the current draft tracking
+      if (currentDraftId === draft.id) {
+        setCurrentDraftId(null);
+        setCurrentDraftSystemId(null);
+      }
+
+      Toast.show({
+        type: 'success',
+        text1: 'Draft Deleted',
+        text2: 'Draft has been deleted successfully',
+        visibilityTime: 2000,
+        position: 'top',
+      });
+    } catch (error: any) {
+      console.error('Failed to delete draft:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to delete draft',
+        visibilityTime: 3000,
+        position: 'top',
+      });
+    }
   };
 
   function renderFooter() {
@@ -322,15 +653,69 @@ const Cart = ({navigation}: {navigation: any}) => {
     );
     const total = subTotal;
     return (
-      <FooterTotal
-        subTotal={subTotal}
-        totalQuantity={subQuantity}
-        total={total}
-        printReceipt={printReceipt}
-        setPrintReceipt={setPrintReceipt}
-        onPress={() => handlePlaceOrder(total)}
-        isLoading={isPlacingOrder}
-      />
+      <View>
+        {/* Global Selling Date */}
+        <View style={styles.datePickerContainer}>
+          <Text style={styles.dateLabel}>Selling Date:</Text>
+          <TouchableOpacity
+            style={styles.globalDatePickerButton}
+            onPress={() => setShowGlobalDatePicker(true)}>
+            <Image source={icons.calender} style={styles.calendarIcon} />
+            <Text style={styles.datePickerText}>
+              {globalSellingDate.toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+              })}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Date Picker Modal */}
+        {showGlobalDatePicker && (
+          <DateTimePicker
+            value={globalSellingDate}
+            mode="date"
+            display="default"
+            onChange={(event, selectedDate) => {
+              const currentDate = selectedDate || globalSellingDate;
+              setShowGlobalDatePicker(Platform.OS === 'ios');
+              setGlobalSellingDate(currentDate);
+            }}
+            themeVariant={colorScheme || 'light'}
+          />
+        )}
+
+        {/* Save Draft Button */}
+        {cartItems.length > 0 && (
+          <TouchableOpacity
+            style={[
+              styles.saveDraftButton,
+              isSavingDraft && styles.saveDraftButtonDisabled,
+              currentDraftId && styles.saveDraftButtonUpdating,
+            ]}
+            onPress={handleSaveDraft}
+            disabled={isSavingDraft || (!currentDraftId && drafts.length >= 3)}>
+            {isSavingDraft ? (
+              <ActivityIndicator size="small" color={COLORS.white} />
+            ) : (
+              <Text style={styles.saveDraftButtonText}>
+                {currentDraftId ? 'Update Draft' : 'Save Draft'}
+              </Text>
+            )}
+          </TouchableOpacity>
+        )}
+
+        <FooterTotal
+          subTotal={subTotal}
+          totalQuantity={subQuantity}
+          total={total}
+          printReceipt={printReceipt}
+          setPrintReceipt={setPrintReceipt}
+          onPress={() => handlePlaceOrder(total)}
+          isLoading={isPlacingOrder}
+        />
+      </View>
     );
   }
 
@@ -392,7 +777,7 @@ const Cart = ({navigation}: {navigation: any}) => {
                   Toast.show({
                     type: 'success',
                     text1: 'Item Added',
-                    text2: `${item.item_name} has been added to your cart.`,
+                    text2: `${item.item_name} has been added to sale.`,
                     text1Style: {
                       fontSize: 13,
                       fontWeight: '600',
@@ -456,7 +841,6 @@ const Cart = ({navigation}: {navigation: any}) => {
   const openPriceModal = (item: any) => {
     setSelectedItem(item);
     setNewPrice(item.unit_price.toString());
-    setSelectedDate(new Date());
     setPriceModalVisible(true);
   };
 
@@ -465,18 +849,11 @@ const Cart = ({navigation}: {navigation: any}) => {
       const updatedItem = {
         ...(selectedItem as CartItem),
         unit_price: parseFloat(newPrice),
-        date_sold: selectedDate.toISOString(),
       };
 
       dispatch({type: 'CART_UPDATE_ITEM', payload: updatedItem});
     }
     setPriceModalVisible(false);
-  };
-
-  const onDateChange = (event: any, selectedDate: any) => {
-    const currentDate = selectedDate || new Date();
-    setShowDatePicker(Platform.OS === 'ios');
-    setSelectedDate(currentDate);
   };
 
   const renderPriceModal = () => (
@@ -485,57 +862,16 @@ const Cart = ({navigation}: {navigation: any}) => {
       transparent={true}
       animationType="slide">
       <View style={styles.modalContainer}>
-        <View
-          style={[
-            styles.modalContent,
-            {
-              backgroundColor:
-                colorScheme === 'dark' ? COLORS.darkGray : COLORS.white,
-            },
-          ]}>
-          <Text
-            style={[
-              styles.priceModalTitle,
-              {color: colorScheme === 'dark' ? COLORS.white : COLORS.black},
-            ]}>
-            Update Price
-          </Text>
+        <View style={styles.modalContent}>
+          <Text style={styles.priceModalTitle}>Update Price</Text>
           <TextInput
-            style={[
-              styles.input,
-              {color: colorScheme === 'dark' ? COLORS.white : COLORS.black},
-            ]}
+            style={styles.input}
             value={newPrice.toLocaleString()}
             onChangeText={setNewPrice}
             keyboardType="numeric"
             placeholder="Enter new price"
-            placeholderTextColor={
-              colorScheme === 'dark' ? COLORS.lightGray : COLORS.gray
-            }
+            placeholderTextColor={COLORS.gray}
           />
-          <TouchableOpacity
-            style={styles.datePickerButton}
-            onPress={() => setShowDatePicker(true)}>
-            <Text
-              style={{
-                color: colorScheme === 'dark' ? COLORS.white : COLORS.black,
-              }}>
-              {selectedDate.toDateString()}
-            </Text>
-          </TouchableOpacity>
-          {showDatePicker && (
-            <DateTimePicker
-              value={selectedDate}
-              mode="date"
-              display="default"
-              onChange={onDateChange}
-              themeVariant={colorScheme || 'light'}
-              style={{
-                backgroundColor:
-                  colorScheme === 'dark' ? COLORS.darkGray : COLORS.white,
-              }}
-            />
-          )}
           <View style={styles.modalButtons}>
             <Button
               title="Cancel"
@@ -556,7 +892,7 @@ const Cart = ({navigation}: {navigation: any}) => {
         keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
         <View style={{flex: 1}}>
           <Header
-            title="CART"
+            title="Make Sale"
             showBack={true}
             onBackPress={() => navigation.goBack()}
             rightComponent={
@@ -582,6 +918,89 @@ const Cart = ({navigation}: {navigation: any}) => {
             onPress={() => navigation.navigate('SearchPage' as never)}
           />
 
+          {/* Drafts Section */}
+          {drafts.length > 0 && (
+            <View style={styles.draftsSection}>
+              <View style={styles.draftsHeader}>
+                <Text style={styles.draftsTitle}>
+                  Recent Drafts ({drafts.length}/3)
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setShowDraftsSection(!showDraftsSection)}>
+                  <Text style={styles.draftsToggle}>
+                    {showDraftsSection ? 'Hide' : 'Show'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              {showDraftsSection && (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={styles.draftsList}>
+                  {drafts.map((draft) => (
+                    <View key={draft.id} style={styles.draftCard}>
+                      <TouchableOpacity
+                        style={styles.draftCardContent}
+                        onPress={() => handleSelectDraft(draft)}>
+                        <View style={styles.draftCardHeader}>
+                          <Text style={styles.draftInvoiceNo}>
+                            {draft.invoice_no || 'Draft'}
+                          </Text>
+                          <TouchableOpacity
+                            onPress={(e) => {
+                              e.stopPropagation();
+                              Alert.alert(
+                                'Delete Draft',
+                                'Are you sure you want to delete this draft?',
+                                [
+                                  {text: 'Cancel', style: 'cancel'},
+                                  {
+                                    text: 'Delete',
+                                    style: 'destructive',
+                                    onPress: () => handleDeleteDraft(draft),
+                                  },
+                                ],
+                              );
+                            }}>
+                            <Image
+                              source={icons.delete_icon}
+                              style={styles.draftDeleteIcon}
+                            />
+                          </TouchableOpacity>
+                        </View>
+                        <Text style={styles.draftCustomer}>
+                          {draft.customer_name || 'Unknown'}
+                        </Text>
+                        <Text style={styles.draftDate}>
+                          {new Date(draft.created_at).toLocaleDateString()}
+                        </Text>
+                        <Text style={styles.draftAmount}>
+                          UGX {draft.total_amount?.toLocaleString() || '0'}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </ScrollView>
+              )}
+            </View>
+          )}
+
+          {loadingDrafts && (
+            <View style={styles.draftsLoadingContainer}>
+              <ActivityIndicator size="small" color={COLORS.primary2} />
+              <Text style={styles.draftsLoadingText}>Loading drafts...</Text>
+            </View>
+          )}
+
+          {loadingDraftIntoCart && (
+            <View style={styles.draftsLoadingContainer}>
+              <ActivityIndicator size="small" color={COLORS.primary2} />
+              <Text style={styles.draftsLoadingText}>
+                Loading draft into sale...
+              </Text>
+            </View>
+          )}
+
           <SwipeListView
             data={cartItems}
             extraData={cartItems}
@@ -605,9 +1024,6 @@ const Cart = ({navigation}: {navigation: any}) => {
                     <View>
                       <Text style={styles.productName} numberOfLines={1}>
                         {item.item_name}
-                      </Text>
-                      <Text style={styles.dateText}>
-                        {formatDate(item.date_sold)}
                       </Text>
                     </View>
 
@@ -680,7 +1096,7 @@ const Cart = ({navigation}: {navigation: any}) => {
             ListEmptyComponent={
               <View style={styles.emptyCartContainer}>
                 <Image source={icons.emptycart} style={styles.emptyCartImage} />
-                <Text style={styles.emptyCartText}>Your cart is empty</Text>
+                <Text style={styles.emptyCartText}>No items in sale. Start adding items to make a sale.</Text>
               </View>
             }
           />
@@ -712,6 +1128,7 @@ const Cart = ({navigation}: {navigation: any}) => {
             )}
             username={auth?.username || 'Unknown'}
             userId={Number(auth?.user_id) || 0}
+            documentDate={globalSellingDate.toISOString().split('T')[0]}
           />
 
           <Toast />
@@ -826,11 +1243,13 @@ const styles = StyleSheet.create({
     padding: 20,
     borderRadius: 10,
     width: '80%',
+    backgroundColor: COLORS.white,
   },
   priceModalTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     marginBottom: 10,
+    color: COLORS.darkGray,
   },
   input: {
     borderWidth: 1,
@@ -978,6 +1397,151 @@ const styles = StyleSheet.create({
     ...FONTS.body4,
     color: COLORS.gray,
     marginTop: 12,
+  },
+  datePickerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: COLORS.white,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.lightGray2,
+  },
+  dateLabel: {
+    ...FONTS.body4,
+    color: COLORS.darkGray,
+    fontWeight: '600',
+  },
+  globalDatePickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.lightGray2,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    gap: 8,
+  },
+  calendarIcon: {
+    width: 16,
+    height: 16,
+    tintColor: COLORS.primary,
+  },
+  datePickerText: {
+    ...FONTS.body4,
+    color: COLORS.darkGray,
+  },
+  // Drafts Section Styles
+  draftsSection: {
+    backgroundColor: COLORS.white,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.lightGray2,
+  },
+  draftsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  draftsTitle: {
+    ...FONTS.h4,
+    color: COLORS.darkGray,
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  draftsToggle: {
+    ...FONTS.body4,
+    color: COLORS.primary,
+    fontSize: 12,
+  },
+  draftsList: {
+    marginTop: 8,
+  },
+  draftCard: {
+    width: 200,
+    marginRight: 12,
+    backgroundColor: COLORS.lightGray2,
+    borderRadius: 12,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: COLORS.lightGray2,
+  },
+  draftCardContent: {
+    padding: 12,
+  },
+  draftCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  draftInvoiceNo: {
+    ...FONTS.h4,
+    color: COLORS.darkGray,
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
+  },
+  draftDeleteIcon: {
+    width: 18,
+    height: 18,
+    tintColor: COLORS.primary,
+  },
+  draftCustomer: {
+    ...FONTS.body4,
+    color: COLORS.gray,
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  draftDate: {
+    ...FONTS.body5,
+    color: COLORS.gray,
+    fontSize: 11,
+    marginBottom: 8,
+  },
+  draftAmount: {
+    ...FONTS.h4,
+    color: COLORS.primary,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  draftsLoadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    backgroundColor: COLORS.white,
+  },
+  draftsLoadingText: {
+    ...FONTS.body4,
+    color: COLORS.gray,
+    marginLeft: 8,
+    fontSize: 12,
+  },
+  // Save Draft Button Styles
+  saveDraftButton: {
+    backgroundColor: COLORS.primary2,
+    marginHorizontal: 16,
+    marginVertical: 8,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+  },
+  saveDraftButtonDisabled: {
+    opacity: 0.6,
+  },
+  saveDraftButtonUpdating: {
+    backgroundColor: COLORS.primary,
+  },
+  saveDraftButtonText: {
+    ...FONTS.h4,
+    color: COLORS.white,
+    fontSize: 14,
+    fontWeight: '600',
   },
 });
 

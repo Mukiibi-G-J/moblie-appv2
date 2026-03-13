@@ -10,11 +10,30 @@ buildscript {
     repositories {
         google()
         mavenCentral()
+        // Add mavenCentral mirror for jcenter dependencies
+        maven { url "https://repo1.maven.org/maven2" }
     }
     dependencies {
         classpath("com.android.tools.build:gradle")
         classpath("com.facebook.react:react-native-gradle-plugin")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin")
+    }
+}
+
+// Configure repositories for all projects (including subprojects from node_modules)
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        // Add mavenCentral mirror for jcenter dependencies
+        maven { url "https://repo1.maven.org/maven2" }
+        // React Native
+        maven {
+            url("$rootDir/../node_modules/react-native/android")
+        }
+        maven {
+            url("$rootDir/../node_modules/jsc-android/dist")
+        }
     }
 }
 

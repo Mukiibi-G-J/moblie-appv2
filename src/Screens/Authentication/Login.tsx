@@ -63,7 +63,7 @@ const Login = () => {
         // Keep loading state active during context update and navigation
         // Update the context to trigger navigation change
         // This will make the 'Home' screen available in the navigation stack
-        await context?.login({email, password});
+        await context?.login({email, password, tenant});
 
         // Add a timeout to ensure loading state is cleared if navigation takes too long
         setTimeout(() => {

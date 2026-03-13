@@ -1,0 +1,613 @@
+import React, {useState, useEffect, useCallback} from 'react';
+import {
+  View,
+  Text,
+  Modal,
+  ScrollView,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  Alert,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+} from 'react-native';
+import {Picker} from '@react-native-picker/picker';
+import {COLORS, FONTS, SIZES} from '../../constants/theme';
+import {Item} from './Items';
+import {createItem, updateItem, fetchCategories} from '../../services/app.services';
+import Toast from 'react-native-toast-message';
+
+interface Category {
+  id?: number;
+  code?: string;
+  name?: string;
+  description?: string;
+}
+
+interface ItemFormModalProps {
+  visible: boolean;
+  onClose: () => void;
+  item: Item | null; // null for create, Item for edit
+  onSave: (savedItem: Item) => void;
+  canCreate: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
+}
+
+interface ItemFormValues {
+  item_name: string;
+  description: string;
+  unit_price: number; // Store as number
+  category_id: number | null;
+}
+
+const ItemFormModal: React.FC<ItemFormModalProps> = ({
+  visible,
+  onClose,
+  item,
+  onSave,
+  canCreate,
+  canEdit,
+  canDelete,
+}) => {
+  const isEditMode = !!item;
+
+  // Form state
+  const [formData, setFormData] = useState<ItemFormValues>({
+    item_name: '',
+    description: '',
+    unit_price: 0,
+    category_id: null,
+  });
+
+  const [loading, setLoading] = useState(false);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [categoriesLoading, setCategoriesLoading] = useState(false);
+
+  // Load categories
+  const loadCategories = useCallback(async () => {
+    try {
+      setCategoriesLoading(true);
+      const categoriesData = await fetchCategories();
+      
+      // fetchCategories now returns an array directly (handles both array and paginated responses)
+      if (!Array.isArray(categoriesData)) {
+        console.warn('Categories response is not an array:', categoriesData);
+        setCategories([]);
+        return;
+      }
+      
+      // Map categories to expected format (code/description -> id/name)
+      const mappedCategories = categoriesData.map((cat: any, index: number) => ({
+        id: cat.id || cat.code || `cat_${index}`, // Use code as id if no id exists
+        code: cat.code,
+        name: cat.name || cat.description || cat.code,
+        description: cat.description || cat.code,
+      }));
+      
+      setCategories(mappedCategories);
+    } catch (error) {
+      console.error('Error loading categories:', error);
+      setCategories([]);
+    } finally {
+      setCategoriesLoading(false);
+    }
+  }, []);
+
+  // Initialize form when item changes
+  useEffect(() => {
+    if (item) {
+      // Map item_category (code) to category_id for form
+      let mappedCategoryId = null;
+      if (item.item_category) {
+        // item_category might be an object with code, or just a code string
+        const categoryCode =
+          typeof item.item_category === 'string'
+            ? item.item_category
+            : item.item_category?.code;
+        if (categoryCode && categories.length > 0) {
+          // Find matching category in our list
+          const matchedCategory = categories.find(
+            cat => cat.code === categoryCode,
+          );
+          mappedCategoryId = matchedCategory
+            ? matchedCategory.id || matchedCategory.code
+            : categoryCode;
+        } else if (categoryCode) {
+          // If categories not loaded yet, store the code temporarily
+          mappedCategoryId = categoryCode;
+        }
+      } else if (item.category_id) {
+        mappedCategoryId = item.category_id;
+      }
+
+      setFormData({
+        item_name: item.item_name || '',
+        description: item.description || '',
+        unit_price: item.unit_price || 0,
+        category_id: mappedCategoryId,
+      });
+    } else {
+      // Reset form for new item
+      setFormData({
+        item_name: '',
+        description: '',
+        unit_price: 0,
+        category_id: null,
+      });
+    }
+    setErrors({});
+  }, [item, visible, categories]);
+
+  // Load categories when modal opens
+  useEffect(() => {
+    if (visible) {
+      loadCategories();
+    }
+  }, [visible, loadCategories]);
+
+  const validateForm = (): boolean => {
+    const newErrors: Record<string, string> = {};
+
+    if (!formData.item_name || !formData.item_name.trim()) {
+      newErrors.item_name = 'Item name is required';
+    }
+
+    // Validate unit_price if provided
+    if (formData.unit_price && formData.unit_price < 0) {
+      newErrors.unit_price = 'Price must be a valid positive number';
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const handleSave = async () => {
+    if (!validateForm()) {
+      return;
+    }
+
+    // Check permissions
+    if (isEditMode && !canEdit) {
+      Alert.alert(
+        'Permission Denied',
+        'You do not have permission to edit items.',
+      );
+      return;
+    }
+
+    if (!isEditMode && !canCreate) {
+      Alert.alert(
+        'Permission Denied',
+        'You do not have permission to create items.',
+      );
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const itemData: Partial<Item> = {
+        item_name: formData.item_name.trim(),
+      };
+
+      // Only include optional fields if they have values
+      if (formData.description && formData.description.trim()) {
+        itemData.description = formData.description.trim();
+      }
+
+      if (formData.unit_price && formData.unit_price > 0) {
+        itemData.unit_price = formData.unit_price;
+      }
+
+      // Map category_id to item_category code for backend
+      if (formData.category_id) {
+        const selectedCategory = categories.find(
+          cat => (cat.id || cat.code) === formData.category_id,
+        );
+        if (selectedCategory && selectedCategory.code) {
+          // Backend expects item_category as code (string), not category_id
+          (itemData as any).item_category = selectedCategory.code;
+        } else if (formData.category_id) {
+          // Fallback: use the value directly if it's already a code
+          (itemData as any).item_category = formData.category_id;
+        }
+      }
+
+      let response;
+      if (isEditMode && item) {
+        // For edit, use updateItem (which uses upsert with system_id)
+        const itemId = item.id || item.no;
+        if (!itemId) {
+          throw new Error('Item ID is required for editing');
+        }
+        const updateData: Item = {
+          ...item,
+          ...itemData,
+        };
+        response = await updateItem(itemId, updateData);
+      } else {
+        // For create, use createItem (upsert without system_id)
+        response = await createItem(itemData);
+      }
+
+      if (response && response.data) {
+        Toast.show({
+          type: 'success',
+          text1: 'Success',
+          text2: isEditMode
+            ? 'Item updated successfully'
+            : 'Item created successfully',
+        });
+        onSave(response.data);
+        onClose();
+      }
+    } catch (error: any) {
+      console.error('Error saving item:', error);
+      const errorMessage =
+        error?.response?.data?.detail ||
+        error?.response?.data?.error ||
+        error?.response?.data?.item_name?.[0] ||
+        'Failed to save item';
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: errorMessage,
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Don't render if modal is not visible
+  if (!visible) {
+    return null;
+  }
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent={true}
+      onRequestClose={onClose}>
+      <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          style={styles.modalContent}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
+          {/* Header */}
+          <View style={styles.header}>
+            <Text style={styles.title}>
+              {isEditMode ? 'Edit Item' : 'Create Item'}
+            </Text>
+            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+              <Text style={styles.closeButtonText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView
+            style={styles.scrollView}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled">
+            <View style={styles.formCard}>
+              {/* Item No (Read-only, only for edit) */}
+              {isEditMode && item?.no && (
+                <View style={styles.fieldContainer}>
+                  <Text style={styles.label}>Item No</Text>
+                  <TextInput
+                    style={[styles.input, styles.disabledInput]}
+                    value={item.no}
+                    editable={false}
+                  />
+                </View>
+              )}
+
+              {/* Item Name */}
+              <View style={styles.fieldContainer}>
+                <Text style={styles.label}>Item Name *</Text>
+                <TextInput
+                  style={[styles.input, errors.item_name && styles.inputError]}
+                  value={formData.item_name}
+                  onChangeText={text =>
+                    setFormData({...formData, item_name: text})
+                  }
+                  placeholder="Enter item name"
+                  placeholderTextColor={COLORS.gray3}
+                />
+                {errors.item_name && (
+                  <Text style={styles.errorText}>{errors.item_name}</Text>
+                )}
+              </View>
+
+              {/* Description */}
+              <View style={styles.fieldContainer}>
+                <Text style={styles.label}>Description</Text>
+                <TextInput
+                  style={[styles.input, styles.textArea]}
+                  value={formData.description}
+                  onChangeText={text =>
+                    setFormData({...formData, description: text})
+                  }
+                  placeholder="Enter item description"
+                  placeholderTextColor={COLORS.gray3}
+                  multiline
+                  numberOfLines={3}
+                />
+              </View>
+
+              {/* Category */}
+              <View style={styles.fieldContainer}>
+                <Text style={styles.label}>Category</Text>
+                {categoriesLoading ? (
+                  <View style={styles.loadingContainer}>
+                    <ActivityIndicator size="small" color={COLORS.primary} />
+                    <Text style={styles.loadingText}>
+                      Loading categories...
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.pickerContainer}>
+                    <Picker
+                      selectedValue={formData.category_id || 0}
+                      onValueChange={value => {
+                        if (value === 0) {
+                          setFormData({...formData, category_id: null});
+                        } else {
+                          setFormData({...formData, category_id: value});
+                        }
+                      }}
+                      style={styles.picker}
+                      itemStyle={styles.pickerItem}>
+                      <Picker.Item label="Select category" value={0} color={COLORS.black} />
+                      {categories.map(category => (
+                        <Picker.Item
+                          key={category.id || category.code}
+                          label={category.name || category.description || category.code}
+                          value={category.id || category.code}
+                          color={COLORS.black}
+                        />
+                      ))}
+                    </Picker>
+                  </View>
+                )}
+              </View>
+
+              {/* Price */}
+              <View style={styles.fieldContainer}>
+                <Text style={styles.label}>Price (UGX)</Text>
+                <View style={styles.priceInputContainer}>
+                  <Text style={styles.pricePrefix}>UGX</Text>
+                  <TextInput
+                    style={[
+                      styles.priceInput,
+                      errors.unit_price && styles.inputError,
+                    ]}
+                    value={
+                      formData.unit_price > 0
+                        ? formData.unit_price.toLocaleString()
+                        : ''
+                    }
+                    onChangeText={text => {
+                      // Remove commas and non-numeric characters except decimal point
+                      const cleanedText = text.replace(/[^0-9.]/g, '');
+                      // Remove commas that might be in the input
+                      const numericValue = parseFloat(
+                        cleanedText.replace(/,/g, ''),
+                      ) || 0;
+                      setFormData({...formData, unit_price: numericValue});
+                    }}
+                    placeholder="0"
+                    placeholderTextColor={COLORS.gray3}
+                    keyboardType="numeric"
+                  />
+                </View>
+                {errors.unit_price && (
+                  <Text style={styles.errorText}>{errors.unit_price}</Text>
+                )}
+              </View>
+            </View>
+          </ScrollView>
+
+          {/* Footer Buttons */}
+          <View style={styles.footer}>
+            <TouchableOpacity
+              style={[styles.button, styles.cancelButton]}
+              onPress={onClose}
+              disabled={loading}>
+              <Text style={styles.cancelButtonText}>Cancel</Text>
+            </TouchableOpacity>
+            {((isEditMode && canEdit) || (!isEditMode && canCreate)) && (
+              <TouchableOpacity
+                style={[styles.button, styles.saveButton]}
+                onPress={handleSave}
+                disabled={loading}>
+                {loading ? (
+                  <ActivityIndicator size="small" color={COLORS.white} />
+                ) : (
+                  <Text style={styles.buttonText}>
+                    {isEditMode ? 'Update' : 'Create'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
+  );
+};
+
+const styles = StyleSheet.create({
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: COLORS.overlay2,
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: COLORS.white,
+    borderTopLeftRadius: SIZES.radius * 2,
+    borderTopRightRadius: SIZES.radius * 2,
+    maxHeight: '90%',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: SIZES.padding,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.lightGray1,
+  },
+  title: {
+    ...FONTS.h2,
+    color: COLORS.black,
+  },
+  closeButton: {
+    width: 32,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  closeButtonText: {
+    fontSize: 24,
+    color: COLORS.gray2,
+  },
+  scrollView: {
+    maxHeight: '70%',
+  },
+  scrollContent: {
+    paddingBottom: SIZES.base * 2,
+  },
+  formCard: {
+    marginHorizontal: SIZES.padding,
+    marginVertical: SIZES.base,
+    backgroundColor: COLORS.white,
+    borderRadius: SIZES.radius * 1.5,
+    borderWidth: 1,
+    borderColor: COLORS.lightGray1,
+    paddingBottom: SIZES.padding,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  fieldContainer: {
+    paddingHorizontal: SIZES.padding,
+    paddingVertical: SIZES.base,
+  },
+  label: {
+    ...FONTS.body3,
+    color: COLORS.black,
+    marginBottom: SIZES.base / 2,
+    fontWeight: '600',
+  },
+  input: {
+    height: 48,
+    borderWidth: 1,
+    borderColor: COLORS.lightGray1,
+    borderRadius: SIZES.radius,
+    paddingHorizontal: SIZES.base * 1.5,
+    ...FONTS.body3,
+    color: COLORS.black,
+    backgroundColor: COLORS.lightGray2,
+  },
+  textArea: {
+    height: 80,
+    textAlignVertical: 'top',
+    paddingTop: SIZES.base,
+  },
+  disabledInput: {
+    backgroundColor: COLORS.lightGray1,
+    color: COLORS.gray2,
+  },
+  inputError: {
+    borderColor: COLORS.error,
+  },
+  errorText: {
+    ...FONTS.body5,
+    color: COLORS.error,
+    marginTop: SIZES.base / 2,
+  },
+  loadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: SIZES.base,
+  },
+  loadingText: {
+    ...FONTS.body4,
+    color: COLORS.gray2,
+    marginLeft: SIZES.base,
+  },
+  pickerContainer: {
+    borderWidth: 1,
+    borderColor: COLORS.lightGray1,
+    borderRadius: SIZES.radius,
+    backgroundColor: COLORS.lightGray2,
+    overflow: 'hidden',
+  },
+  picker: {
+    height: 50,
+    backgroundColor: COLORS.lightGray2,
+    color: COLORS.black,
+  },
+  pickerItem: {
+    color: COLORS.black,
+  },
+  priceInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.lightGray1,
+    borderRadius: SIZES.radius,
+    backgroundColor: COLORS.lightGray2,
+    paddingHorizontal: SIZES.base * 1.5,
+    height: 48,
+  },
+  pricePrefix: {
+    ...FONTS.body3,
+    color: COLORS.primary,
+    fontWeight: '600',
+    marginRight: SIZES.base,
+  },
+  priceInput: {
+    flex: 1,
+    ...FONTS.body3,
+    color: COLORS.black,
+    paddingVertical: 0,
+  },
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    padding: SIZES.padding,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.lightGray1,
+  },
+  button: {
+    flex: 1,
+    height: 48,
+    borderRadius: SIZES.radius,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginHorizontal: SIZES.base / 2,
+  },
+  cancelButton: {
+    backgroundColor: COLORS.lightGray1,
+  },
+  cancelButtonText: {
+    ...FONTS.body3,
+    color: COLORS.black,
+  },
+  saveButton: {
+    backgroundColor: COLORS.primary,
+  },
+  buttonText: {
+    ...FONTS.body3,
+    color: COLORS.white,
+    fontWeight: '600',
+  },
+});
+
+export default ItemFormModal;
+

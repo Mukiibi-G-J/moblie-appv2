@@ -7,9 +7,11 @@
     "ios": "react-native run-ios",
     "lint": "eslint .",
     "start": "react-native start",
-    "test": "jest"
+    "test": "jest",
+    "postinstall": "patch-package"
   },
   "dependencies": {
+    "@finan-me/react-native-thermal-printer": "^1.0.9",
     "@react-native-async-storage/async-storage": "^2.0.0",
     "@react-native-camera-roll/camera-roll": "^7.10.2",
     "@react-native-community/datetimepicker": "^8.2.0",
@@ -28,6 +30,7 @@
     "react-native-confirmation-code-field": "^7.4.0",
     "react-native-country-picker-modal": "^2.0.0",
     "react-native-dropdown-picker": "^5.4.6",
+    "react-native-fs": "^2.20.0",
     "react-native-gesture-handler": "^2.20.2",
     "react-native-image-picker": "^7.1.2",
     "react-native-keyboard-aware-scroll-view": "^0.9.5",
@@ -57,6 +60,8 @@
     "babel-jest": "^29.6.3",
     "eslint": "^8.19.0",
     "jest": "^29.6.3",
+    "patch-package": "^8.0.1",
+    "postinstall-postinstall": "^2.1.0",
     "prettier": "2.8.8",
     "react-test-renderer": "18.3.1",
     "typescript": "5.0.4"

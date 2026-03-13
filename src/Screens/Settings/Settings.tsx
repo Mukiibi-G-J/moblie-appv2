@@ -6,8 +6,27 @@ import {SafeAreaView} from 'react-native-safe-area-context';
 import {useSearchMode} from '../../context/SearchModeStore';
 import {Image} from 'react-native';
 import {TenantSettings} from '../../Components/TenantSettings';
+import {usePermissions} from '../../hooks/usePermissions';
+import {PAGE_NAMES} from '../../constants/pageNames';
 
 const Settings = () => {
+  const {canRead} = usePermissions();
+  const PAGE_NAME = PAGE_NAMES.PROFILE_SETTINGS;
+
+  // Early return if no read permission
+  if (!canRead(PAGE_NAME)) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.accessDeniedContainer}>
+          <Text style={styles.accessDeniedTitle}>Access Denied</Text>
+          <Text style={styles.accessDeniedMessage}>
+            You don't have permission to view settings.
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   const navigation = useNavigation();
   const {state, dispatch} = useSearchMode();
 
@@ -47,14 +66,14 @@ const Settings = () => {
 
         <TouchableOpacity
           style={styles.menuItem}
-          onPress={() => navigation.navigate('PrinterTest' as never)}>
+          onPress={() => navigation.navigate('PrinterConfig' as never)}>
           <View style={styles.menuItemContent}>
             <View style={styles.settingHeader}>
               <Image source={icons.printer} style={styles.settingIcon} />
-              <Text style={styles.menuItemTitle}>Printer Test</Text>
+              <Text style={styles.menuItemTitle}>Printer Configuration</Text>
             </View>
             <Text style={styles.menuItemSubtitle}>
-              Test and configure printer settings
+              Configure and test printer settings (Sunmi & Bluetooth)
             </Text>
           </View>
           <Text style={styles.arrow}>›</Text>
@@ -136,6 +155,26 @@ const styles = StyleSheet.create({
     height: 20,
     tintColor: COLORS.primary,
     marginRight: 8,
+  },
+  accessDeniedContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: COLORS.white,
+    margin: 16,
+    borderRadius: SIZES.radius,
+  },
+  accessDeniedTitle: {
+    ...FONTS.h2,
+    color: COLORS.error,
+    marginBottom: SIZES.base,
+    textAlign: 'center',
+  },
+  accessDeniedMessage: {
+    ...FONTS.body3,
+    color: COLORS.gray,
+    textAlign: 'center',
   },
 });
 

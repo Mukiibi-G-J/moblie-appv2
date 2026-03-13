@@ -42,7 +42,7 @@ const password = require("../assets/icons/password.png")
 const paypal = require("../assets/icons/paypal.png")
 const plus = require("../assets/icons/plus.png")
 const privacy = require("../assets/icons/privacy.png")
-const profile = require("../assets/icons/profile.png")
+const profile = require("../assets/icons/user.png")
 const setting = require("../assets/icons/setting.png")
 const star = require("../assets/icons/star.png")
 const term = require("../assets/icons/term.png")
@@ -56,7 +56,7 @@ const call = require("../assets/icons/call.png")
 const location_pin = require("../assets/icons/location_pin.png")
 const navigator = require("../assets/icons/navigator.png")
 const navigator1 = require("../assets/icons/navigator1.png")
-const product = require("../assets/icons/product.png")
+const product = require("../assets/icons/box.png")
 const product2 = require("../assets/icons/product2.png")
 const reports = require("../assets/icons/reports.png")
 const itemJournal = require("../assets/icons/wallet.png")
@@ -65,6 +65,12 @@ const company = require("../assets/icons/office-building.png")
 const lock = require("../assets/icons/padlock.png")
 const printer = require("../assets/icons/label-printer.png")
 const emptycart = require("../assets/icons/empty-cart.png")
+const salesCount = require("../assets/icons/sales-count.png") // Using cart icon for sales count
+const revenue = require("../assets/icons/revenue.png") // Using dollar icon for revenue
+const average = require("../assets/icons/average.png") // Using wallet icon for average
+
+
+// const filter = require("../assets/icons/filter.png")
 // const eye = require("../assets/icons/view.png")
 
 export default {
@@ -135,4 +141,7 @@ export default {
     reports,
     itemJournal,
     lock,
+    salesCount,
+    revenue,
+    average,
 }

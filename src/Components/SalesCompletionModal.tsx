@@ -33,6 +33,7 @@ interface SalesCompletionModalProps {
   total: number;
   username: string;
   userId: number;
+  documentDate?: string; // Optional global selling date
 }
 
 const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
@@ -43,6 +44,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
   total,
   username,
   userId,
+  documentDate,
 }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(
@@ -204,22 +206,14 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
 
     try {
       // Prepare sales invoice data following the frontend pattern exactly
-      // Use the earliest date from cart items as the document date, or current date if no items
-      const documentDate =
-        cartItems.length > 0
-          ? cartItems
-              .reduce((earliest, item) => {
-                const itemDate = new Date(item.date_sold);
-                const currentEarliest = new Date(earliest);
-                return itemDate < currentEarliest ? item.date_sold : earliest;
-              }, cartItems[0].date_sold)
-              .split('T')[0]
-          : new Date().toISOString().split('T')[0];
+      // Use the provided documentDate, or fallback to current date
+      const finalDocumentDate =
+        documentDate || new Date().toISOString().split('T')[0];
 
       const salesInvoiceData: SalesInvoiceData = {
         customer: selectedCustomer?.id || 0,
         customer_name: selectedCustomer?.name || 'General Customer',
-        document_date: documentDate,
+        document_date: finalDocumentDate,
         status: 'Open',
         total_amount: total,
         amount_received:
@@ -266,7 +260,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
 
       // Debug logging to see the exact data being sent
       console.log('=== DEBUG: SALES INVOICE DATA ===');
-      console.log('Document Date:', documentDate);
+      console.log('Document Date:', finalDocumentDate);
       console.log('Customer:', selectedCustomer);
       console.log('Payment Method:', paymentMethod);
       console.log('Cart Items:', cartItems);
@@ -293,12 +287,18 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
         }
 
         // Print receipt if requested (moved outside postSalesInvoice try-catch)
-        console.log('🔍 DEBUG: printReceipt state:', printReceipt);
-        if (printReceipt) {
-          try {
-            console.log('🖨️ Starting receipt printing...');
-            const printService = PrintService.getInstance();
-
+        // Always attempt to print receipt if printer is available
+        // Check printer availability first
+        try {
+          console.log('🖨️ Checking printer availability...');
+          const printService = PrintService.getInstance();
+          
+          // Check if printer is available (Sunmi or Bluetooth)
+          const isPrinterAvailable = await printService.checkConnection();
+          
+          if (isPrinterAvailable || printReceipt) {
+            console.log('🖨️ Printer available, starting receipt printing...');
+            
             // Fetch company information
             let companyInfo: CompanyInfo | undefined;
             try {
@@ -346,12 +346,41 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
 
             if (printResult) {
               console.log('✅ Receipt printed successfully');
+              Toast.show({
+                type: 'success',
+                text1: 'Receipt Printed',
+                text2: 'Receipt has been sent to printer',
+              });
             } else {
-              console.log('❌ Receipt printing failed');
+              console.log('❌ Receipt printing failed - printer may not be connected');
+              if (printReceipt) {
+                // Only show error if user explicitly wanted to print
+                Toast.show({
+                  type: 'info',
+                  text1: 'Print Failed',
+                  text2: 'Receipt could not be printed. Please check printer connection.',
+                });
+              }
             }
-          } catch (printError) {
-            console.error('❌ Error printing receipt:', printError);
-            // Don't fail the sale if printing fails
+          } else {
+            console.log('ℹ️ No printer available - skipping receipt printing');
+            if (printReceipt) {
+              Toast.show({
+                type: 'info',
+                text1: 'No Printer Found',
+                text2: 'Please connect a printer in Settings to print receipts automatically.',
+              });
+            }
+          }
+        } catch (printError) {
+          console.error('❌ Error printing receipt:', printError);
+          // Don't fail the sale if printing fails
+          if (printReceipt) {
+            Toast.show({
+              type: 'error',
+              text1: 'Print Error',
+              text2: 'Failed to print receipt. Sale completed successfully.',
+            });
           }
         }
 

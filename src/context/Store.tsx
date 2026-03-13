@@ -3,53 +3,74 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {loginUser} from '../services/auth.services';
 import {jwtDecode} from 'jwt-decode';
 import Toast from 'react-native-toast-message';
+import {AuthState, DecodedToken} from '../types/auth';
 
 export interface AppContextType {
-  auth: {
-    user_id: string;
-    username: string;
-    full_name: string;
+  auth: AuthState;
+  login: (userCredentials: {
     email: string;
-    authority: string[];
-  };
-  login: (userCredentials: {email: string; password: string}) => Promise<any>;
+    password: string;
+    tenant?: string;
+  }) => Promise<any>;
   logout: () => Promise<void>;
   clearAuthState: () => void;
   selectedTab: string;
   setSelectedTab: (tab: string) => void;
 }
-interface DecodeToken {
-  user_id: string;
-  username: string;
-  full_name: string;
-  email: string;
-  authority: string[];
-}
 const AppContext = createContext<AppContextType | null>(null);
 
+const getEmptyAuthState = (): AuthState => ({
+  user_id: '',
+  username: '',
+  full_name: '',
+  email: '',
+  phone: undefined,
+  verified: undefined,
+  is_superuser: false,
+  authority: [],
+  role_center_modules: [],
+  roles: [],
+  user_groups: [],
+  permission_sets: [],
+  page_permissions: {},
+});
+
 export const AppProvider = ({children}: {children: React.ReactNode}) => {
-  const [auth, setAuth] = useState({
-    user_id: '',
-    username: '',
-    full_name: '',
-    email: '',
-    authority: [] as string[],
-  });
+  const [auth, setAuth] = useState<AuthState>(getEmptyAuthState());
   const [cartItems, setCartItems] = useState([]);
-  const [selectedTab, setSelectedTab] = useState('home');
+  const [selectedTab, setSelectedTab] = useState('Home');
 
   const clearAuthState = () => {
     // Clear auth state without clearing AsyncStorage (for token expiry scenarios)
-    setAuth({
-      user_id: '',
-      username: '',
-      full_name: '',
-      email: '',
-      authority: [],
-    });
+    setAuth(getEmptyAuthState());
 
     // Clear cart items from state
     setCartItems([]);
+  };
+
+  /**
+   * Map decoded JWT token to AuthState
+   * Extracts all permission fields from the token
+   */
+  const mapTokenToAuthState = (decodedToken: DecodedToken): AuthState => {
+    return {
+      user_id: decodedToken.user_id?.toString() || '',
+      username: decodedToken.username || '',
+      full_name: decodedToken.full_name || '',
+      email: decodedToken.email || '',
+      phone: decodedToken.phone,
+      verified: decodedToken.verified,
+      is_superuser: decodedToken.is_superuser || false,
+      // Legacy authority (backward compatibility)
+      authority: decodedToken.authority || [],
+      // Layer 1: Role Center (Module Visibility)
+      role_center_modules: decodedToken.role_center_modules || [],
+      // Layer 2 & 3: Permission Sets & Page Permissions
+      roles: decodedToken.roles || [],
+      user_groups: decodedToken.user_groups || [],
+      permission_sets: decodedToken.permission_sets || [],
+      page_permissions: decodedToken.page_permissions || {},
+    };
   };
 
   // Check for accessToken in AsyncStorage on mount
@@ -71,29 +92,14 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
           }
 
           // Map the decoded token to our expected structure
-          const user: DecodeToken = {
-            user_id:
-              decodedToken.user_id || decodedToken.sub || decodedToken.id || '',
-            username:
-              decodedToken.username ||
-              decodedToken.name ||
-              decodedToken.user_name ||
-              '',
-            full_name:
-              decodedToken.full_name ||
-              decodedToken.name ||
-              decodedToken.display_name ||
-              '',
-            email: decodedToken.email || '',
-            authority:
-              decodedToken.authority ||
-              decodedToken.roles ||
-              decodedToken.permissions ||
-              decodedToken.groups ||
-              [],
-          };
+          const user = mapTokenToAuthState(decodedToken as DecodedToken);
 
           console.log('Found existing token, setting auth to:', user);
+          console.log('Permission data:', {
+            role_center_modules: user.role_center_modules,
+            permission_sets: user.permission_sets,
+            page_permissions: Object.keys(user.page_permissions || {}),
+          });
           setAuth(user);
         } catch (error) {
           console.log('Error decoding token, clearing auth state:', error);
@@ -118,37 +124,33 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
     loadCartItems();
   }, []);
 
-  const login = async (userCredentials: {email: string; password: string}) => {
+  const login = async (userCredentials: {
+    email: string;
+    password: string;
+    tenant?: string;
+  }) => {
     try {
-      const userData = await loginUser(userCredentials);
+      // Get tenant from credentials or from storage and trim it
+      const tenant =
+        userCredentials.tenant || (await AsyncStorage.getItem('tenant'));
+      const cleanTenant = tenant?.trim();
+      const userData = await loginUser({
+        ...userCredentials,
+        tenant: cleanTenant || undefined,
+      });
       if (userData && userData.access) {
-        const decodedToken = jwtDecode(userData.access) as any;
+        const decodedToken = jwtDecode(userData.access) as DecodedToken;
         console.log('Raw decoded token:', decodedToken);
 
         // Map the decoded token to our expected structure
-        const user: DecodeToken = {
-          user_id:
-            decodedToken.user_id || decodedToken.sub || decodedToken.id || '',
-          username:
-            decodedToken.username ||
-            decodedToken.name ||
-            decodedToken.user_name ||
-            '',
-          full_name:
-            decodedToken.full_name ||
-            decodedToken.name ||
-            decodedToken.display_name ||
-            '',
-          email: decodedToken.email || '',
-          authority:
-            decodedToken.authority ||
-            decodedToken.roles ||
-            decodedToken.permissions ||
-            decodedToken.groups ||
-            [],
-        };
+        const user = mapTokenToAuthState(decodedToken);
 
         console.log('Mapped user data:', user);
+        console.log('Permission data:', {
+          role_center_modules: user.role_center_modules,
+          permission_sets: user.permission_sets,
+          page_permissions: Object.keys(user.page_permissions || {}),
+        });
 
         // Store token first
         await AsyncStorage.setItem('accessToken', userData.access);
@@ -173,13 +175,7 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
 
   const logout = async () => {
     // Clear auth state
-    setAuth({
-      user_id: '',
-      username: '',
-      full_name: '',
-      email: '',
-      authority: [],
-    });
+    setAuth(getEmptyAuthState());
 
     // Clear stored data
     await AsyncStorage.removeItem('accessToken');

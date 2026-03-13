@@ -21,12 +21,31 @@ function cartReducer(state: CartState, action: CartAction): CartState {
       const existItem = state.cartItems.find(
         item => item.system_id === newItem.system_id,
       );
-      console.log(newItem)
+
+      const mergedItem = existItem
+        ? {
+            ...existItem,
+            ...newItem,
+            tracking_code:
+              newItem.tracking_code !== undefined
+                ? newItem.tracking_code
+                : existItem.tracking_code,
+            selectedTrackingCode:
+              newItem.selectedTrackingCode !== undefined
+                ? newItem.selectedTrackingCode
+                : existItem.selectedTrackingCode ?? null,
+            trackingDetails:
+              newItem.trackingDetails !== undefined
+                ? newItem.trackingDetails
+                : existItem.trackingDetails,
+          }
+        : newItem;
+
       const cartItems = existItem
         ? state.cartItems.map(item =>
-            item.system_id === existItem.system_id ? newItem : item,
+            item.system_id === existItem.system_id ? mergedItem : item,
           )
-        : [...state.cartItems, newItem];
+        : [...state.cartItems, mergedItem];
 
       return {...state, cartItems};
     }

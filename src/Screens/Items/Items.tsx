@@ -14,7 +14,9 @@ import {
   ActivityIndicator,
   PermissionsAndroid,
   Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
+import {useNavigation} from '@react-navigation/native';
 import {Picker} from '@react-native-picker/picker';
 import {
   launchImageLibrary,
@@ -29,7 +31,13 @@ import {
   fetchCategories,
   uploadItemImage,
   deleteItemImage,
+  createItem,
 } from '../../services/app.services';
+import {usePermissions} from '../../hooks/usePermissions';
+import {PAGE_NAMES} from '../../constants/pageNames';
+import {COLORS, SIZES, FONTS} from '../../constants/theme';
+import icons from '../../constants/icons';
+import ItemFormModal from './ItemFormModal';
 // CameraRoll import removed - using native gallery picker instead
 
 export interface Item {
@@ -60,8 +68,10 @@ interface PaginatedResponse {
 }
 
 interface Category {
-  id: number;
-  name: string;
+  id?: number;
+  code?: string;
+  name?: string;
+  description?: string;
 }
 
 const EditItemModal = ({
@@ -69,11 +79,15 @@ const EditItemModal = ({
   onClose,
   item,
   onSave,
+  canEdit,
+  canDelete,
 }: {
   visible: boolean;
   onClose: () => void;
   item: Item | null;
   onSave: (updatedItem: Item) => void;
+  canEdit: boolean;
+  canDelete: boolean;
 }) => {
   const [editedItem, setEditedItem] = useState<Item | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -88,12 +102,24 @@ const EditItemModal = ({
   const loadCategories = useCallback(async () => {
     try {
       setCategoriesLoading(true);
-      const response = await fetchCategories();
-      if (response && response.results && Array.isArray(response.results)) {
-        setCategories(response.results);
-      } else {
+      const categoriesData = await fetchCategories();
+      
+      // fetchCategories now returns an array directly (handles both array and paginated responses)
+      if (!Array.isArray(categoriesData)) {
+        console.warn('Categories response is not an array:', categoriesData);
         setCategories([]);
+        return;
       }
+      
+      // Map categories to expected format (code/description -> id/name)
+      const mappedCategories = categoriesData.map((cat: any, index: number) => ({
+        id: cat.id || cat.code || `cat_${index}`, // Use code as id if no id exists
+        code: cat.code,
+        name: cat.name || cat.description || cat.code,
+        description: cat.description || cat.code,
+      }));
+      
+      setCategories(mappedCategories);
     } catch (error) {
       console.error('Error loading categories:', error);
       setCategories([]);
@@ -108,6 +134,27 @@ const EditItemModal = ({
     }
     loadCategories();
   }, [item, loadCategories]);
+  
+  // Map item_category to category_id when categories are loaded
+  useEffect(() => {
+    if (editedItem && categories.length > 0 && editedItem.item_category) {
+      const categoryCode =
+        typeof editedItem.item_category === 'string'
+          ? editedItem.item_category
+          : editedItem.item_category?.code;
+      if (categoryCode && !editedItem.category_id) {
+        const matchedCategory = categories.find(
+          cat => cat.code === categoryCode,
+        );
+        if (matchedCategory) {
+          setEditedItem({
+            ...editedItem,
+            category_id: (matchedCategory.id || matchedCategory.code) as any,
+          });
+        }
+      }
+    }
+  }, [categories]);
 
   // Don't render anything if modal is not visible
   if (!visible) {
@@ -522,10 +569,13 @@ const EditItemModal = ({
       transparent={true}
       onRequestClose={onClose}>
       <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
+        <KeyboardAvoidingView
+          style={styles.modalContent}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
           {!editedItem ? (
             <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#007AFF" />
+              <ActivityIndicator size="large" color={COLORS.primary} />
               <Text style={styles.loadingText}>Loading item data...</Text>
               <TouchableOpacity
                 style={[styles.button, styles.cancelButton]}
@@ -534,167 +584,212 @@ const EditItemModal = ({
               </TouchableOpacity>
             </View>
           ) : (
-            <ScrollView>
-              <Text style={styles.modalTitle}>Edit Item</Text>
+            <>
+              {/* Modal Header */}
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Edit Item</Text>
+                <TouchableOpacity
+                  onPress={onClose}
+                  style={styles.modalCloseButton}
+                  activeOpacity={0.7}>
+                  <Image
+                    source={icons.cross}
+                    style={styles.modalCloseIcon}
+                    resizeMode="contain"
+                  />
+                </TouchableOpacity>
+              </View>
 
-              {/* Image Section */}
-              <View style={styles.imageSection}>
-                {/* Error Message */}
-                {imageUploadError && (
-                  <View style={styles.errorContainer}>
-                    <View style={styles.errorIconContainer}>
-                      <Text style={styles.errorIcon}>⚠</Text>
+              <ScrollView
+                style={styles.modalScrollView}
+                contentContainerStyle={styles.modalScrollContent}
+                showsVerticalScrollIndicator={true}
+                keyboardShouldPersistTaps="handled"
+                nestedScrollEnabled={true}>
+                {/* Image Section */}
+                <View style={styles.imageSection}>
+                  {/* Error Message */}
+                  {imageUploadError && (
+                    <View style={styles.errorContainer}>
+                      <View style={styles.errorIconContainer}>
+                        <Text style={styles.errorIcon}>⚠</Text>
+                      </View>
+                      <View style={styles.errorContent}>
+                        <Text style={styles.errorTitle}>Upload Failed</Text>
+                        <Text style={styles.errorText}>{imageUploadError}</Text>
+                      </View>
                     </View>
-                    <View style={styles.errorContent}>
-                      <Text style={styles.errorTitle}>Upload Failed</Text>
-                      <Text style={styles.errorText}>{imageUploadError}</Text>
+                  )}
+
+                  {/* Success Message */}
+                  {imageUploadSuccess && (
+                    <View style={styles.successContainer}>
+                      <View style={styles.successIconContainer}>
+                        <Text style={styles.successIcon}>✓</Text>
+                      </View>
+                      <View style={styles.successContent}>
+                        <Text style={styles.successTitle}>Success!</Text>
+                        <Text style={styles.successText}>
+                          Image uploaded successfully
+                        </Text>
+                      </View>
                     </View>
+                  )}
+                  <Image
+                    source={{
+                      uri:
+                        selectedImage?.uri ||
+                        (editedItem.item_images &&
+                        editedItem.item_images.length > 0
+                          ? editedItem.item_images[0].url
+                          : undefined),
+                    }}
+                    style={styles.productImageLarge}
+                    defaultSource={require('../../assets/icons/product.png')}
+                    onError={error => {
+                      console.log('Image loading error:', error);
+                    }}
+                    onLoad={() => {
+                      console.log('Image loaded successfully');
+                    }}
+                    resizeMode="cover"
+                  />
+                  <View style={styles.imageButtonContainer}>
+                    <TouchableOpacity
+                      style={[
+                        styles.imagePickerButton,
+                        imageUploadLoading && styles.disabledButton,
+                      ]}
+                      onPress={handleImagePick}
+                      disabled={imageUploadLoading}>
+                      {imageUploadLoading ? (
+                        <View style={styles.uploadLoadingContainer}>
+                          <ActivityIndicator
+                            size="small"
+                            color={COLORS.white}
+                          />
+                          <Text style={styles.buttonText}>Uploading...</Text>
+                        </View>
+                      ) : (
+                        <Text style={styles.buttonText}>Change Image</Text>
+                      )}
+                    </TouchableOpacity>
+
+                    {editedItem.item_images &&
+                      editedItem.item_images.length > 0 &&
+                      canDelete && (
+                        <TouchableOpacity
+                          style={[
+                            styles.deleteImageButton,
+                            imageDeleteLoading && styles.disabledButton,
+                          ]}
+                          onPress={handleDeleteImage}
+                          disabled={imageDeleteLoading}>
+                          {imageDeleteLoading ? (
+                            <View style={styles.uploadLoadingContainer}>
+                              <ActivityIndicator
+                                size="small"
+                                color={COLORS.white}
+                              />
+                              <Text style={styles.buttonText}>Deleting...</Text>
+                            </View>
+                          ) : (
+                            <Text style={styles.buttonText}>Delete Image</Text>
+                          )}
+                        </TouchableOpacity>
+                      )}
                   </View>
-                )}
+                </View>
 
-                {/* Success Message */}
-                {imageUploadSuccess && (
-                  <View style={styles.successContainer}>
-                    <View style={styles.successIconContainer}>
-                      <Text style={styles.successIcon}>✓</Text>
-                    </View>
-                    <View style={styles.successContent}>
-                      <Text style={styles.successTitle}>Success!</Text>
-                      <Text style={styles.successText}>
-                        Image uploaded successfully
+                {/* Item Name */}
+                <Text style={styles.label}>Item Name</Text>
+                <TextInput
+                  style={styles.input}
+                  value={editedItem.item_name}
+                  onChangeText={text =>
+                    setEditedItem({...editedItem, item_name: text})
+                  }
+                />
+
+                {/* Category Dropdown */}
+                <Text style={styles.label}>Category</Text>
+                <View style={styles.pickerContainer}>
+                  {categoriesLoading ? (
+                    <View style={styles.categoryLoadingContainer}>
+                      <ActivityIndicator size="small" color={COLORS.primary} />
+                      <Text style={styles.categoryLoadingText}>
+                        Loading categories...
                       </Text>
                     </View>
-                  </View>
-                )}
-                <Image
-                  source={{
-                    uri:
-                      selectedImage?.uri ||
-                      (editedItem.item_images &&
-                      editedItem.item_images.length > 0
-                        ? editedItem.item_images[0].url
-                        : undefined),
-                  }}
-                  style={styles.productImageLarge}
-                  defaultSource={require('../../assets/icons/product.png')}
-                  onError={error => {
-                    console.log('Image loading error:', error);
-                  }}
-                  onLoad={() => {
-                    console.log('Image loaded successfully');
-                  }}
-                  resizeMode="cover"
-                />
-                <View style={styles.imageButtonContainer}>
-                  <TouchableOpacity
-                    style={[
-                      styles.imagePickerButton,
-                      imageUploadLoading && styles.disabledButton,
-                    ]}
-                    onPress={handleImagePick}
-                    disabled={imageUploadLoading}>
-                    {imageUploadLoading ? (
-                      <View style={styles.uploadLoadingContainer}>
-                        <ActivityIndicator size="small" color="#fff" />
-                        <Text style={styles.buttonText}>Uploading...</Text>
-                      </View>
-                    ) : (
-                      <Text style={styles.buttonText}>Change Image</Text>
-                    )}
-                  </TouchableOpacity>
-
-                  {editedItem.item_images &&
-                    editedItem.item_images.length > 0 && (
-                      <TouchableOpacity
-                        style={[
-                          styles.deleteImageButton,
-                          imageDeleteLoading && styles.disabledButton,
-                        ]}
-                        onPress={handleDeleteImage}
-                        disabled={imageDeleteLoading}>
-                        {imageDeleteLoading ? (
-                          <View style={styles.uploadLoadingContainer}>
-                            <ActivityIndicator size="small" color="#fff" />
-                            <Text style={styles.buttonText}>Deleting...</Text>
-                          </View>
-                        ) : (
-                          <Text style={styles.buttonText}>Delete Image</Text>
-                        )}
-                      </TouchableOpacity>
-                    )}
+                  ) : (
+                    <Picker
+                      selectedValue={editedItem.category_id || 0}
+                      onValueChange={itemValue => {
+                        // Handle 0 as "no category"
+                        if (itemValue === 0) {
+                          setEditedItem({...editedItem, category_id: null});
+                        } else {
+                          setEditedItem({...editedItem, category_id: itemValue});
+                        }
+                      }}
+                      style={styles.picker}
+                      itemStyle={styles.pickerItem}>
+                      <Picker.Item label="Select category" value={0} color={COLORS.black} />
+                      {categories?.map(category => (
+                        <Picker.Item
+                          key={category.id || category.code}
+                          label={category.name || category.description || category.code}
+                          value={category.id || category.code}
+                          color={COLORS.black}
+                        />
+                      ))}
+                    </Picker>
+                  )}
                 </View>
-              </View>
 
-              {/* Item Name */}
-              <Text style={styles.label}>Item Name</Text>
-              <TextInput
-                style={styles.input}
-                value={editedItem.item_name}
-                onChangeText={text =>
-                  setEditedItem({...editedItem, item_name: text})
-                }
-              />
+                {/* Price */}
+                <Text style={styles.label}>Price (UGX)</Text>
+                <View style={styles.priceInputContainer}>
+                  <Text style={styles.pricePrefix}>UGX</Text>
+                  <TextInput
+                    style={styles.priceInput}
+                    value={editedItem.unit_price.toLocaleString()}
+                    onChangeText={text => {
+                      // Remove commas and convert to number
+                      const numericValue =
+                        parseFloat(text.replace(/,/g, '')) || 0;
+                      setEditedItem({
+                        ...editedItem,
+                        unit_price: numericValue,
+                      });
+                    }}
+                    keyboardType="numeric"
+                    placeholder="0"
+                    placeholderTextColor={COLORS.gray3}
+                  />
+                </View>
+              </ScrollView>
 
-              {/* Category Dropdown */}
-              <Text style={styles.label}>Category</Text>
-              <View style={styles.pickerContainer}>
-                {categoriesLoading ? (
-                  <View style={styles.categoryLoadingContainer}>
-                    <ActivityIndicator size="small" color="#007AFF" />
-                    <Text style={styles.categoryLoadingText}>
-                      Loading categories...
-                    </Text>
-                  </View>
-                ) : (
-                  <Picker
-                    selectedValue={editedItem.category_id || 0}
-                    onValueChange={itemValue =>
-                      setEditedItem({...editedItem, category_id: itemValue})
-                    }
-                    style={styles.picker}>
-                    {categories?.map(category => (
-                      <Picker.Item
-                        key={category.id}
-                        label={category.name}
-                        value={category.id}
-                      />
-                    ))}
-                  </Picker>
-                )}
-              </View>
-
-              {/* Price */}
-              <Text style={styles.label}>Price</Text>
-              <TextInput
-                style={styles.input}
-                value={editedItem.unit_price.toLocaleString()}
-                onChangeText={text => {
-                  // Remove commas and convert to number
-                  const numericValue = parseFloat(text.replace(/,/g, '')) || 0;
-                  setEditedItem({
-                    ...editedItem,
-                    unit_price: numericValue,
-                  });
-                }}
-                keyboardType="numeric"
-              />
-
-              {/* Buttons */}
+              {/* Buttons - Outside ScrollView so they're always visible */}
               <View style={styles.buttonContainer}>
                 <TouchableOpacity
                   style={[styles.button, styles.cancelButton]}
-                  onPress={onClose}>
+                  onPress={onClose}
+                  activeOpacity={0.7}>
                   <Text style={styles.buttonText}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.button, styles.saveButton]}
-                  onPress={handleSave}>
-                  <Text style={styles.buttonText}>Save</Text>
-                </TouchableOpacity>
+                {canEdit && (
+                  <TouchableOpacity
+                    style={[styles.button, styles.saveButton]}
+                    onPress={handleSave}
+                    activeOpacity={0.7}>
+                    <Text style={styles.buttonText}>Save</Text>
+                  </TouchableOpacity>
+                )}
               </View>
-            </ScrollView>
+            </>
           )}
-        </View>
+        </KeyboardAvoidingView>
       </View>
 
       {/* Native gallery picker is used instead of in-app modal */}
@@ -723,7 +818,26 @@ const PackageSVG = () => (
 );
 
 const Items = () => {
+  const navigation = useNavigation();
+  const {canRead, canCreate, canEdit, canDelete} = usePermissions();
+  const PAGE_NAME = PAGE_NAMES.ITEMS;
+
+  // Early return if no read permission
+  if (!canRead(PAGE_NAME)) {
+    return (
+      <View style={[styles.container, {flex: 1}]}>
+        <View style={styles.accessDeniedContainer}>
+          <Text style={styles.accessDeniedTitle}>Access Denied</Text>
+          <Text style={styles.accessDeniedMessage}>
+            You don't have permission to view items.
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
   const [editModal, setEditModal] = useState(false);
+  const [createModal, setCreateModal] = useState(false);
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
@@ -734,7 +848,47 @@ const Items = () => {
   const [searchLoading, setSearchLoading] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
+  const [filterModal, setFilterModal] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
+  const [stockFilter, setStockFilter] = useState<
+    'all' | 'in_stock' | 'low_stock' | 'out_of_stock'
+  >('all');
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [categoriesLoading, setCategoriesLoading] = useState(false);
   const itemsPerPage = 10;
+
+  const loadCategories = useCallback(async () => {
+    try {
+      setCategoriesLoading(true);
+      const categoriesData = await fetchCategories();
+      
+      // fetchCategories now returns an array directly (handles both array and paginated responses)
+      if (!Array.isArray(categoriesData)) {
+        console.warn('Categories response is not an array:', categoriesData);
+        setCategories([]);
+        return;
+      }
+      
+      // Map categories to expected format (code/description -> id/name)
+      const mappedCategories = categoriesData.map((cat: any, index: number) => ({
+        id: cat.id || cat.code || `cat_${index}`, // Use code as id if no id exists
+        code: cat.code,
+        name: cat.name || cat.description || cat.code,
+        description: cat.description || cat.code,
+      }));
+      
+      setCategories(mappedCategories);
+    } catch (error) {
+      console.error('Error loading categories:', error);
+      setCategories([]);
+    } finally {
+      setCategoriesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCategories();
+  }, [loadCategories]);
 
   const loadItems = async () => {
     try {
@@ -742,12 +896,30 @@ const Items = () => {
       const response: PaginatedResponse = await fetchItems(
         currentPage,
         searchQuery,
+        selectedCategory || undefined,
       );
 
       // Add safety checks for response data
-      if (response && response.results && Array.isArray(response.results)) {
-        setItems(response.results);
-        setTotalPages(Math.ceil((response.count || 0) / itemsPerPage));
+      let filteredResults = response?.results || [];
+
+      // Apply stock filter on client side
+      if (stockFilter !== 'all' && Array.isArray(filteredResults)) {
+        filteredResults = filteredResults.filter(item => {
+          const inventory = item?.inventory || 0;
+          if (stockFilter === 'out_of_stock') return inventory === 0;
+          if (stockFilter === 'low_stock')
+            return inventory > 0 && inventory < 10;
+          if (stockFilter === 'in_stock') return inventory >= 10;
+          return true;
+        });
+      }
+
+      if (response && Array.isArray(filteredResults)) {
+        setItems(filteredResults);
+        // Adjust total pages based on filtered results
+        const totalCount =
+          stockFilter !== 'all' ? filteredResults.length : response.count || 0;
+        setTotalPages(Math.ceil(totalCount / itemsPerPage));
       } else {
         console.warn('Invalid response format from fetchItems');
         setItems([]);
@@ -769,12 +941,29 @@ const Items = () => {
       const response: PaginatedResponse = await fetchItems(
         currentPage,
         searchQuery,
+        selectedCategory || undefined,
       );
 
       // Add safety checks for response data
-      if (response && response.results && Array.isArray(response.results)) {
-        setItems(response.results);
-        setTotalPages(Math.ceil((response.count || 0) / itemsPerPage));
+      let filteredResults = response?.results || [];
+
+      // Apply stock filter on client side
+      if (stockFilter !== 'all' && Array.isArray(filteredResults)) {
+        filteredResults = filteredResults.filter(item => {
+          const inventory = item?.inventory || 0;
+          if (stockFilter === 'out_of_stock') return inventory === 0;
+          if (stockFilter === 'low_stock')
+            return inventory > 0 && inventory < 10;
+          if (stockFilter === 'in_stock') return inventory >= 10;
+          return true;
+        });
+      }
+
+      if (response && Array.isArray(filteredResults)) {
+        setItems(filteredResults);
+        const totalCount =
+          stockFilter !== 'all' ? filteredResults.length : response.count || 0;
+        setTotalPages(Math.ceil(totalCount / itemsPerPage));
       } else {
         console.warn('Invalid response format from fetchItems in refresh');
         setItems([]);
@@ -795,7 +984,7 @@ const Items = () => {
     }, 500); // Debounce search
 
     return () => clearTimeout(debounceTimer);
-  }, [currentPage, searchQuery]);
+  }, [currentPage, searchQuery, selectedCategory, stockFilter]);
 
   const handleSearch = (text: string) => {
     setSearchQuery(text);
@@ -803,12 +992,28 @@ const Items = () => {
     setSearchLoading(true);
   };
 
+  const handleApplyFilter = () => {
+    setCurrentPage(1); // Reset to first page when filtering
+    setFilterModal(false);
+    loadItems();
+  };
+
+  const handleClearFilter = () => {
+    setSelectedCategory(null);
+    setStockFilter('all');
+    setCurrentPage(1);
+    setFilterModal(false);
+  };
+
+  const hasActiveFilters = selectedCategory !== null || stockFilter !== 'all';
+
   const renderPagination = () => (
     <View style={styles.paginationContainer}>
       <TouchableOpacity
         style={[styles.pageButton, currentPage === 1 && styles.disabledButton]}
         onPress={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-        disabled={currentPage === 1}>
+        disabled={currentPage === 1}
+        activeOpacity={0.7}>
         <Text
           style={
             currentPage === 1
@@ -819,9 +1024,11 @@ const Items = () => {
         </Text>
       </TouchableOpacity>
 
-      <Text style={styles.pageInfo}>
-        Page {currentPage} of {totalPages || 0}
-      </Text>
+      <View style={styles.pageInfoContainer}>
+        <Text style={styles.pageInfo}>
+          Page {currentPage} of {totalPages || 0}
+        </Text>
+      </View>
 
       <TouchableOpacity
         style={[
@@ -831,7 +1038,8 @@ const Items = () => {
         onPress={() =>
           setCurrentPage(prev => Math.min(totalPages || 0, prev + 1))
         }
-        disabled={currentPage === (totalPages || 0)}>
+        disabled={currentPage === (totalPages || 0)}
+        activeOpacity={0.7}>
         <Text
           style={
             currentPage === (totalPages || 0)
@@ -844,6 +1052,18 @@ const Items = () => {
     </View>
   );
 
+  const handleCreateItem = () => {
+    if (!canCreate(PAGE_NAME)) {
+      Alert.alert(
+        'Access Denied',
+        'You do not have permission to create items.',
+      );
+      return;
+    }
+    setSelectedItem(null);
+    setCreateModal(true);
+  };
+
   const handleEditItem = (item: Item) => {
     console.log('handleEditItem called with:', item);
     if (!item || (!item.id && !item.no)) {
@@ -855,48 +1075,89 @@ const Items = () => {
     setEditModal(true);
   };
 
-  const renderItemCard = ({item}: {item: Item}) => (
-    <View style={styles.itemCard}>
-      <View style={styles.itemImageContainer}>
-        {item?.item_images &&
-        item.item_images.length > 0 &&
-        item.item_images[0]?.url ? (
-          <Image
-            source={{uri: item.item_images[0].url}}
-            style={styles.itemImage}
-            resizeMode="cover"
-          />
-        ) : (
-          <View style={styles.placeholderImage}>
-            <PackageSVG />
-          </View>
-        )}
-      </View>
+  const getStockStatus = (inventory: number) => {
+    if (inventory === 0) return {color: COLORS.error, label: 'Out of Stock'};
+    if (inventory < 10) return {color: COLORS.warning, label: 'Low Stock'};
+    return {color: COLORS.success, label: 'In Stock'};
+  };
 
-      <View style={styles.itemInfo}>
-        <Text style={styles.itemName} numberOfLines={2}>
-          {item?.item_name || 'Unnamed Item'}
-        </Text>
-        <Text style={styles.itemPrice}>
-          UGX {(item?.unit_price || 0).toLocaleString()}
-        </Text>
-        <Text style={styles.itemInventory}>
-          Stock: {item?.inventory || 0} units
-        </Text>
-      </View>
-
+  const renderItemCard = ({item}: {item: Item}) => {
+    const stockStatus = getStockStatus(item?.inventory || 0);
+    return (
       <TouchableOpacity
-        style={styles.editButton}
-        onPress={() => {
-          console.log('Edit button pressed for item:', item?.id || item?.no);
-          handleEditItem(item);
-        }}>
-        <Text style={styles.editButtonText}>Edit</Text>
+        style={styles.itemCard}
+        activeOpacity={0.7}
+        onPress={() => canEdit(PAGE_NAME) && handleEditItem(item)}>
+        <View style={styles.itemImageContainer}>
+          {item?.item_images &&
+          item.item_images.length > 0 &&
+          item.item_images[0]?.url ? (
+            <Image
+              source={{uri: item.item_images[0].url}}
+              style={styles.itemImage}
+              resizeMode="cover"
+            />
+          ) : (
+            <View style={styles.placeholderImage}>
+              <PackageSVG />
+            </View>
+          )}
+        </View>
+
+        <View style={styles.itemInfo}>
+          <Text style={styles.itemName} numberOfLines={2}>
+            {item?.item_name || 'Unnamed Item'}
+          </Text>
+          <View style={styles.priceContainer}>
+            <Text style={styles.itemPrice}>
+              UGX {(item?.unit_price || 0).toLocaleString()}
+            </Text>
+          </View>
+          <View style={styles.stockContainer}>
+            <View
+              style={[
+                styles.stockIndicator,
+                {backgroundColor: stockStatus.color + '20'},
+              ]}>
+              <View
+                style={[styles.stockDot, {backgroundColor: stockStatus.color}]}
+              />
+              <Text
+                style={[
+                  styles.itemInventory,
+                  {color: stockStatus.color, fontWeight: '600'},
+                ]}>
+                {item?.inventory || 0} units
+              </Text>
+            </View>
+          </View>
+        </View>
+
+        {canEdit(PAGE_NAME) && (
+          <TouchableOpacity
+            style={styles.editButton}
+            onPress={() => {
+              console.log(
+                'Edit button pressed for item:',
+                item?.id || item?.no,
+              );
+              handleEditItem(item);
+            }}
+            activeOpacity={0.8}>
+            <Text style={styles.editButtonText}>Edit</Text>
+          </TouchableOpacity>
+        )}
       </TouchableOpacity>
-    </View>
-  );
+    );
+  };
 
   const handleItemSave = async (selectedItem: Item) => {
+    // Check permission before saving
+    if (!canEdit(PAGE_NAME)) {
+      Alert.alert('Access Denied', 'You do not have permission to edit items.');
+      return;
+    }
+
     const itemId = selectedItem.id || selectedItem.no;
     if (!selectedItem || !itemId) {
       console.warn('Invalid item data for saving');
@@ -904,8 +1165,27 @@ const Items = () => {
     }
 
     try {
-      const response = await updateItem(itemId, selectedItem);
-      if (response.status === 200) {
+      // Map category_id to item_category code for backend
+      const itemToSave: any = {
+        ...selectedItem,
+        system_id:
+          selectedItem.system_id || selectedItem.no || itemId.toString(),
+      };
+      
+      // Convert category_id to item_category code if needed
+      if (selectedItem.category_id) {
+        const selectedCategory = categories.find(
+          cat => (cat.id || cat.code) === selectedItem.category_id,
+        );
+        if (selectedCategory && selectedCategory.code) {
+          itemToSave.item_category = selectedCategory.code;
+          // Remove category_id as backend expects item_category
+          delete itemToSave.category_id;
+        }
+      }
+
+      const response = await updateItem(itemId, itemToSave);
+      if (response.status === 200 || response.status === 201) {
         setSuccessMessage('Item updated successfully');
         setShowSuccessModal(true);
         setEditModal(false);
@@ -914,33 +1194,76 @@ const Items = () => {
       } else {
         Alert.alert('Error', 'Failed to update item');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving item:', error);
-      Alert.alert('Error', 'Failed to save item');
+      const errorMessage =
+        error?.response?.data?.message ||
+        error?.message ||
+        'Failed to save item';
+      Alert.alert('Error', errorMessage);
     }
+  };
+
+  const handleFormSave = (savedItem: Item) => {
+    setCreateModal(false);
+    setSelectedItem(null);
+    loadItems();
   };
 
   return (
     <View style={styles.container}>
       {/* Search Bar */}
       <View style={styles.searchContainer}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search items..."
-          value={searchQuery}
-          onChangeText={handleSearch}
-        />
-        {searchLoading && (
-          <View style={styles.searchLoadingContainer}>
-            <ActivityIndicator size="small" color="#007AFF" />
+        <View style={styles.searchInputContainer}>
+          <View style={styles.searchIconContainer}>
+            <Image
+              source={icons.search}
+              style={styles.searchIcon}
+              resizeMode="contain"
+            />
           </View>
-        )}
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search items..."
+            placeholderTextColor={COLORS.gray3}
+            value={searchQuery}
+            onChangeText={handleSearch}
+          />
+          {searchLoading && (
+            <View style={styles.searchLoadingContainer}>
+              <ActivityIndicator size="small" color={COLORS.primary} />
+            </View>
+          )}
+        </View>
+        <TouchableOpacity
+          style={styles.categoryButton}
+          onPress={() => navigation.navigate('ItemCategories' as never)}
+          activeOpacity={0.7}>
+          <Text style={styles.categoryButtonText}>📁</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[
+            styles.filterButton,
+            hasActiveFilters && styles.filterButtonActive,
+          ]}
+          onPress={() => setFilterModal(true)}
+          activeOpacity={0.7}>
+          <Image
+            source={icons.filter}
+            style={[
+              styles.filterIcon,
+              hasActiveFilters && styles.filterIconActive,
+            ]}
+            resizeMode="contain"
+          />
+          {hasActiveFilters && <View style={styles.filterBadge} />}
+        </TouchableOpacity>
       </View>
 
       {/* Loading Indicator */}
       {loading && (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
+          <ActivityIndicator size="large" color={COLORS.primary} />
           <Text style={styles.loadingText}>Loading items...</Text>
         </View>
       )}
@@ -964,7 +1287,24 @@ const Items = () => {
           }
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>No items found.</Text>
+              <View style={styles.emptyIconContainer}>
+                <Text style={styles.emptyIcon}>📦</Text>
+              </View>
+              <Text style={styles.emptyTitle}>No items found</Text>
+              <Text style={styles.emptyText}>
+                {searchQuery
+                  ? 'Try adjusting your search terms'
+                  : canCreate(PAGE_NAME)
+                  ? 'Create your first item to get started.'
+                  : 'No items available at the moment'}
+              </Text>
+              {canCreate(PAGE_NAME) && !searchQuery && (
+                <TouchableOpacity
+                  style={styles.emptyButton}
+                  onPress={handleCreateItem}>
+                  <Text style={styles.emptyButtonText}>Create Item</Text>
+                </TouchableOpacity>
+              )}
             </View>
           }
         />
@@ -972,6 +1312,30 @@ const Items = () => {
 
       {/* Pagination */}
       {(totalPages || 0) > 1 && renderPagination()}
+
+      {/* Create Item FAB */}
+      {canCreate(PAGE_NAME) && (
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={handleCreateItem}
+          activeOpacity={0.8}>
+          <Text style={styles.fabText}>+</Text>
+        </TouchableOpacity>
+      )}
+
+      {/* Create Item Modal */}
+      <ItemFormModal
+        visible={createModal}
+        onClose={() => {
+          setCreateModal(false);
+          setSelectedItem(null);
+        }}
+        item={null}
+        onSave={handleFormSave}
+        canCreate={canCreate(PAGE_NAME)}
+        canEdit={canEdit(PAGE_NAME)}
+        canDelete={canDelete(PAGE_NAME)}
+      />
 
       {/* Edit Item Modal */}
       <EditItemModal
@@ -983,6 +1347,8 @@ const Items = () => {
         }}
         item={selectedItem}
         onSave={handleItemSave}
+        canEdit={canEdit(PAGE_NAME)}
+        canDelete={canDelete(PAGE_NAME)}
       />
 
       {/* Custom Success Modal */}
@@ -1003,6 +1369,107 @@ const Items = () => {
               onPress={() => setShowSuccessModal(false)}>
               <Text style={styles.successModalButtonText}>Continue</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Filter Modal */}
+      <Modal
+        visible={filterModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setFilterModal(false)}>
+        <View style={styles.filterModalOverlay}>
+          <View style={styles.filterModalContent}>
+            <View style={styles.filterModalHeader}>
+              <Text style={styles.filterModalTitle}>Filter Items</Text>
+              <TouchableOpacity
+                onPress={() => setFilterModal(false)}
+                style={styles.filterCloseButton}>
+                <Text style={styles.filterCloseIcon}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.filterScrollView}>
+              {/* Category Filter */}
+              <View style={styles.filterSection}>
+                <Text style={styles.filterLabel}>Category</Text>
+                <View style={styles.pickerContainer}>
+                  {categoriesLoading ? (
+                    <View style={styles.categoryLoadingContainer}>
+                      <ActivityIndicator size="small" color={COLORS.primary} />
+                      <Text style={styles.categoryLoadingText}>
+                        Loading categories...
+                      </Text>
+                    </View>
+                  ) : (
+                    <Picker
+                      selectedValue={selectedCategory || 0}
+                      onValueChange={value =>
+                        setSelectedCategory(value === 0 ? null : value)
+                      }
+                      style={styles.picker}>
+                      <Picker.Item label="All Categories" value={0} />
+                      {categories?.map(category => (
+                        <Picker.Item
+                          key={category.id}
+                          label={category.name}
+                          value={category.id}
+                        />
+                      ))}
+                    </Picker>
+                  )}
+                </View>
+              </View>
+
+              {/* Stock Status Filter */}
+              <View style={styles.filterSection}>
+                <Text style={styles.filterLabel}>Stock Status</Text>
+                <View style={styles.stockFilterContainer}>
+                  {[
+                    {value: 'all', label: 'All Items'},
+                    {value: 'in_stock', label: 'In Stock'},
+                    {value: 'low_stock', label: 'Low Stock'},
+                    {value: 'out_of_stock', label: 'Out of Stock'},
+                  ].map(option => (
+                    <TouchableOpacity
+                      key={option.value}
+                      style={[
+                        styles.stockFilterButton,
+                        stockFilter === option.value &&
+                          styles.stockFilterButtonActive,
+                      ]}
+                      onPress={() => setStockFilter(option.value as any)}
+                      activeOpacity={0.7}>
+                      <Text
+                        style={[
+                          styles.stockFilterText,
+                          stockFilter === option.value &&
+                            styles.stockFilterTextActive,
+                        ]}>
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            </ScrollView>
+
+            {/* Filter Actions */}
+            <View style={styles.filterActions}>
+              <TouchableOpacity
+                style={[styles.filterActionButton, styles.clearFilterButton]}
+                onPress={handleClearFilter}
+                activeOpacity={0.7}>
+                <Text style={styles.clearFilterText}>Clear All</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.filterActionButton, styles.applyFilterButton]}
+                onPress={handleApplyFilter}
+                activeOpacity={0.7}>
+                <Text style={styles.applyFilterText}>Apply Filters</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1033,42 +1500,140 @@ const Items = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: COLORS.lightGray2,
   },
-  searchContainer: {
-    padding: 16,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-  },
-  searchInput: {
-    height: 40,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    fontSize: 16,
-  },
-  itemCard: {
-    backgroundColor: '#fff',
-    marginHorizontal: 16,
-    marginVertical: 8,
-    borderRadius: 12,
-    padding: 16,
-    flexDirection: 'row',
+  accessDeniedContainer: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
+    padding: SIZES.padding,
+    backgroundColor: COLORS.white,
+    margin: SIZES.base * 2,
+    borderRadius: SIZES.radius,
+    shadowColor: COLORS.black,
     shadowOffset: {width: 0, height: 2},
     shadowOpacity: 0.1,
-    shadowRadius: 4,
+    shadowRadius: 8,
     elevation: 3,
   },
+  accessDeniedTitle: {
+    ...FONTS.h2,
+    color: COLORS.error,
+    marginBottom: SIZES.base * 1.5,
+    textAlign: 'center',
+  },
+  accessDeniedMessage: {
+    ...FONTS.body3,
+    color: COLORS.gray2,
+    textAlign: 'center',
+  },
+  searchContainer: {
+    padding: SIZES.base * 2,
+    backgroundColor: COLORS.white,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.lightGray1,
+    shadowColor: COLORS.black,
+    shadowOffset: {width: 0, height: 1},
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.base,
+  },
+  searchInputContainer: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.lightGray2,
+    borderRadius: SIZES.radius,
+    paddingHorizontal: SIZES.base * 1.5,
+    height: 48,
+  },
+  searchIconContainer: {
+    marginRight: SIZES.base,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  searchIcon: {
+    width: 20,
+    height: 20,
+    tintColor: COLORS.gray2,
+  },
+  searchInput: {
+    flex: 1,
+    ...FONTS.body3,
+    color: COLORS.black,
+    paddingVertical: 0,
+  },
+  categoryButton: {
+    width: 48,
+    height: 48,
+    borderRadius: SIZES.radius,
+    backgroundColor: COLORS.lightGray2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.lightGray1,
+    marginRight: SIZES.base,
+  },
+  categoryButtonText: {
+    fontSize: 20,
+  },
+  filterButton: {
+    width: 48,
+    height: 48,
+    borderRadius: SIZES.radius,
+    backgroundColor: COLORS.lightGray2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.lightGray1,
+  },
+  filterButtonActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  filterIcon: {
+    width: 20,
+    height: 20,
+    tintColor: COLORS.gray2,
+  },
+  filterIconActive: {
+    tintColor: COLORS.white,
+  },
+  filterBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.error,
+  },
+  itemCard: {
+    backgroundColor: COLORS.white,
+    marginHorizontal: SIZES.base * 2,
+    marginVertical: SIZES.base,
+    borderRadius: SIZES.radius,
+    padding: SIZES.base * 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: COLORS.black,
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: COLORS.lightGray1,
+  },
   itemImageContainer: {
-    width: 60,
-    height: 60,
-    borderRadius: 8,
+    width: 72,
+    height: 72,
+    borderRadius: SIZES.radius,
     overflow: 'hidden',
-    marginRight: 12,
+    marginRight: SIZES.base * 1.5,
+    backgroundColor: COLORS.lightGray2,
   },
   itemImage: {
     width: '100%',
@@ -1077,130 +1642,259 @@ const styles = StyleSheet.create({
   placeholderImage: {
     width: '100%',
     height: '100%',
-    backgroundColor: '#f0f0f0',
+    backgroundColor: COLORS.lightGray2,
     justifyContent: 'center',
     alignItems: 'center',
   },
   itemInfo: {
     flex: 1,
+    marginRight: SIZES.base,
   },
   itemName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 4,
+    ...FONTS.h4,
+    color: COLORS.black,
+    marginBottom: SIZES.base * 0.5,
+  },
+  priceContainer: {
+    marginBottom: SIZES.base * 0.5,
   },
   itemPrice: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#007AFF',
-    marginBottom: 2,
+    ...FONTS.h5,
+    color: COLORS.primary,
+    fontWeight: '600',
+  },
+  stockContainer: {
+    marginTop: SIZES.base * 0.5,
+  },
+  stockIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    paddingHorizontal: SIZES.base,
+    paddingVertical: SIZES.base * 0.5,
+    borderRadius: 12,
+  },
+  stockDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: SIZES.base * 0.5,
   },
   itemInventory: {
-    fontSize: 12,
-    color: '#666',
+    ...FONTS.body5,
+    fontSize: 11,
   },
   editButton: {
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 6,
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: SIZES.base * 2,
+    paddingVertical: SIZES.base * 1.25,
+    borderRadius: SIZES.radius,
+    shadowColor: COLORS.primary,
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
   },
   editButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '500',
+    ...FONTS.button,
+    color: COLORS.white,
+    fontSize: 13,
   },
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 50,
+    paddingVertical: SIZES.padding * 2,
+    paddingHorizontal: SIZES.padding,
+  },
+  emptyIconContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: COLORS.lightGray2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: SIZES.base * 2,
+  },
+  emptyIcon: {
+    fontSize: 40,
+  },
+  emptyTitle: {
+    ...FONTS.h3,
+    color: COLORS.black,
+    marginBottom: SIZES.base,
+    textAlign: 'center',
   },
   emptyText: {
-    fontSize: 16,
-    color: '#666',
+    ...FONTS.body3,
+    color: COLORS.gray2,
     textAlign: 'center',
+    maxWidth: 250,
+  },
+  emptyButton: {
+    marginTop: SIZES.base * 2,
+    paddingHorizontal: SIZES.base * 3,
+    paddingVertical: SIZES.base * 1.5,
+    backgroundColor: COLORS.primary,
+    borderRadius: SIZES.radius,
+    shadowColor: COLORS.primary,
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  emptyButtonText: {
+    ...FONTS.button,
+    color: COLORS.white,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  fab: {
+    position: 'absolute',
+    right: SIZES.base * 2,
+    bottom: 130, // Position well above bottom navigation
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: COLORS.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    zIndex: 1000,
+  },
+  fabText: {
+    fontSize: 32,
+    color: COLORS.white,
+    fontWeight: '300',
+    lineHeight: 32,
   },
   paginationContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#fff',
+    padding: SIZES.base * 2,
+    backgroundColor: COLORS.white,
     borderTopWidth: 1,
-    borderTopColor: '#e0e0e0',
+    borderTopColor: COLORS.lightGray1,
+    shadowColor: COLORS.black,
+    shadowOffset: {width: 0, height: -2},
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 3,
   },
   pageButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 6,
-    backgroundColor: '#007AFF',
+    paddingHorizontal: SIZES.base * 2,
+    paddingVertical: SIZES.base * 1.5,
+    borderRadius: SIZES.radius,
+    backgroundColor: COLORS.primary,
+    minWidth: 100,
+    alignItems: 'center',
   },
   disabledButton: {
-    backgroundColor: '#ccc',
+    backgroundColor: COLORS.lightGray1,
   },
   pageButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '500',
+    ...FONTS.button,
+    color: COLORS.white,
+    fontSize: 13,
   },
   disabledButtonText: {
-    color: '#999',
-    fontSize: 14,
-    fontWeight: '500',
+    ...FONTS.button,
+    color: COLORS.gray3,
+    fontSize: 13,
+  },
+  pageInfoContainer: {
+    paddingHorizontal: SIZES.base * 2,
   },
   pageInfo: {
-    fontSize: 14,
-    color: '#666',
+    ...FONTS.body4,
+    color: COLORS.gray2,
+    fontWeight: '500',
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    backgroundColor: COLORS.overlay2,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: SIZES.base * 2.5,
   },
   modalContent: {
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    padding: 24,
+    backgroundColor: COLORS.white,
+    borderRadius: SIZES.radius * 2,
     width: '100%',
-    maxHeight: '85%',
+    maxHeight: '90%',
+    shadowColor: COLORS.black,
+    shadowOffset: {width: 0, height: 10},
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 15,
+    overflow: 'hidden',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: SIZES.padding,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.lightGray1,
+    backgroundColor: COLORS.white,
   },
   modalTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#1a1a1a',
-    marginBottom: 24,
-    textAlign: 'center',
-    letterSpacing: 0.5,
+    ...FONTS.h2,
+    color: COLORS.black,
+    flex: 1,
+  },
+  modalCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.lightGray2,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalCloseIcon: {
+    width: 16,
+    height: 16,
+    tintColor: COLORS.gray2,
+  },
+  modalScrollView: {
+    maxHeight: 400,
+  },
+  modalScrollContent: {
+    padding: SIZES.padding,
+    paddingBottom: SIZES.base * 2,
   },
   imageSection: {
     alignItems: 'center',
-    marginBottom: 24,
-    backgroundColor: '#f8f9fa',
-    borderRadius: 16,
-    padding: 20,
+    marginBottom: SIZES.padding,
+    backgroundColor: COLORS.lightGray2,
+    borderRadius: SIZES.radius * 1.5,
+    padding: SIZES.base * 2.5,
     borderWidth: 1,
-    borderColor: '#e9ecef',
+    borderColor: COLORS.lightGray1,
+    marginTop: SIZES.base,
   },
   productImageLarge: {
-    width: 140,
-    height: 140,
-    borderRadius: 12,
-    marginBottom: 16,
+    width: 160,
+    height: 160,
+    borderRadius: SIZES.radius,
+    marginBottom: SIZES.base * 2,
     borderWidth: 2,
-    borderColor: '#e9ecef',
+    borderColor: COLORS.lightGray1,
+    backgroundColor: COLORS.white,
   },
   imagePickerButton: {
-    backgroundColor: '#007AFF',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: SIZES.base * 1.5,
+    paddingVertical: SIZES.base * 1.5,
+    borderRadius: SIZES.radius,
     flex: 1,
-    marginHorizontal: 4,
-    shadowColor: '#007AFF',
+    marginHorizontal: SIZES.base * 0.5,
+    shadowColor: COLORS.primary,
     shadowOffset: {width: 0, height: 2},
     shadowOpacity: 0.2,
     shadowRadius: 4,
@@ -1213,13 +1907,13 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   deleteImageButton: {
-    backgroundColor: '#ff3b30',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
+    backgroundColor: COLORS.error,
+    paddingHorizontal: SIZES.base * 1.5,
+    paddingVertical: SIZES.base * 1.5,
+    borderRadius: SIZES.radius,
     flex: 1,
-    marginHorizontal: 4,
-    shadowColor: '#ff3b30',
+    marginHorizontal: SIZES.base * 0.5,
+    shadowColor: COLORS.error,
     shadowOffset: {width: 0, height: 2},
     shadowOpacity: 0.2,
     shadowRadius: 4,
@@ -1294,88 +1988,128 @@ const styles = StyleSheet.create({
     color: '#666',
   },
   label: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#333',
-    marginBottom: 8,
+    ...FONTS.h4,
+    color: COLORS.black,
+    marginBottom: SIZES.base,
+    fontWeight: '600',
   },
   input: {
     borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    fontSize: 16,
-    marginBottom: 16,
+    borderColor: COLORS.lightGray1,
+    borderRadius: SIZES.radius,
+    paddingHorizontal: SIZES.base * 1.5,
+    paddingVertical: SIZES.base * 1.5,
+    ...FONTS.body3,
+    color: COLORS.black,
+    marginBottom: SIZES.base * 2,
+    backgroundColor: COLORS.lightGray2,
+    minHeight: 48,
+  },
+  priceInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.lightGray1,
+    borderRadius: SIZES.radius,
+    backgroundColor: COLORS.lightGray2,
+    marginBottom: SIZES.base * 2,
+    paddingHorizontal: SIZES.base * 1.5,
+    minHeight: 48,
+  },
+  pricePrefix: {
+    ...FONTS.body3,
+    color: COLORS.primary,
+    fontWeight: '600',
+    marginRight: SIZES.base,
+  },
+  priceInput: {
+    flex: 1,
+    ...FONTS.body3,
+    color: COLORS.black,
+    paddingVertical: SIZES.base * 1.5,
   },
   pickerContainer: {
     borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 8,
-    marginBottom: 16,
+    borderColor: COLORS.lightGray1,
+    borderRadius: SIZES.radius,
+    marginBottom: SIZES.base * 2,
+    backgroundColor: COLORS.lightGray2,
+    overflow: 'hidden',
   },
   picker: {
     height: 50,
+    color: COLORS.black,
+  },
+  pickerItem: {
+    color: COLORS.black,
+  },
+  picker: {
+    height: 50,
+    color: COLORS.black,
+  },
+  pickerItem: {
+    color: COLORS.black,
   },
   buttonContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginTop: 20,
+    padding: SIZES.padding,
+    paddingTop: SIZES.base * 2,
+    gap: SIZES.base,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.lightGray1,
+    backgroundColor: COLORS.white,
+    flexShrink: 0,
   },
   button: {
     flex: 1,
-    paddingVertical: 10,
-    borderRadius: 10,
-    marginHorizontal: 6,
-    shadowColor: '#000',
+    paddingVertical: SIZES.base * 1.5,
+    borderRadius: SIZES.radius,
+    shadowColor: COLORS.black,
     shadowOffset: {width: 0, height: 2},
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
   },
   cancelButton: {
-    backgroundColor: '#ff3b30',
+    backgroundColor: COLORS.error,
   },
   saveButton: {
-    backgroundColor: '#34c759',
+    backgroundColor: COLORS.success,
   },
   buttonText: {
-    color: '#fff',
-    fontSize: 15,
-    fontWeight: '600',
+    ...FONTS.button,
+    color: COLORS.white,
     textAlign: 'center',
-    letterSpacing: 0.3,
+    fontSize: 15,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: 40,
+    paddingVertical: SIZES.padding * 2,
   },
   loadingSpinner: {
     alignItems: 'center',
     justifyContent: 'center',
   },
   loadingText: {
-    fontSize: 16,
-    color: '#666',
-    marginTop: 10,
+    ...FONTS.body3,
+    color: COLORS.gray2,
+    marginTop: SIZES.base * 1.5,
   },
   categoryLoadingContainer: {
-    paddingVertical: 20,
+    paddingVertical: SIZES.base * 2.5,
     alignItems: 'center',
     justifyContent: 'center',
   },
   categoryLoadingText: {
-    fontSize: 14,
-    color: '#666',
-    marginTop: 8,
+    ...FONTS.body4,
+    color: COLORS.gray2,
+    marginTop: SIZES.base,
   },
   searchLoadingContainer: {
-    position: 'absolute',
-    right: 15,
-    top: '50%',
-    transform: [{translateY: -10}],
+    marginLeft: SIZES.base,
   },
   uploadLoadingContainer: {
     flexDirection: 'row',
@@ -1384,15 +2118,15 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   errorContainer: {
-    backgroundColor: '#ffebee',
+    backgroundColor: COLORS.error + '15',
     borderWidth: 1,
-    borderColor: '#ffcdd2',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
+    borderColor: COLORS.error + '40',
+    borderRadius: SIZES.radius,
+    padding: SIZES.base * 2,
+    marginBottom: SIZES.base * 2,
     flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: '#f44336',
+    shadowColor: COLORS.error,
     shadowOffset: {width: 0, height: 2},
     shadowOpacity: 0.1,
     shadowRadius: 4,
@@ -1402,13 +2136,13 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#f44336',
+    backgroundColor: COLORS.error,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: SIZES.base * 1.5,
   },
   errorIcon: {
-    color: '#fff',
+    color: COLORS.white,
     fontSize: 16,
     fontWeight: 'bold',
   },
@@ -1416,26 +2150,24 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   errorTitle: {
-    color: '#c62828',
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 2,
+    ...FONTS.h4,
+    color: COLORS.error,
+    marginBottom: SIZES.base * 0.25,
   },
   errorText: {
-    color: '#d32f2f',
-    fontSize: 14,
-    fontWeight: '400',
+    ...FONTS.body4,
+    color: COLORS.error,
   },
   successContainer: {
-    backgroundColor: '#f1f8e9',
+    backgroundColor: COLORS.success + '15',
     borderWidth: 1,
-    borderColor: '#a5d6a7',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
+    borderColor: COLORS.success + '40',
+    borderRadius: SIZES.radius,
+    padding: SIZES.base * 2,
+    marginBottom: SIZES.base * 2,
     flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: '#4caf50',
+    shadowColor: COLORS.success,
     shadowOffset: {width: 0, height: 2},
     shadowOpacity: 0.1,
     shadowRadius: 4,
@@ -1445,13 +2177,13 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#4caf50',
+    backgroundColor: COLORS.success,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12,
+    marginRight: SIZES.base * 1.5,
   },
   successIcon: {
-    color: '#fff',
+    color: COLORS.white,
     fontSize: 18,
     fontWeight: 'bold',
   },
@@ -1459,32 +2191,30 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   successTitle: {
-    color: '#2e7d32',
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 2,
+    ...FONTS.h4,
+    color: COLORS.success,
+    marginBottom: SIZES.base * 0.25,
   },
   successText: {
-    color: '#388e3c',
-    fontSize: 14,
-    fontWeight: '400',
+    ...FONTS.body4,
+    color: COLORS.success,
   },
   // Custom Success Modal Styles
   successModalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    backgroundColor: COLORS.overlay2,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: SIZES.base * 2.5,
   },
   successModalContent: {
-    backgroundColor: '#fff',
-    borderRadius: 20,
-    padding: 32,
+    backgroundColor: COLORS.white,
+    borderRadius: SIZES.radius * 2,
+    padding: SIZES.padding * 1.5,
     alignItems: 'center',
     maxWidth: 300,
     width: '100%',
-    shadowColor: '#000',
+    shadowColor: COLORS.black,
     shadowOffset: {width: 0, height: 10},
     shadowOpacity: 0.3,
     shadowRadius: 20,
@@ -1494,51 +2224,167 @@ const styles = StyleSheet.create({
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: '#4caf50',
+    backgroundColor: COLORS.success,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 20,
-    shadowColor: '#4caf50',
+    marginBottom: SIZES.base * 2.5,
+    shadowColor: COLORS.success,
     shadowOffset: {width: 0, height: 4},
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 5,
   },
   successModalIcon: {
-    color: '#fff',
+    color: COLORS.white,
     fontSize: 32,
     fontWeight: 'bold',
   },
   successModalTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#1a1a1a',
-    marginBottom: 8,
+    ...FONTS.h1,
+    color: COLORS.black,
+    marginBottom: SIZES.base,
     textAlign: 'center',
   },
   successModalMessage: {
-    fontSize: 16,
-    color: '#666',
+    ...FONTS.body3,
+    color: COLORS.gray2,
     textAlign: 'center',
-    marginBottom: 24,
+    marginBottom: SIZES.base * 3,
     lineHeight: 22,
   },
   successModalButton: {
-    backgroundColor: '#4caf50',
-    paddingHorizontal: 32,
-    paddingVertical: 12,
-    borderRadius: 12,
-    shadowColor: '#4caf50',
+    backgroundColor: COLORS.success,
+    paddingHorizontal: SIZES.base * 4,
+    paddingVertical: SIZES.base * 1.5,
+    borderRadius: SIZES.radius,
+    shadowColor: COLORS.success,
     shadowOffset: {width: 0, height: 4},
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 5,
   },
   successModalButtonText: {
-    color: '#fff',
+    ...FONTS.button,
+    color: COLORS.white,
     fontSize: 16,
-    fontWeight: '600',
     textAlign: 'center',
+  },
+  // Filter Modal Styles
+  filterModalOverlay: {
+    flex: 1,
+    backgroundColor: COLORS.overlay2,
+    justifyContent: 'flex-end',
+  },
+  filterModalContent: {
+    backgroundColor: COLORS.white,
+    borderTopLeftRadius: SIZES.radius * 2,
+    borderTopRightRadius: SIZES.radius * 2,
+    maxHeight: '80%',
+    shadowColor: COLORS.black,
+    shadowOffset: {width: 0, height: -5},
+    shadowOpacity: 0.2,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  filterModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: SIZES.base * 2,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.lightGray1,
+  },
+  filterModalTitle: {
+    ...FONTS.h2,
+    color: COLORS.black,
+  },
+  filterCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.lightGray2,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  filterCloseIcon: {
+    fontSize: 18,
+    color: COLORS.gray2,
+    fontWeight: 'bold',
+  },
+  filterScrollView: {
+    maxHeight: 400,
+  },
+  filterSection: {
+    padding: SIZES.base * 2,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.lightGray1,
+  },
+  filterLabel: {
+    ...FONTS.h4,
+    color: COLORS.black,
+    marginBottom: SIZES.base * 1.5,
+  },
+  stockFilterContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: SIZES.base,
+  },
+  stockFilterButton: {
+    paddingHorizontal: SIZES.base * 2,
+    paddingVertical: SIZES.base * 1.25,
+    borderRadius: SIZES.radius,
+    backgroundColor: COLORS.lightGray2,
+    borderWidth: 1,
+    borderColor: COLORS.lightGray1,
+  },
+  stockFilterButtonActive: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  stockFilterText: {
+    ...FONTS.body4,
+    color: COLORS.gray2,
+  },
+  stockFilterTextActive: {
+    color: COLORS.white,
+    fontWeight: '600',
+  },
+  filterActions: {
+    flexDirection: 'row',
+    padding: SIZES.base * 2,
+    gap: SIZES.base,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.lightGray1,
+  },
+  filterActionButton: {
+    flex: 1,
+    paddingVertical: SIZES.base * 1.5,
+    borderRadius: SIZES.radius,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  clearFilterButton: {
+    backgroundColor: COLORS.lightGray2,
+    borderWidth: 1,
+    borderColor: COLORS.lightGray1,
+  },
+  applyFilterButton: {
+    backgroundColor: COLORS.primary,
+    shadowColor: COLORS.primary,
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  clearFilterText: {
+    ...FONTS.button,
+    color: COLORS.gray2,
+    fontSize: 15,
+  },
+  applyFilterText: {
+    ...FONTS.button,
+    color: COLORS.white,
+    fontSize: 15,
   },
 });
 

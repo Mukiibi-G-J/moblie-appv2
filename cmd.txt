@@ -1,1 +1,3 @@
 cd /c/PROJECTS/zentroapp && npm uninstall @heasy/react-native-sunmi-printer react-native-printer-sunmi
+adb reverse tcp:8000 tcp:8000 
+adb reverse tcp:8000 tcp:8000
