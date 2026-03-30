@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useCallback, useMemo, useRef} from 'react';
+import React, {useState, useEffect, useCallback, useRef} from 'react';
 import {
   View,
   Text,
@@ -13,23 +13,25 @@ import {
   ScrollView,
   Image,
 } from 'react-native';
-import {useNavigation} from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
 import {COLORS, FONTS, SIZES} from '../../constants/theme';
 import icons from '../../constants/icons';
 import {usePermissions} from '../../hooks/usePermissions';
 import {PAGE_NAMES} from '../../constants/pageNames';
 import {VendorServices} from '../../services/VendorServices';
+import {PaymentJournalServices} from '../../services/PaymentJournalServices';
 import {
   Vendor,
   PaymentMethod,
 } from '../../@types/vendor';
+import {VendorLedgerEntry} from '../../@types/paymentJournal';
 import SupplierListItem from './SupplierListItem';
 import VendorFormModal from './VendorFormModal';
-import Header from '../../Components/Header';
+
+const isProtectedGeneralVendor = (vendor?: Vendor | null) =>
+  vendor?.no === 'VENDOR-000001';
 
 const Suppliers: React.FC = () => {
-  const navigation = useNavigation<any>();
   const {canRead, canCreate, canEdit, canDelete} = usePermissions();
   const PAGE_NAME = PAGE_NAMES.SUPPLIERS;
 
@@ -37,11 +39,6 @@ const Suppliers: React.FC = () => {
   if (!canRead(PAGE_NAME)) {
     return (
       <View style={styles.container}>
-        <Header
-          title="Suppliers"
-          showBack={true}
-          onBackPress={() => navigation.goBack()}
-        />
         <View style={styles.accessDeniedContainer}>
           <Text style={styles.accessDeniedTitle}>Access Denied</Text>
           <Text style={styles.accessDeniedMessage}>
@@ -66,6 +63,13 @@ const Suppliers: React.FC = () => {
   const [totalCount, setTotalCount] = useState(0);
   const [filterModalVisible, setFilterModalVisible] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [ledgerModalVisible, setLedgerModalVisible] = useState(false);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [selectedLedgerVendor, setSelectedLedgerVendor] =
+    useState<Vendor | null>(null);
+  const [vendorLedgerEntries, setVendorLedgerEntries] = useState<
+    VendorLedgerEntry[]
+  >([]);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Debounce search query
@@ -184,13 +188,11 @@ const Suppliers: React.FC = () => {
   };
 
   const handleEdit = (vendor: Vendor) => {
-    // Prevent editing the general vendor
-    if (vendor.no === 'VENDOR-000001') {
-      Toast.show({
-        type: 'info',
-        text1: 'Warning',
-        text2: 'The general vendor cannot be edited',
-      });
+    if (isProtectedGeneralVendor(vendor)) {
+      Alert.alert(
+        'Protected supplier',
+        'The General Vendor cannot be edited.',
+      );
       return;
     }
     setSelectedVendor(vendor);
@@ -198,13 +200,11 @@ const Suppliers: React.FC = () => {
   };
 
   const handleDelete = async (vendor: Vendor) => {
-    // Prevent deleting the general vendor
-    if (vendor.no === 'VENDOR-000001') {
-      Toast.show({
-        type: 'info',
-        text1: 'Warning',
-        text2: 'The general vendor cannot be deleted',
-      });
+    if (isProtectedGeneralVendor(vendor)) {
+      Alert.alert(
+        'Protected supplier',
+        'The General Vendor cannot be deleted.',
+      );
       return;
     }
 
@@ -245,25 +245,32 @@ const Suppliers: React.FC = () => {
     onRefresh();
   };
 
-  // Calculate summary statistics
-  const summaryStats = useMemo(() => {
-    const totalBalance = vendors.reduce(
-      (sum, vendor) => sum + (parseFloat(vendor.balance || '0') || 0),
-      0,
-    );
-    const vendorsWithBalance = vendors.filter(
-      vendor => parseFloat(vendor.balance || '0') > 0,
-    ).length;
-    const averageBalance =
-      vendors.length > 0 ? totalBalance / vendors.length : 0;
+  const handleOpenBalanceDrilldown = async (vendor: Vendor) => {
+    const hasBalance = Math.abs(parseFloat(vendor.balance || '0')) > 0;
+    if (!hasBalance) {
+      return;
+    }
 
-    return {
-      totalBalance,
-      vendorsWithBalance,
-      averageBalance,
-      totalCount: vendors.length,
-    };
-  }, [vendors]);
+    setSelectedLedgerVendor(vendor);
+    setLedgerModalVisible(true);
+    setLedgerLoading(true);
+    try {
+      const response = await PaymentJournalServices.getVendorLedgerEntries(
+        vendor.id,
+      );
+      setVendorLedgerEntries(response?.ledger_entries || []);
+    } catch (error) {
+      console.error('Error loading vendor ledger entries:', error);
+      setVendorLedgerEntries([]);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to load supplier ledger entries.',
+      });
+    } finally {
+      setLedgerLoading(false);
+    }
+  };
 
   const hasActiveFilters = searchQuery.trim() !== '';
 
@@ -278,54 +285,6 @@ const Suppliers: React.FC = () => {
     setFilterModalVisible(false);
     loadVendors();
   };
-
-  const renderSummaryCards = () => (
-    <View style={styles.summaryRow}>
-      <View style={styles.summaryCard}>
-        <View style={styles.summaryCardIcon}>
-          <Image
-            source={icons.wallet}
-            style={styles.summaryCardIconImage}
-            resizeMode="contain"
-          />
-        </View>
-        <Text style={styles.summaryLabel}>Total Balance</Text>
-        <Text style={styles.summaryValue}>
-          UGX{' '}
-          {summaryStats.totalBalance
-            .toFixed(0)
-            .replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-        </Text>
-        <Text style={styles.summarySubtext}>
-          {summaryStats.totalCount} suppliers
-        </Text>
-      </View>
-      <View style={styles.summaryCard}>
-        <View
-          style={[styles.summaryCardIcon, styles.summaryCardIconSecondary]}>
-          <Image
-            source={icons.profile}
-            style={[
-              styles.summaryCardIconImage,
-              styles.summaryCardIconImageSecondary,
-            ]}
-            resizeMode="contain"
-          />
-        </View>
-        <Text style={styles.summaryLabel}>With Balance</Text>
-        <Text style={styles.summaryValue}>
-          {summaryStats.vendorsWithBalance}
-        </Text>
-        <Text style={styles.summarySubtext}>
-          Avg{' '}
-          {summaryStats.averageBalance
-            .toFixed(0)
-            .replace(/\B(?=(\d{3})+(?!\d))/g, ',')}{' '}
-          UGX
-        </Text>
-      </View>
-    </View>
-  );
 
   const renderEmptyState = () => (
     <View style={styles.emptyContainer}>
@@ -361,17 +320,24 @@ const Suppliers: React.FC = () => {
     );
   };
 
-  const renderListHeader = () => <>{renderSummaryCards()}</>;
-
   return (
     <View style={styles.container}>
-      <Header
-        title="Suppliers"
-        showBack={true}
-        onBackPress={() => navigation.goBack()}
-      />
-      {/* Search Bar */}
-      <View style={styles.searchContainer}>
+      <View style={styles.headerSection}>
+        <View style={styles.titleRow}>
+          <Text style={styles.screenTitle}>Suppliers</Text>
+          <TouchableOpacity
+            style={styles.moreButton}
+            onPress={() => setFilterModalVisible(true)}
+            activeOpacity={0.75}>
+            <Image
+              source={icons.menu}
+              style={styles.moreButtonIcon}
+              resizeMode="contain"
+            />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.searchContainer}>
         <View style={styles.searchInputContainer}>
           <View style={styles.searchIconContainer}>
             <Image
@@ -389,7 +355,7 @@ const Suppliers: React.FC = () => {
           />
           {searchLoading && (
             <View style={styles.searchLoadingContainer}>
-              <ActivityIndicator size="small" color={COLORS.primary} />
+              <ActivityIndicator size="small" color={COLORS.primary2} />
             </View>
           )}
         </View>
@@ -411,10 +377,11 @@ const Suppliers: React.FC = () => {
           {hasActiveFilters && <View style={styles.filterBadge} />}
         </TouchableOpacity>
       </View>
+      </View>
 
       {loading && page === 1 ? (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={COLORS.primary} />
+          <ActivityIndicator size="large" color={COLORS.primary2} />
           <Text style={styles.loadingText}>Loading suppliers...</Text>
         </View>
       ) : (
@@ -427,9 +394,9 @@ const Suppliers: React.FC = () => {
               vendor={item}
               onEdit={canEdit(PAGE_NAME) ? handleEdit : undefined}
               onDelete={canDelete(PAGE_NAME) ? handleDelete : undefined}
+              onBalancePress={handleOpenBalanceDrilldown}
             />
           )}
-          ListHeaderComponent={renderListHeader}
           ListEmptyComponent={renderEmptyState}
           ListFooterComponent={renderFooter}
           onEndReached={handleLoadMore}
@@ -517,6 +484,75 @@ const Suppliers: React.FC = () => {
         </View>
       </Modal>
 
+      <Modal
+        visible={ledgerModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setLedgerModalVisible(false)}>
+        <View style={styles.filterModalOverlay}>
+          <View style={styles.filterModalContent}>
+            <View style={styles.filterModalHeader}>
+              <Text style={styles.filterModalTitle}>
+                {selectedLedgerVendor?.name || 'Supplier'} balance
+              </Text>
+              <TouchableOpacity
+                onPress={() => setLedgerModalVisible(false)}
+                style={styles.filterCloseButton}>
+                <Image
+                  source={icons.cross}
+                  style={styles.filterCloseIcon}
+                  resizeMode="contain"
+                />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.ledgerSummaryCard}>
+              <Text style={styles.ledgerSummaryLabel}>Outstanding balance</Text>
+              <Text style={styles.ledgerSummaryValue}>
+                UGX{' '}
+                {(parseFloat(selectedLedgerVendor?.balance || '0') || 0)
+                  .toFixed(0)
+                  .replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+              </Text>
+            </View>
+
+            {ledgerLoading ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={COLORS.primary2} />
+                <Text style={styles.loadingText}>Loading ledger entries...</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={vendorLedgerEntries}
+                keyExtractor={item => item.id.toString()}
+                contentContainerStyle={styles.ledgerListContent}
+                ListEmptyComponent={
+                  <View style={styles.ledgerEmptyContainer}>
+                    <Text style={styles.emptyText}>No ledger entries found</Text>
+                    <Text style={styles.emptySubtext}>
+                      This supplier has no open payable entries to drill into.
+                    </Text>
+                  </View>
+                }
+                renderItem={({item}) => (
+                  <View style={styles.ledgerRow}>
+                    <View style={styles.ledgerRowTextWrap}>
+                      <Text style={styles.ledgerDocumentNo}>{item.document_no}</Text>
+                      <Text style={styles.ledgerDescription}>
+                        {item.description || 'Supplier ledger entry'}
+                      </Text>
+                    </View>
+                    <Text style={styles.ledgerAmount}>
+                      UGX {item.remaining_amount.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                    </Text>
+                  </View>
+                )}
+              />
+            )}
+          </View>
+        </View>
+      </Modal>
+
       <VendorFormModal
         visible={isFormModalVisible}
         onClose={() => {
@@ -528,7 +564,6 @@ const Suppliers: React.FC = () => {
         paymentMethods={paymentMethods}
         canCreate={canCreate(PAGE_NAME)}
         canEdit={canEdit(PAGE_NAME)}
-        canDelete={canDelete(PAGE_NAME)}
       />
     </View>
   );
@@ -537,39 +572,63 @@ const Suppliers: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.lightGray2,
+    backgroundColor: COLORS.white,
   },
   list: {
     flex: 1,
   },
   listContentContainer: {
-    paddingBottom: 180, // Extra padding to ensure last items are scrollable above FAB and bottom nav
+    paddingBottom: 180,
   },
-  searchContainer: {
-    padding: SIZES.base * 2,
+  headerSection: {
     backgroundColor: COLORS.white,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray1,
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 12,
+  },
+  titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: SIZES.base,
+    justifyContent: 'space-between',
+    marginBottom: 18,
+  },
+  screenTitle: {
+    ...FONTS.h1,
+    color: COLORS.black,
+    fontSize: 24,
+    fontWeight: '700',
+  },
+  moreButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: COLORS.transparentPrimary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  moreButtonIcon: {
+    width: 22,
+    height: 22,
+    tintColor: COLORS.primary3,
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   searchInputContainer: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.lightGray2,
-    borderRadius: SIZES.radius,
-    paddingHorizontal: SIZES.base * 1.5,
-    height: 48,
+    backgroundColor: COLORS.white,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    height: 46,
+    borderWidth: 1,
+    borderColor: COLORS.transparentPrimary2,
   },
   searchIconContainer: {
-    marginRight: SIZES.base,
+    marginRight: 10,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -588,18 +647,18 @@ const styles = StyleSheet.create({
     marginLeft: SIZES.base,
   },
   filterButton: {
-    width: 48,
-    height: 48,
-    borderRadius: SIZES.radius,
-    backgroundColor: COLORS.lightGray2,
+    width: 46,
+    height: 46,
+    borderRadius: 16,
+    backgroundColor: COLORS.white,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: COLORS.lightGray1,
+    borderColor: COLORS.transparentPrimary2,
   },
   filterButtonActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
+    backgroundColor: COLORS.transparentPrimary,
+    borderColor: COLORS.primary2,
   },
   filterIcon: {
     width: 20,
@@ -607,7 +666,7 @@ const styles = StyleSheet.create({
     tintColor: COLORS.gray2,
   },
   filterIconActive: {
-    tintColor: COLORS.white,
+    tintColor: COLORS.primary2,
   },
   filterBadge: {
     position: 'absolute',
@@ -683,6 +742,7 @@ const styles = StyleSheet.create({
   },
   emptyListContainer: {
     flexGrow: 1,
+    paddingTop: 36,
   },
   emptyContainer: {
     flex: 1,
@@ -695,7 +755,7 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: COLORS.lightGray2,
+    backgroundColor: COLORS.transparentPrimary,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: SIZES.base * 2,
@@ -703,7 +763,7 @@ const styles = StyleSheet.create({
   emptyIconImage: {
     width: 40,
     height: 40,
-    tintColor: COLORS.gray2,
+    tintColor: COLORS.primary2,
   },
   emptyText: {
     ...FONTS.h3,
@@ -721,9 +781,9 @@ const styles = StyleSheet.create({
   emptyButton: {
     paddingHorizontal: SIZES.base * 3,
     paddingVertical: SIZES.base * 1.5,
-    borderRadius: SIZES.radius,
-    backgroundColor: COLORS.primary,
-    shadowColor: COLORS.primary,
+    borderRadius: 24,
+    backgroundColor: COLORS.primary2,
+    shadowColor: COLORS.primary2,
     shadowOffset: {width: 0, height: 2},
     shadowOpacity: 0.2,
     shadowRadius: 4,
@@ -742,7 +802,7 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     ...FONTS.body3,
-    color: COLORS.gray,
+    color: COLORS.gray2,
     marginTop: SIZES.base,
   },
   footerLoader: {
@@ -752,19 +812,19 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: SIZES.padding,
-    bottom: 130, // Position well above bottom navigation to ensure full visibility
+    bottom: 130,
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: COLORS.primary,
+    backgroundColor: COLORS.primary2,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
+    shadowColor: COLORS.primary3,
     shadowOffset: {width: 0, height: 4},
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.28,
     shadowRadius: 8,
     elevation: 8,
-    zIndex: 1000, // Ensure it's above other elements
+    zIndex: 1000,
   },
   fabText: {
     fontSize: 32,
@@ -830,6 +890,63 @@ const styles = StyleSheet.create({
   },
   filterScrollView: {
     maxHeight: 400,
+  },
+  ledgerSummaryCard: {
+    marginHorizontal: 20,
+    marginTop: 16,
+    marginBottom: 12,
+    padding: 16,
+    borderRadius: 16,
+    backgroundColor: COLORS.transparentPrimary,
+    borderWidth: 1,
+    borderColor: COLORS.transparentPrimary2,
+  },
+  ledgerSummaryLabel: {
+    ...FONTS.body4,
+    color: COLORS.primary3,
+    marginBottom: 6,
+    fontWeight: '600',
+  },
+  ledgerSummaryValue: {
+    ...FONTS.h3,
+    color: COLORS.primary2,
+    fontWeight: '700',
+  },
+  ledgerListContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+  },
+  ledgerEmptyContainer: {
+    paddingVertical: 40,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+  },
+  ledgerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.lightGray1,
+    gap: 12,
+  },
+  ledgerRowTextWrap: {
+    flex: 1,
+  },
+  ledgerDocumentNo: {
+    ...FONTS.body3,
+    color: COLORS.black,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  ledgerDescription: {
+    ...FONTS.body4,
+    color: COLORS.gray2,
+  },
+  ledgerAmount: {
+    ...FONTS.body4,
+    color: COLORS.primary2,
+    fontWeight: '700',
   },
   filterSection: {
     padding: SIZES.base * 2,

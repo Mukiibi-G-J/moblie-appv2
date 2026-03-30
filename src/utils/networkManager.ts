@@ -85,6 +85,10 @@ class NetworkManager {
                     position: 'bottom',
                 });
                 break;
+            case 402:
+                // Subscription expired is handled by the axios interceptor navigation.
+                // Avoid showing a generic error toast here (would conflict with redirect).
+                break;
             case 403:
                 Toast.show({
                     type: 'error',

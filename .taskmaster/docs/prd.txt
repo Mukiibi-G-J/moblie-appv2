@@ -1,0 +1,270 @@
+<context>
+# Overview
+
+Deliver a single, implementation-ready **JSON-only design system specification** for the Zentro mobile app. The specification must be produced by **extracting reusable visual and structural UI patterns** from style-reference screenshots located in the repository folder `square screen shoots/` (files: shared image (4).jpeg through shared image (10).jpeg, seven images total). A separate **brand palette** document or tokens file will be provided by the product owner; that brand palette is the **source of truth** for primary and secondary brand colors. The output JSON must be suitable for AI coding tools (e.g. Cursor) to implement a **consistent, dark-mode-first** UI without ambiguity.
+
+# Problem and value
+
+Engineers and AI agents need a **structured, named token system** (colors including gradients, typography, spacing, radii, elevation, motion, layout, and component pattern definitions) so new screens match existing product visuals. Today, style knowledge lives only in screenshots and ad hoc code.
+
+# Core deliverable
+
+One **valid, strictly parseable JSON file** (no markdown wrapper, no comments, no trailing commas, no prose outside the JSON root) that fully populated design system specification. Unknown visual values must use **reasonable inferred defaults** rather than omitting required fields.
+
+# User / consumer
+
+- Mobile engineering (React Native) and AI assistants generating UI.
+- Human reviewers validate against screenshots and brand palette only at a **pattern** level; the JSON must not encode domain-specific copy or screen-specific labels.
+
+# Inputs (assumptions)
+
+1. **Screenshots** (style references only): `square screen shoots/shared image (4).jpeg` … `shared image (10).jpeg` (all present files in that folder).
+2. **Brand palette**: supplied separately; **never** replace or rename brand primary/secondary; additive neutrals and utility colors are allowed.
+3. **Mode**: prefer **dark-mode-first** unless screenshots clearly show a light-first product (if mixed, document both with dark as default in `meta.colorSchemeDefault`).
+
+# Critical constraints (non-negotiable)
+
+1. Preserve existing **brand colors** from the provided brand palette as the only source of truth for primary/secondary (and any explicitly listed brand tokens).
+2. May add **supportive neutrals** (grays, surfaces, borders) and **utility** colors (success, warning, error, info, focus, overlay) without altering brand primaries/secondaries.
+3. **Do not** describe or infer **screenshot content**: no domain data, business labels, user-visible text strings, SKU names, amounts, or app-specific semantics in the JSON.
+4. Focus strictly on **reusable patterns**: visual language (hierarchy, density, contrast), **structural** layout patterns, and **component behavior** (states, interactions) expressed as tokens and pattern specs—not as a literal transcription of any one screen.
+5. Output must be **JSON only** when the deliverable file is produced (not applicable to this PRD document, which is prose).
+6. Output **MUST** be strictly parseable JSON: no trailing commas, no BOM issues, no extra text before `{` or after `}`.
+7. If a value is unknown after analysis, **infer a reasonable default** and still include the field—do not omit required keys.
+8. **Value rules**: all sizes are **numeric pixels** (number type, no `"px"` string). All durations are **milliseconds** (number). All colors are **hex strings** (e.g. `"#RRGGBB"` or `"#RRGGBBAA"`) or **gradient strings** in a consistent format (e.g. CSS-like `linear-gradient(...)` as a single string, or a structured object as defined in the required schema—see Appendix).
+
+# Quality bar
+
+- Consistent **explicit naming** (`color.surface.primary`, `space.md`, etc.).
+- Prefer explicit numbers and enums over vague prose inside JSON string values.
+- System must **scale** across many screens (token layers + component recipes).
+- Optimized for **AI-driven UI generation** and code reuse (clear component pattern entries with `variants`, `states`, `anatomy`).
+
+# User experience (for reviewers)
+
+Reviewers compare JSON **tokens and patterns** to screenshots for visual alignment. They do not expect the JSON to narrate what is on each screenshot.
+
+</context>
+<PRD>
+# Technical architecture
+
+## Artifacts
+
+1. **PRD** (this file): scope and constraints for Task Master / implementers.
+2. **Source**: screenshot folder `square screen shoots/`.
+3. **Brand input**: external JSON or documented hex keys for `brand.primary`, `brand.secondary` (exact key names must match Appendix schema).
+4. **Output file** (implementation target): repository path TBD—recommend `src/design-system/design-system.json` or `.taskmaster/docs/design-system.json`; must be one file, valid JSON.
+
+## JSON schema obligations
+
+The final JSON **root object** MUST include at least these top-level keys with nested structure as specified in the Appendix:
+
+- `meta`
+- `brand` (references palette; values merged from brand source—implementer must not invent new primaries)
+- `color` (semantic, neutral, utility, gradients)
+- `typography`
+- `spacing`
+- `radii`
+- `border`
+- `elevation` (shadows / overlays)
+- `motion` (durationMs, easing tokens)
+- `layout` (screen padding, grid, min touch targets, breakpoints if applicable)
+- `components` (reusable UI patterns: button, input, card, list row, header, tab bar, modal, chip, FAB, etc.—only **pattern** descriptions, no domain copy)
+
+## Gradients
+
+Where screenshots use gradients, define entries under `color.gradients` with unique ids and either:
+
+- `value`: a single string encoding the gradient, **or**
+- `stops`: array of `{ "position": 0-100, "color": "#hex" }` plus `type`, `angle` (optional)
+
+All gradient references from semantic tokens must point by id (e.g. `color.semantic.heroBackground: { "gradientId": "gradient.primaryHero" }`).
+
+## Brand merge rules
+
+Implementers shall:
+
+1. Load brand palette JSON first.
+2. Map `brand.primary`, `brand.secondary` (and any additional brand keys from palette) into `brand` and mirror into `color.semantic` only by **reference** or duplicated hex **as supplied**—no hue shifts.
+3. Fill neutrals/utilities from screenshot analysis.
+
+# Development roadmap
+
+## Phase 1 — Inventory and token foundation
+
+- List screenshot files; **do not** document screen content in the deliverable JSON.
+- Establish `meta`, `brand` merge, base `color.neutral`, `color.semantic` (surfaces, text, icon, border, focus).
+- Define `typography` scale (font sizes in px numbers, weights, line heights as numbers, letter spacing).
+
+## Phase 2 — Spatial system and motion
+
+- `spacing` scale, `radii`, `border` widths, `elevation`.
+- `motion` durations (ms) and named easings; defaults for press, navigation transition, modal.
+
+## Phase 3 — Component patterns
+
+- For each recurring **visual pattern** across screenshots (not per-screen), add a `components.<name>` entry: `description` (non-domain: e.g. "horizontal icon + two-line text + chevron"), `layout` (flex props as token refs), `slots`, `variants`, `states` (default, pressed, disabled), and `tokens` map.
+
+## Phase 4 — Validation
+
+- Validate JSON with a strict parser.
+- Verify all required Appendix keys exist; no omitted required fields (use defaults if needed).
+- Spot-check dark-first contrast using semantic roles only.
+
+# Logical dependency chain
+
+1. Brand palette integration → base semantic colors.
+2. Typography + spacing → component density.
+3. Elevation + motion → interactive feedback patterns.
+4. Component library → screen-agnostic recipes.
+
+# Risks and mitigations
+
+| Risk | Mitigation |
+|------|------------|
+| Accidental domain leakage in JSON | Schema review; forbid `copy`, `label`, `placeholder` fields; use `slot`/`region` only. |
+| Invalid JSON | Automated parse check in CI or one-off script. |
+| Brand drift | Single source file for brand; snapshot hex in `brand` section. |
+| Light/dark ambiguity | Set `meta.colorSchemeDefault: "dark"`; add `color.schemes.dark` / `light` if both needed. |
+
+# Appendix — Required JSON structure (canonical)
+
+The implementation **must** produce JSON matching this shape (field names and nesting are required; arrays may have zero or more items as appropriate; **defaults** must still be filled per constraint 7):
+
+```json
+{
+  "meta": {
+    "name": "",
+    "version": "",
+    "colorSchemeDefault": "dark",
+    "platformTarget": "react-native",
+    "sourceScreenshotFolder": "square screen shoots",
+    "generatedAtIso": ""
+  },
+  "brand": {
+    "primary": "#000000",
+    "secondary": "#000000",
+    "additional": {}
+  },
+  "color": {
+    "schemes": {
+      "dark": {
+        "background": { "canvas": "#000000", "elevated": "#000000", "sunken": "#000000" },
+        "surface": { "primary": "#000000", "secondary": "#000000", "tertiary": "#000000" },
+        "text": { "primary": "#000000", "secondary": "#000000", "tertiary": "#000000", "inverse": "#000000", "disabled": "#000000" },
+        "icon": { "primary": "#000000", "secondary": "#000000", "inverse": "#000000" },
+        "border": { "subtle": "#000000", "strong": "#000000", "focusRing": "#000000" },
+        "control": { "fill": "#000000", "fillPressed": "#000000", "border": "#000000" }
+      },
+      "light": {
+        "background": { "canvas": "#000000", "elevated": "#000000", "sunken": "#000000" },
+        "surface": { "primary": "#000000", "secondary": "#000000", "tertiary": "#000000" },
+        "text": { "primary": "#000000", "secondary": "#000000", "tertiary": "#000000", "inverse": "#000000", "disabled": "#000000" },
+        "icon": { "primary": "#000000", "secondary": "#000000", "inverse": "#000000" },
+        "border": { "subtle": "#000000", "strong": "#000000", "focusRing": "#000000" },
+        "control": { "fill": "#000000", "fillPressed": "#000000", "border": "#000000" }
+      }
+    },
+    "neutral": {
+      "50": "#000000",
+      "100": "#000000",
+      "200": "#000000",
+      "300": "#000000",
+      "400": "#000000",
+      "500": "#000000",
+      "600": "#000000",
+      "700": "#000000",
+      "800": "#000000",
+      "900": "#000000",
+      "950": "#000000"
+    },
+    "utility": {
+      "success": "#000000",
+      "warning": "#000000",
+      "error": "#000000",
+      "info": "#000000",
+      "overlayScrim": "#000000",
+      "overlayScrimStrong": "#000000",
+      "focus": "#000000",
+      "link": "#000000"
+    },
+    "gradients": {
+      "gradient.primary": {
+        "type": "linear",
+        "angle": 180,
+        "value": "linear-gradient(180deg, #000000 0%, #000000 100%)",
+        "stops": [{ "position": 0, "color": "#000000" }, { "position": 100, "color": "#000000" }]
+      }
+    }
+  },
+  "typography": {
+    "fontFamily": { "primary": "", "mono": "" },
+    "scale": {
+      "display": { "fontSize": 0, "lineHeight": 0, "fontWeight": 400, "letterSpacing": 0 },
+      "title": { "fontSize": 0, "lineHeight": 0, "fontWeight": 400, "letterSpacing": 0 },
+      "heading": { "fontSize": 0, "lineHeight": 0, "fontWeight": 400, "letterSpacing": 0 },
+      "body": { "fontSize": 0, "lineHeight": 0, "fontWeight": 400, "letterSpacing": 0 },
+      "caption": { "fontSize": 0, "lineHeight": 0, "fontWeight": 400, "letterSpacing": 0 },
+      "micro": { "fontSize": 0, "lineHeight": 0, "fontWeight": 400, "letterSpacing": 0 }
+    }
+  },
+  "spacing": { "0": 0, "xs": 0, "sm": 0, "md": 0, "lg": 0, "xl": 0, "xxl": 0 },
+  "radii": { "none": 0, "sm": 0, "md": 0, "lg": 0, "xl": 0, "full": 0 },
+  "border": { "widths": { "none": 0, "hairline": 0, "sm": 0, "md": 0 } },
+  "elevation": {
+    "0": { "shadowOffsetY": 0, "shadowBlur": 0, "shadowOpacity": 0, "shadowColor": "#00000000" },
+    "1": { "shadowOffsetY": 0, "shadowBlur": 0, "shadowOpacity": 0, "shadowColor": "#00000000" },
+    "2": { "shadowOffsetY": 0, "shadowBlur": 0, "shadowOpacity": 0, "shadowColor": "#00000000" }
+  },
+  "motion": {
+    "durationMs": { "instant": 0, "fast": 0, "normal": 0, "slow": 0 },
+    "easing": { "standard": "cubic-bezier(0.4, 0, 0.2, 1)", "decelerate": "cubic-bezier(0, 0, 0.2, 1)", "accelerate": "cubic-bezier(0.4, 0, 1, 1)" }
+  },
+  "layout": {
+    "screenPaddingHorizontal": 0,
+    "screenPaddingVertical": 0,
+    "sectionGap": 0,
+    "minTouchTarget": 0,
+    "breakpoints": { "sm": 0, "md": 0, "lg": 0 }
+  },
+  "components": {
+    "buttonPrimary": {
+      "anatomy": ["container", "label", "iconLeading", "iconTrailing"],
+      "layout": { "minHeight": 0, "paddingHorizontal": 0, "paddingVertical": 0, "gap": 0, "cornerRadiusToken": "radii.md" },
+      "variants": { "filled": {...}, "outline": {...}, "text": {...} },
+      "states": { "default": {...}, "pressed": {...}, "disabled": {...} }
+    },
+    "inputField": {
+      "anatomy": ["container", "label", "field", "helper", "error"],
+      "layout": { "height": 0, "paddingHorizontal": 0, "cornerRadiusToken": "radii.md" },
+      "states": { "default": {...}, "focused": {...}, "error": {...}, "disabled": {...} }
+    },
+    "card": {
+      "anatomy": ["container", "header", "body", "footer"],
+      "layout": { "padding": 0, "cornerRadiusToken": "radii.lg" },
+      "elevationToken": "elevation.1"
+    },
+    "listRow": {
+      "anatomy": ["container", "leading", "textBlocks", "trailing"],
+      "layout": { "minHeight": 0, "paddingHorizontal": 0, "gap": 0 },
+      "states": { "default": {...}, "pressed": {...} }
+    },
+    "navigationHeader": {
+      "anatomy": ["bar", "leading", "title", "actions"],
+      "layout": { "height": 0, "horizontalPadding": 0 }
+    },
+    "fab": {
+      "anatomy": ["container", "icon"],
+      "layout": { "size": 0, "cornerRadiusToken": "radii.full" }
+    },
+    "modal": {
+      "anatomy": ["scrim", "sheet", "handle", "content"],
+      "motion": { "enterDurationMs": 0, "exitDurationMs": 0, "easingToken": "motion.easing.standard" }
+    }
+  }
+}
+```
+
+**Note:** In the real deliverable file, replace placeholder hex values and `...` objects with **fully expanded** token references or concrete pixel/color values. The Appendix example uses `...` only in this PRD for brevity; the **shipped JSON must not** contain ellipses or invalid placeholders—every object must be complete per constraint 7.
+
+</PRD>

@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { COLORS, FONTS, SIZES } from '../../constants';
-import AuthLayout from '../Authentication/AuthLayout';
+import AuthLayout from '../../Components/layouts/AuthLayout';
+import { authOnboarding } from '../../design-system/authOnboardingTokens';
 import CustomOTPInput from '../../Components/CustomOTPInput'
 import TextButton from '../../Components/TextButton'; // Assuming you have this component
 import { useRoute, RouteProp, useNavigation } from '@react-navigation/native';
 import { resendOtp, verifyOtp } from '../../services/auth.services';
-import { ColorSpace } from 'react-native-reanimated';
 import Toast from 'react-native-toast-message';
 import { setVerifiedEmail } from '../../utils/tenant';
 
@@ -81,7 +81,7 @@ const Otp = () => {
             subtitle={
                 <>
                     An authentication code has been sent to this Email:{' '}
-                    <Text style={{ color: COLORS.primary2, fontWeight: 'bold', fontSize: 18 }}>
+                    <Text style={{ color: COLORS.primary, fontWeight: 'bold', fontSize: 18 }}>
                         {email}
                     </Text>
                 </>
@@ -109,12 +109,15 @@ const Otp = () => {
                     label="Submit"
                     disabled={otpCode.length !== OTP_LENGTH} // Changed from 4 to 5
                     buttonContainerStyle={{
-                        height: 55,
+                        height: 56,
                         alignItems: 'center',
-                        marginTop: SIZES.padding,
-                        borderRadius: SIZES.radius,
-                        backgroundColor: otpCode.length === OTP_LENGTH ? COLORS.primary2 : COLORS.transparentPrimary2,
-                        width: '90%',
+                        marginTop: authOnboarding.sectionSpacing.beforePrimaryAction,
+                        borderRadius: 9999,
+                        backgroundColor:
+                            otpCode.length === OTP_LENGTH
+                                ? authOnboarding.form.primaryCtaFill
+                                : authOnboarding.form.secondaryMutedFill,
+                        width: '100%',
                     }}
                     onPress={handleSubmit}
                 />

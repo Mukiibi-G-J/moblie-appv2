@@ -653,7 +653,7 @@ class PrintService {
         console.error('Failed to print QR code:', qrError);
       }
       
-      PrinterSunmi.printText('Powered by ZentroApp', { textSize: 22, bold: true });
+      PrinterSunmi.printText('Powered by Zentroapp', { textSize: 22, bold: true });
       console.log('Company contact info printed');
       
       // Use addText with newlines instead of lineWrap
@@ -668,8 +668,12 @@ class PrintService {
   /**
    * Format currency amount
    */
-  private formatCurrency(amount: number): string {
-    return `UGX ${amount.toFixed(0)}`;
+  private formatCurrency(amount: number | string | undefined | null): string {
+    const numericAmount = Number(amount);
+    const safeAmount = Number.isFinite(numericAmount) ? numericAmount : 0;
+    return `UGX ${safeAmount.toLocaleString('en-US', {
+      maximumFractionDigits: 0,
+    })}`;
   }
 
   /**

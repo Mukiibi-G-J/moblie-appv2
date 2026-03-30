@@ -254,7 +254,7 @@ export const PaymentJournalServices = {
       const axiosInstance = createAxiosInstance(tenant);
 
       const response = await axiosInstance.get(
-        `/api/purchases/vendor-ledger-entries/?vendor=${vendorId}`,
+        `/api/vendor-ledger/${vendorId}/ledger_entries/`,
       );
       return response.data || {ledger_entries: []};
     } catch (error) {

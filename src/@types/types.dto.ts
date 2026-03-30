@@ -153,6 +153,9 @@ export interface CartItem {
   unit_price: number;
   quantity: number;
   inventory: number;
+  /** Item type from API (e.g. Inventory) — used to decide if lot tracking is enforced */
+  type?: string;
+  unit_of_measure?: string;
   no?: string; // Add the item number field
   item_images?: {
     id: number;
@@ -185,6 +188,11 @@ export type CartAction =
   | {type: 'CLEAR_CART'};
 
 export type RootStackParamList = {
+  OnBoarding: undefined;
+  SignIn: undefined;
+  SignUp: undefined;
+  CompanyProvisioning: undefined;
+  Otp: {email?: string};
   Login: undefined;
   Home: undefined;
 };

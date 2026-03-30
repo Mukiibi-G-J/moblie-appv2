@@ -12,10 +12,19 @@ import {
   RefreshControl,
   TextInput,
 } from 'react-native';
-import {useNavigation, useIsFocused} from '@react-navigation/native';
+import {useIsFocused} from '@react-navigation/native';
 import {COLORS, FONTS, SIZES} from '../../constants/theme';
 import icons from '../../constants/icons';
-import {fetchSalesData} from '../../services/app.services';
+import {
+  fetchSalesData,
+  fetchSalesSummary,
+  fetchSalesUserSummary,
+  getSalesInvoice,
+  fetchPaymentMethods,
+  PaymentMethod,
+  SalesHistorySummary,
+  SalesUserSummaryRow,
+} from '../../services/app.services';
 import {usePermissions} from '../../hooks/usePermissions';
 import {PAGE_NAMES} from '../../constants/pageNames';
 
@@ -52,22 +61,6 @@ const FILTERS: {id: SalesHistoryFilter; label: string}[] = [
 const SalesHistory = () => {
   const {canRead} = usePermissions();
   const PAGE_NAME = PAGE_NAMES.SALES_HISTORY;
-
-  // Early return if no read permission
-  if (!canRead(PAGE_NAME)) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.accessDeniedContainer}>
-          <Text style={styles.accessDeniedTitle}>Access Denied</Text>
-          <Text style={styles.accessDeniedMessage}>
-            You don't have permission to view sales history.
-          </Text>
-        </View>
-      </View>
-    );
-  }
-
-  const navigation = useNavigation();
   const isFocused = useIsFocused();
   const [activeFilter, setActiveFilter] = useState<SalesHistoryFilter>('today');
   const [sales, setSales] = useState<SalesInvoice[]>([]);
@@ -89,6 +82,14 @@ const SalesHistory = () => {
   const [totalPages, setTotalPages] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
   const itemsPerPage = 20;
+  const [summaryFromApi, setSummaryFromApi] = useState<SalesHistorySummary | null>(
+    null,
+  );
+  const [userSummaries, setUserSummaries] = useState<SalesUserSummaryRow[]>([]);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  const [paymentMethodIdFilter, setPaymentMethodIdFilter] = useState('');
+  const [detailForModal, setDetailForModal] = useState<SalesInvoice | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   const {startDate, endDate} = useMemo(() => {
     // Get current date in local timezone (Uganda)
@@ -136,6 +137,25 @@ const SalesHistory = () => {
     };
   }, [activeFilter]);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const methods = await fetchPaymentMethods();
+        if (!cancelled) {
+          setPaymentMethods(methods);
+        }
+      } catch {
+        if (!cancelled) {
+          setPaymentMethods([]);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const loadSales = async () => {
     setIsLoading(true);
     setError(null);
@@ -163,8 +183,8 @@ const SalesHistory = () => {
       // Apply payment status filter
       if (paymentStatusFilter === 'unpaid') {
         filters.paymentMethod = 'not_paid';
-      } else if (paymentStatusFilter === 'paid' && statusFilter === 'Posted') {
-        // For paid, we'll filter client-side or use a different approach
+      } else if (paymentMethodIdFilter) {
+        filters.paymentMethod = paymentMethodIdFilter;
       }
 
       // Apply search
@@ -188,11 +208,27 @@ const SalesHistory = () => {
         setSales(response.results);
         setTotalCount(response.count || 0);
         setTotalPages(Math.ceil((response.count || 0) / itemsPerPage));
+
+        const summaryFilters = {
+          startDate,
+          endDate,
+          status: statusFilter !== 'all' ? statusFilter : undefined,
+          paymentMethod: filters.paymentMethod,
+          search: searchQuery.trim() || undefined,
+        };
+        const [summary, users] = await Promise.all([
+          fetchSalesSummary(summaryFilters),
+          fetchSalesUserSummary(summaryFilters),
+        ]);
+        setSummaryFromApi(summary);
+        setUserSummaries(users);
       } else {
         console.log('SalesHistory: Invalid response format:', response);
         setSales([]);
         setTotalPages(0);
         setTotalCount(0);
+        setSummaryFromApi(null);
+        setUserSummaries([]);
       }
     } catch (err: any) {
       console.error('SalesHistory: Error loading sales:', {
@@ -204,6 +240,8 @@ const SalesHistory = () => {
       setSales([]);
       setTotalPages(0);
       setTotalCount(0);
+      setSummaryFromApi(null);
+      setUserSummaries([]);
     } finally {
       setIsLoading(false);
       setSearchLoading(false);
@@ -222,6 +260,7 @@ const SalesHistory = () => {
     currentPage,
     statusFilter,
     paymentStatusFilter,
+    paymentMethodIdFilter,
     searchQuery,
   ]);
 
@@ -237,7 +276,14 @@ const SalesHistory = () => {
     setCurrentPage(1);
     await loadSales();
     setRefreshing(false);
-  }, [startDate, endDate, statusFilter, paymentStatusFilter, searchQuery]);
+  }, [
+    startDate,
+    endDate,
+    statusFilter,
+    paymentStatusFilter,
+    paymentMethodIdFilter,
+    searchQuery,
+  ]);
 
   const handleSearch = (text: string) => {
     setSearchQuery(text);
@@ -254,6 +300,7 @@ const SalesHistory = () => {
   const handleClearFilter = () => {
     setStatusFilter('Posted');
     setPaymentStatusFilter('all');
+    setPaymentMethodIdFilter('');
     setSearchQuery('');
     setCurrentPage(1);
     setFilterModal(false);
@@ -262,7 +309,38 @@ const SalesHistory = () => {
   const hasActiveFilters =
     statusFilter !== 'Posted' ||
     paymentStatusFilter !== 'all' ||
+    paymentMethodIdFilter !== '' ||
     searchQuery.trim() !== '';
+
+  const openSaleDetail = async (item: SalesInvoice) => {
+    setSelectedItem(item);
+    setDetailForModal(null);
+    setModalVisible(true);
+    if (item.id == null) {
+      setDetailForModal(item);
+      return;
+    }
+    setDetailLoading(true);
+    try {
+      const full = await getSalesInvoice(item.id);
+      setDetailForModal({
+        ...item,
+        ...full,
+        lines: full?.lines ?? item.lines,
+      });
+    } catch {
+      setDetailForModal(item);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const closeDetailModal = () => {
+    setModalVisible(false);
+    setDetailForModal(null);
+    setSelectedItem(null);
+    setDetailLoading(false);
+  };
 
   const renderPagination = () => {
     if (totalPages <= 1) return null;
@@ -316,19 +394,22 @@ const SalesHistory = () => {
     );
   };
 
-  const totalAmount = useMemo(() => {
+  const pageRevenueFallback = useMemo(() => {
     return sales.reduce(
       (sum, invoice) => sum + (invoice?.total_amount || 0),
       0,
     );
   }, [sales]);
 
-  const averageSale = useMemo(() => {
-    if (!sales.length) {
-      return 0;
-    }
-    return totalAmount / sales.length;
-  }, [sales.length, totalAmount]);
+  const pageProductsFallback = useMemo(() => {
+    return sales.reduce((sum, inv) => {
+      const lineQty = (inv.lines || []).reduce(
+        (ls, line) => ls + (parseInt(String(line.quantity), 10) || 0),
+        0,
+      );
+      return sum + lineQty;
+    }, 0);
+  }, [sales]);
 
   const renderFilterPills = () => (
     <View style={styles.filterRow}>
@@ -353,47 +434,82 @@ const SalesHistory = () => {
     </View>
   );
 
-  const renderSummaryCards = () => (
-    <View style={styles.summaryRow}>
-      <View style={styles.summaryCard}>
-        <View style={styles.summaryCardIcon}>
-          <Image
-            source={icons.salesCount}
-            style={styles.summaryCardIconImage}
-            resizeMode="contain"
-          />
+  const renderSummaryCards = () => {
+    const invoiceCount =
+      summaryFromApi?.total_invoices ?? totalCount ?? sales.length;
+    const revenue = summaryFromApi?.total_sales ?? pageRevenueFallback;
+    const productsSold =
+      summaryFromApi?.total_products ?? pageProductsFallback;
+
+    return (
+      <View style={styles.summaryRow}>
+        <View style={styles.summaryCard}>
+          <View style={styles.summaryCardIcon}>
+            <Image
+              source={icons.salesCount}
+              style={styles.summaryCardIconImage}
+              resizeMode="contain"
+            />
+          </View>
+          <Text style={styles.summaryLabel}>Invoices</Text>
+          <Text style={styles.summaryValue}>{invoiceCount}</Text>
         </View>
-        <Text style={styles.summaryLabel}>Sales Count</Text>
-        <Text style={styles.summaryValue}>{totalCount || sales.length}</Text>
-      </View>
-      <View style={styles.summaryCard}>
-        <View style={[styles.summaryCardIcon, styles.revenueIcon]}>
-          <Image
-            source={icons.revenue}
-            style={styles.summaryCardIconImage}
-            resizeMode="contain"
-          />
+        <View style={styles.summaryCard}>
+          <View style={[styles.summaryCardIcon, styles.revenueIcon]}>
+            <Image
+              source={icons.revenue}
+              style={styles.summaryCardIconImage}
+              resizeMode="contain"
+            />
+          </View>
+          <Text style={styles.summaryLabel}>Revenue</Text>
+          <Text style={styles.summaryValue}>
+            UGX {Math.round(revenue).toLocaleString()}
+          </Text>
         </View>
-        <Text style={styles.summaryLabel}>Revenue</Text>
-        <Text style={styles.summaryValue}>
-          UGX {Math.round(totalAmount).toLocaleString()}
-        </Text>
-      </View>
-      <View style={styles.summaryCard}>
-        <View style={[styles.summaryCardIcon, styles.avgIcon]}>
-          <Image
-            source={icons.average}
-            style={styles.summaryCardIconImage}
-            resizeMode="contain"
-          />
+        <View style={styles.summaryCard}>
+          <View style={[styles.summaryCardIcon, styles.avgIcon]}>
+            <Image
+              source={icons.product}
+              style={styles.summaryCardIconImage}
+              resizeMode="contain"
+            />
+          </View>
+          <Text style={styles.summaryLabel}>Qty sold</Text>
+          <Text style={styles.summaryValue}>
+            {Math.round(productsSold).toLocaleString()}
+          </Text>
         </View>
-        <Text style={styles.summaryLabel}>Avg Sale</Text>
-        <Text style={styles.summaryValue}>
-          UGX {Math.round(averageSale).toLocaleString()}
-        </Text>
       </View>
-    </View>
-  );
+    );
+  };
+
+  const renderUserSummaries = () => {
+    if (!userSummaries.length) {
+      return null;
+    }
+    return (
+      <View style={styles.userSummarySection}>
+        <Text style={styles.userSummaryHeading}>Sales by user</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.userSummaryChips}>
+          {userSummaries.map((u, idx) => (
+            <View key={`${u.user_id ?? 'u'}-${idx}`} style={styles.userSummaryChip}>
+              <Text style={styles.userSummaryName} numberOfLines={1}>
+                {u.user_name || 'Unknown'}
+              </Text>
+              <Text style={styles.userSummaryMeta}>
+                UGX {Math.round(u.total_sales).toLocaleString()} ·{' '}
+                {u.total_invoices} inv.
+              </Text>
+            </View>
+          ))}
+        </ScrollView>
+      </View>
+    );
+  };
 
   const getStatusColor = (status?: string) => {
     switch (status) {
@@ -413,10 +529,7 @@ const SalesHistory = () => {
   const renderHistoryItem = ({item}: {item: SalesInvoice}) => (
     <TouchableOpacity
       style={styles.historyCard}
-      onPress={() => {
-        setSelectedItem(item);
-        setModalVisible(true);
-      }}
+      onPress={() => openSaleDetail(item)}
       activeOpacity={0.7}>
       <View style={styles.historyCardHeader}>
         <View style={styles.historyCardLeft}>
@@ -556,23 +669,24 @@ const SalesHistory = () => {
   };
 
   const renderDetailModal = () => {
-    if (!selectedItem) return null;
+    const displayItem = detailForModal ?? selectedItem;
+    if (!displayItem) return null;
 
     return (
       <Modal
         animationType="slide"
         transparent={true}
         visible={modalVisible}
-        onRequestClose={() => setModalVisible(false)}>
+        onRequestClose={closeDetailModal}>
         <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>
-                Invoice: {selectedItem.invoice_no || '—'}
+                Invoice: {displayItem.invoice_no || '—'}
               </Text>
               <TouchableOpacity
                 style={styles.closeIconButton}
-                onPress={() => setModalVisible(false)}
+                onPress={closeDetailModal}
                 activeOpacity={0.7}>
                 <Image
                   source={icons.cross}
@@ -583,22 +697,28 @@ const SalesHistory = () => {
             </View>
 
             <ScrollView style={styles.modalScrollView}>
+              {detailLoading && (
+                <View style={styles.modalLoadingInline}>
+                  <ActivityIndicator color={COLORS.primary} />
+                  <Text style={styles.modalLoadingText}>Loading line items…</Text>
+                </View>
+              )}
               <View style={styles.modalInfoContainer}>
                 <View style={styles.infoRow}>
                   <Text style={styles.infoLabel}>Customer:</Text>
                   <Text style={styles.infoValue}>
-                    {selectedItem.customer_name || 'Walk-in Customer'}
+                    {displayItem.customer_name || 'Walk-in Customer'}
                   </Text>
                 </View>
                 <View style={styles.infoRow}>
                   <Text style={styles.infoLabel}>Date:</Text>
                   <Text style={styles.infoValue}>
                     {new Date(
-                      selectedItem.document_date || '',
+                      displayItem.document_date || '',
                     ).toLocaleDateString()}
                   </Text>
                 </View>
-                {selectedItem.status && (
+                {displayItem.status && (
                   <View style={styles.infoRow}>
                     <Text style={styles.infoLabel}>Status:</Text>
                     <View
@@ -606,7 +726,7 @@ const SalesHistory = () => {
                         styles.statusBadge,
                         {
                           backgroundColor:
-                            getStatusColor(selectedItem.status) + '20',
+                            getStatusColor(displayItem.status) + '20',
                         },
                       ]}>
                       <View
@@ -614,7 +734,7 @@ const SalesHistory = () => {
                           styles.statusDot,
                           {
                             backgroundColor: getStatusColor(
-                              selectedItem.status,
+                              displayItem.status,
                             ),
                           },
                         ]}
@@ -622,9 +742,9 @@ const SalesHistory = () => {
                       <Text
                         style={[
                           styles.statusText,
-                          {color: getStatusColor(selectedItem.status)},
+                          {color: getStatusColor(displayItem.status)},
                         ]}>
-                        {selectedItem.status}
+                        {displayItem.status}
                       </Text>
                     </View>
                   </View>
@@ -632,29 +752,29 @@ const SalesHistory = () => {
                 <View style={styles.infoRow}>
                   <Text style={styles.infoLabel}>Payment Method:</Text>
                   <Text style={styles.infoValue}>
-                    {selectedItem.payment_method_name || 'Cash'}
+                    {displayItem.payment_method_name || 'Cash'}
                   </Text>
                 </View>
-                {selectedItem.user_name && (
+                {displayItem.user_name && (
                   <View style={styles.infoRow}>
                     <Text style={styles.infoLabel}>Sold by:</Text>
                     <Text style={styles.infoValue}>
-                      {selectedItem.user_name}
+                      {displayItem.user_name}
                     </Text>
                   </View>
                 )}
                 <View style={styles.infoRow}>
                   <Text style={styles.infoLabel}>Total:</Text>
                   <Text style={styles.totalAmount}>
-                    UGX {(selectedItem.total_amount || 0).toLocaleString()}
+                    UGX {(displayItem.total_amount || 0).toLocaleString()}
                   </Text>
                 </View>
               </View>
 
-              {selectedItem.lines && selectedItem.lines.length > 0 && (
+              {displayItem.lines && displayItem.lines.length > 0 && (
                 <View style={styles.linesContainer}>
                   <Text style={styles.modalSubtitle}>Items Sold</Text>
-                  {selectedItem.lines.map((line, index) => (
+                  {displayItem.lines.map((line, index) => (
                     <View key={line.id || index} style={styles.lineItem}>
                       <View style={styles.lineItemHeader}>
                         <Text style={styles.lineItemName}>
@@ -683,7 +803,7 @@ const SalesHistory = () => {
 
             <TouchableOpacity
               style={styles.closeButton}
-              onPress={() => setModalVisible(false)}
+              onPress={closeDetailModal}
               activeOpacity={0.7}>
               <Text style={styles.closeButtonText}>Close</Text>
             </TouchableOpacity>
@@ -692,6 +812,19 @@ const SalesHistory = () => {
       </Modal>
     );
   };
+
+  if (!canRead(PAGE_NAME)) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.accessDeniedContainer}>
+          <Text style={styles.accessDeniedTitle}>Access Denied</Text>
+          <Text style={styles.accessDeniedMessage}>
+            You don't have permission to view sales history.
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -740,6 +873,7 @@ const SalesHistory = () => {
       <View style={styles.content}>
         {renderFilterPills()}
         {renderSummaryCards()}
+        {renderUserSummaries()}
         <View style={styles.historySection}>
           <Text style={styles.sectionHeading}>Sales History</Text>
           {renderHistory()}
@@ -822,9 +956,12 @@ const SalesHistory = () => {
                         paymentStatusFilter === option.value &&
                           styles.stockFilterButtonActive,
                       ]}
-                      onPress={() =>
-                        setPaymentStatusFilter(option.value as any)
-                      }
+                      onPress={() => {
+                        setPaymentStatusFilter(option.value as any);
+                        if (option.value === 'unpaid') {
+                          setPaymentMethodIdFilter('');
+                        }
+                      }}
                       activeOpacity={0.7}>
                       <Text
                         style={[
@@ -838,6 +975,57 @@ const SalesHistory = () => {
                   ))}
                 </View>
               </View>
+
+              {/* Payment method (same as web: financials payment method id) */}
+              {paymentStatusFilter !== 'unpaid' && (
+                <View style={styles.filterSection}>
+                  <Text style={styles.filterSectionLabel}>
+                    Payment method
+                  </Text>
+                  <View style={styles.paymentMethodChips}>
+                    <TouchableOpacity
+                      style={[
+                        styles.paymentMethodChip,
+                        paymentMethodIdFilter === '' &&
+                          styles.paymentMethodChipActive,
+                      ]}
+                      onPress={() => setPaymentMethodIdFilter('')}
+                      activeOpacity={0.7}>
+                      <Text
+                        style={[
+                          styles.paymentMethodChipText,
+                          paymentMethodIdFilter === '' &&
+                            styles.paymentMethodChipTextActive,
+                        ]}>
+                        All
+                      </Text>
+                    </TouchableOpacity>
+                    {paymentMethods.map(pm => (
+                      <TouchableOpacity
+                        key={pm.id}
+                        style={[
+                          styles.paymentMethodChip,
+                          paymentMethodIdFilter === String(pm.id) &&
+                            styles.paymentMethodChipActive,
+                        ]}
+                        onPress={() =>
+                          setPaymentMethodIdFilter(String(pm.id))
+                        }
+                        activeOpacity={0.7}>
+                        <Text
+                          style={[
+                            styles.paymentMethodChipText,
+                            paymentMethodIdFilter === String(pm.id) &&
+                              styles.paymentMethodChipTextActive,
+                          ]}
+                          numberOfLines={1}>
+                          {pm.code || pm.description}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
             </ScrollView>
 
             {/* Filter Actions */}
@@ -1060,6 +1248,78 @@ const styles = StyleSheet.create({
     color: COLORS.black,
     fontWeight: '600',
     textAlign: 'center',
+  },
+  userSummarySection: {
+    marginBottom: SIZES.base * 2,
+    paddingHorizontal: SIZES.base * 2,
+  },
+  userSummaryHeading: {
+    ...FONTS.body4,
+    color: COLORS.gray2,
+    marginBottom: SIZES.base,
+    fontWeight: '600',
+  },
+  userSummaryChips: {
+    flexDirection: 'row',
+    gap: SIZES.base,
+    paddingRight: SIZES.base * 2,
+  },
+  userSummaryChip: {
+    backgroundColor: COLORS.white,
+    borderRadius: SIZES.radius,
+    paddingVertical: SIZES.base,
+    paddingHorizontal: SIZES.base * 1.5,
+    borderWidth: 1,
+    borderColor: COLORS.lightGray1,
+    minWidth: 140,
+  },
+  userSummaryName: {
+    ...FONTS.body4,
+    color: COLORS.black,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  userSummaryMeta: {
+    ...FONTS.body5,
+    color: COLORS.gray2,
+    fontSize: 11,
+  },
+  paymentMethodChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: SIZES.base,
+  },
+  paymentMethodChip: {
+    paddingHorizontal: SIZES.base * 1.5,
+    paddingVertical: SIZES.base,
+    borderRadius: SIZES.radius,
+    backgroundColor: COLORS.lightGray2,
+    borderWidth: 1,
+    borderColor: COLORS.lightGray1,
+    maxWidth: '48%',
+  },
+  paymentMethodChipActive: {
+    backgroundColor: COLORS.primary + '18',
+    borderColor: COLORS.primary,
+  },
+  paymentMethodChipText: {
+    ...FONTS.body5,
+    color: COLORS.gray2,
+    fontSize: 12,
+  },
+  paymentMethodChipTextActive: {
+    color: COLORS.primary,
+    fontWeight: '600',
+  },
+  modalLoadingInline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.base,
+    marginBottom: SIZES.base * 1.5,
+  },
+  modalLoadingText: {
+    ...FONTS.body4,
+    color: COLORS.gray2,
   },
   historySection: {
     flex: 1,

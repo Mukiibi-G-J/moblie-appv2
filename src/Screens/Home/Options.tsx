@@ -10,11 +10,11 @@ import {
 import {useNavigation} from '@react-navigation/native';
 import {COLORS, icons, constants} from '../../constants';
 import {usePermissions} from '../../hooks/usePermissions';
-import {useAppContext} from '../../context/Store';
+import {useSetSelectedTab} from '../../context/Store';
 
 const Options = () => {
   const navigation = useNavigation();
-  const {setSelectedTab} = useAppContext();
+  const setSelectedTab = useSetSelectedTab();
   const {isModuleVisible, hasAnyPageAccess, canCreate, canRead} = usePermissions();
 
   // Define all possible options with permission checks

@@ -532,7 +532,9 @@ class BluetoothPrinterService {
     });
 
     for (const item of data.cartItems) {
-      const itemTotal = item.quantity * item.unit_price;
+      const quantity = Number(item.quantity) || 0;
+      const unitPrice = Number(item.unit_price) || 0;
+      const itemTotal = quantity * unitPrice;
       const itemName =
         item.item_name.length > 30
           ? item.item_name.substring(0, 27) + '...'
@@ -545,7 +547,7 @@ class BluetoothPrinterService {
       document.push({
         type: 'text',
         content: `  ${item.quantity} x ${this.formatCurrency(
-          item.unit_price,
+          unitPrice,
         )} = ${this.formatCurrency(itemTotal)}`,
       });
     }
@@ -559,11 +561,11 @@ class BluetoothPrinterService {
       style: {bold: true},
     });
 
-    const subtotal = data.subtotal || data.total;
-    const tax = data.tax || 0;
-    const discount = data.discount || 0;
-    const total = data.total;
-    const change = data.change || 0;
+    const subtotal = Number(data.subtotal ?? data.total) || 0;
+    const tax = Number(data.tax) || 0;
+    const discount = Number(data.discount) || 0;
+    const total = Number(data.total) || 0;
+    const change = Number(data.change) || 0;
 
     document.push({
       type: 'text',
@@ -641,7 +643,7 @@ class BluetoothPrinterService {
     });
     document.push({
       type: 'text',
-      content: 'Powered by ZentroApp',
+      content: 'Powered by Zentroapp',
       style: {align: 'center'},
     });
 
@@ -739,8 +741,12 @@ class BluetoothPrinterService {
   /**
    * Format currency
    */
-  private formatCurrency(amount: number): string {
-    return `UGX ${amount.toFixed(0)}`;
+  private formatCurrency(amount: number | string | undefined | null): string {
+    const numericAmount = Number(amount);
+    const safeAmount = Number.isFinite(numericAmount) ? numericAmount : 0;
+    return `UGX ${safeAmount.toLocaleString('en-US', {
+      maximumFractionDigits: 0,
+    })}`;
   }
 
   /**

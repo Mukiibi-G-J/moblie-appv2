@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import React, { useState, useEffect, useMemo } from 'react';
+import { NavigationContainer, DarkTheme, DefaultTheme } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -19,12 +19,20 @@ import Settings from './src/Screens/Settings/Settings';
 import Expenses from './src/Screens/Expenses/Expenses';
 import ExpenseHistory from './src/Screens/Expenses/ExpenseHistory';
 import MyWallet from './src/Screens/MyWallet/MyWallet';
-import Reports from './src/Screens/Reports/Reports';
-import Items from './src/Screens/Items/Items';
+import ReportsMenu from './src/Screens/Reports/ReportsMenu';
+import ReportStatementScreen from './src/Screens/Reports/ReportStatementScreen';
+import AllItems from './src/Screens/Items/Items';
+import ItemsMenu from './src/Screens/Items/ItemsMenu';
+import Customers from './src/Screens/Customers/Customers';
 import ItemCategories from './src/Screens/Items/ItemCategories';
 import SalesHistory from './src/Screens/Sales/SalesHistory';
 import PrintLabels from './src/Screens/PrintLabels/PrintLabels';
 import SignUp from './src/Screens/Authentication/SignUp';
+import CompanyProvisioningScreen from './src/Screens/Authentication/CompanyProvisioningScreen';
+import {
+  getPendingCompanyCreation,
+  clearPendingCompanyCreation,
+} from './src/utils/pendingCompanyCreation';
 import Otp from './src/Screens/Otp/Otp';
 import ItemJournal from './src/Screens/ItemJournal/ItemJournal';
 import SearchPage from './src/Screens/Search/SearchPage';
@@ -46,6 +54,11 @@ import UserManagement from './src/Screens/UserManagement/UserManagement';
 import { ProtectedScreen } from './src/Components/ProtectedScreen';
 import { PAGE_NAMES } from './src/constants/pageNames';
 import PrinterConfig from './src/Screens/PrinterConfig/PrinterConfig';
+import SubscriptionPage from './src/Screens/Subscription/SubscriptionPage';
+import MobileMoneyPaymentInstructions from './src/Screens/Subscription/MobileMoneyPaymentInstructions';
+import BarcodeScannerScreen from './src/Screens/Scanner/BarcodeScannerScreen';
+import { ThemeProvider, useTheme } from './src/context/ThemeContext';
+import { COLORS } from './src/constants';
 
 const Stack = createStackNavigator();
 
@@ -61,9 +74,15 @@ const AppNavigator = () => {
           '@onboarding_complete',
         );
         if (accessToken) {
+          await clearPendingCompanyCreation();
           setInitialRoute('Home');
-        } else if (onboardingComplete === 'true') {
-          setInitialRoute('SignIn');
+        } else {
+          const pendingCompany = await getPendingCompanyCreation();
+          if (pendingCompany) {
+            setInitialRoute('CompanyProvisioning');
+          } else if (onboardingComplete === 'true') {
+            setInitialRoute('SignIn');
+          }
         }
         await new Promise(resolve => setTimeout(resolve, 2000));
       } catch (error) {
@@ -122,6 +141,15 @@ const AppNavigator = () => {
               options={{ headerShown: false }}
             />
             <Stack.Screen
+              name="CompanyProvisioning"
+              component={(props: any) => (
+                <AuthGuard requireAuth={false}>
+                  <CompanyProvisioningScreen {...props} />
+                </AuthGuard>
+              )}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
               name="Otp"
               component={(props: any) => (
                 <AuthGuard requireAuth={false}>
@@ -145,6 +173,16 @@ const AppNavigator = () => {
                 headerShown: false,
                 gestureEnabled: false, // Disable swipe back gesture
               }}
+            />
+            <Stack.Screen
+              name="Subscription"
+              component={SubscriptionPage}
+              options={{headerShown: false, gestureEnabled: false}}
+            />
+            <Stack.Screen
+              name="SubscriptionMobileMoney"
+              component={MobileMoneyPaymentInstructions}
+              options={{headerShown: false, gestureEnabled: false}}
             />
             <Stack.Screen
               name="Cart"
@@ -195,7 +233,25 @@ const AppNavigator = () => {
               name="Reports"
               component={(props: any) => (
                 <ProtectedScreen pageName={PAGE_NAMES.REPORTS}>
-                  <Reports {...props} />
+                  <ReportsMenu {...props} />
+                </ProtectedScreen>
+              )}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="ProfitLossReport"
+              component={(props: any) => (
+                <ProtectedScreen pageName={PAGE_NAMES.PROFIT_AND_LOSS}>
+                  <ReportStatementScreen {...props} reportType="profit-loss" />
+                </ProtectedScreen>
+              )}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="BalanceSheetReport"
+              component={(props: any) => (
+                <ProtectedScreen pageName={PAGE_NAMES.BALANCE_SHEET}>
+                  <ReportStatementScreen {...props} reportType="balance-sheet" />
                 </ProtectedScreen>
               )}
               options={{ headerShown: false }}
@@ -204,7 +260,25 @@ const AppNavigator = () => {
               name="Items"
               component={(props: any) => (
                 <ProtectedScreen pageName={PAGE_NAMES.ITEMS}>
-                  <Items {...props} />
+                  <ItemsMenu {...props} />
+                </ProtectedScreen>
+              )}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="AllItems"
+              component={(props: any) => (
+                <ProtectedScreen pageName={PAGE_NAMES.ITEMS}>
+                  <AllItems {...props} />
+                </ProtectedScreen>
+              )}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="Customers"
+              component={(props: any) => (
+                <ProtectedScreen pageName={PAGE_NAMES.CUSTOMER_MANAGEMENT}>
+                  <Customers {...props} />
                 </ProtectedScreen>
               )}
               options={{ headerShown: false }}
@@ -362,6 +436,11 @@ const AppNavigator = () => {
               )}
               options={{ headerShown: false }}
             />
+            <Stack.Screen
+              name="BarcodeScanner"
+              component={BarcodeScannerScreen}
+              options={{headerShown: false}}
+            />
           </>
         )}
       </Stack.Navigator>
@@ -369,6 +448,29 @@ const AppNavigator = () => {
     </>
   );
 };
+
+function ThemedNavigation() {
+  const { isDark, colors } = useTheme();
+  const navTheme = useMemo(
+    () => ({
+      ...(isDark ? DarkTheme : DefaultTheme),
+      colors: {
+        ...(isDark ? DarkTheme.colors : DefaultTheme.colors),
+        primary: COLORS.primary,
+        background: colors.screenMuted,
+        card: colors.surface,
+        text: colors.textPrimary,
+        border: colors.border,
+      },
+    }),
+    [isDark, colors],
+  );
+  return (
+    <NavigationContainer ref={navigationRef} theme={navTheme}>
+      <AppNavigator />
+    </NavigationContainer>
+  );
+}
 
 function App() {
   return (
@@ -378,9 +480,9 @@ function App() {
           <TenantProvider>
             <CartProvider>
               <SearchModeProvider>
-                <NavigationContainer ref={navigationRef}>
-                  <AppNavigator />
-                </NavigationContainer>
+                <ThemeProvider>
+                  <ThemedNavigation />
+                </ThemeProvider>
               </SearchModeProvider>
             </CartProvider>
           </TenantProvider>

@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useCallback, useMemo, useRef} from 'react';
+import React, {useState, useEffect, useCallback, useRef} from 'react';
 import {
   View,
   Text,
@@ -19,12 +19,19 @@ import icons from '../../constants/icons';
 import {usePermissions} from '../../hooks/usePermissions';
 import {PAGE_NAMES} from '../../constants/pageNames';
 import {CustomerServices} from '../../services/CustomerServices';
+import {PaymentJournalServices} from '../../services/PaymentJournalServices';
 import {
   Customer,
   PaymentMethod,
 } from '../../@types/customer';
+import {CustomerLedgerEntry} from '../../@types/paymentJournal';
 import CustomerListItem from './CustomerListItem';
 import CustomerFormModal from './CustomerFormModal';
+
+const isProtectedGeneralCustomer = (customer?: Customer | null) => {
+  const normalizedName = customer?.name?.trim().toLowerCase();
+  return normalizedName === 'general' || normalizedName === 'general customer';
+};
 
 
 const Customers = () => {
@@ -61,6 +68,13 @@ const Customers = () => {
   const [totalCount, setTotalCount] = useState(0);
   const [filterModalVisible, setFilterModalVisible] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [ledgerModalVisible, setLedgerModalVisible] = useState(false);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [selectedLedgerCustomer, setSelectedLedgerCustomer] =
+    useState<Customer | null>(null);
+  const [customerLedgerEntries, setCustomerLedgerEntries] = useState<
+    CustomerLedgerEntry[]
+  >([]);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Debounce search query
@@ -179,11 +193,27 @@ const Customers = () => {
   };
 
   const handleEdit = (customer: Customer) => {
+    if (isProtectedGeneralCustomer(customer)) {
+      Alert.alert(
+        'Protected customer',
+        'The General Customer cannot be edited.',
+      );
+      return;
+    }
+
     setSelectedCustomer(customer);
     setIsFormModalVisible(true);
   };
 
   const handleDelete = async (customer: Customer) => {
+    if (isProtectedGeneralCustomer(customer)) {
+      Alert.alert(
+        'Protected customer',
+        'The General Customer cannot be deleted.',
+      );
+      return;
+    }
+
     Alert.alert(
       'Delete Customer',
       `Are you sure you want to delete customer ${customer.name}?`,
@@ -215,31 +245,38 @@ const Customers = () => {
     );
   };
 
+  const handleOpenBalanceDrilldown = async (customer: Customer) => {
+    const hasBalance = Math.abs(parseFloat(customer.balance || '0')) > 0;
+    if (!hasBalance) {
+      return;
+    }
+
+    setSelectedLedgerCustomer(customer);
+    setLedgerModalVisible(true);
+    setLedgerLoading(true);
+    try {
+      const response = await PaymentJournalServices.getCustomerLedgerEntries(
+        customer.id,
+      );
+      setCustomerLedgerEntries(response?.ledger_entries || []);
+    } catch (error) {
+      console.error('Error loading customer ledger entries:', error);
+      setCustomerLedgerEntries([]);
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to load customer ledger entries.',
+      });
+    } finally {
+      setLedgerLoading(false);
+    }
+  };
+
   const handleFormSave = () => {
     setIsFormModalVisible(false);
     setSelectedCustomer(null);
     onRefresh();
   };
-
-  // Calculate summary statistics
-  const summaryStats = useMemo(() => {
-    const totalBalance = customers.reduce(
-      (sum, cust) => sum + (parseFloat(cust.balance || '0') || 0),
-      0,
-    );
-    const customersWithBalance = customers.filter(
-      cust => parseFloat(cust.balance || '0') > 0,
-    ).length;
-    const averageBalance =
-      customers.length > 0 ? totalBalance / customers.length : 0;
-
-    return {
-      totalBalance,
-      customersWithBalance,
-      averageBalance,
-      totalCount: customers.length,
-    };
-  }, [customers]);
 
   const hasActiveFilters = searchQuery.trim() !== '';
 
@@ -254,44 +291,6 @@ const Customers = () => {
     setFilterModalVisible(false);
     loadCustomers();
   };
-
-  const renderSummaryCards = () => (
-    <View style={styles.summaryRow}>
-      <View style={styles.summaryCard}>
-        <View style={styles.summaryCardIcon}>
-          <Image 
-            source={icons.wallet} 
-            style={styles.summaryCardIconImage}
-            resizeMode="contain"
-          />
-        </View>
-        <Text style={styles.summaryLabel}>Total Balance</Text>
-        <Text style={styles.summaryValue}>
-          UGX {summaryStats.totalBalance.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-        </Text>
-        <Text style={styles.summarySubtext}>
-          {summaryStats.totalCount} customers
-        </Text>
-      </View>
-      <View style={styles.summaryCard}>
-        <View style={[styles.summaryCardIcon, styles.summaryCardIconSecondary]}>
-          <Image 
-            source={icons.profile} 
-            style={[styles.summaryCardIconImage, styles.summaryCardIconImageSecondary]}
-            resizeMode="contain"
-          />
-        </View>
-        <Text style={styles.summaryLabel}>With Balance</Text>
-        <Text style={styles.summaryValue}>
-          {summaryStats.customersWithBalance}
-        </Text>
-        <Text style={styles.summarySubtext}>
-          Avg {summaryStats.averageBalance.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} UGX
-        </Text>
-      </View>
-    </View>
-  );
-
 
   const renderEmptyState = () => (
     <View style={styles.emptyContainer}>
@@ -327,16 +326,24 @@ const Customers = () => {
     );
   };
 
-  const renderListHeader = () => (
-    <>
-      {renderSummaryCards()}
-    </>
-  );
-
   return (
     <View style={styles.container}>
-      {/* Search Bar */}
-      <View style={styles.searchContainer}>
+      <View style={styles.headerSection}>
+        <View style={styles.titleRow}>
+          <Text style={styles.screenTitle}>Customers</Text>
+          <TouchableOpacity
+            style={styles.moreButton}
+            onPress={() => setFilterModalVisible(true)}
+            activeOpacity={0.75}>
+            <Image
+              source={icons.menu}
+              style={styles.moreButtonIcon}
+              resizeMode="contain"
+            />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.searchContainer}>
         <View style={styles.searchInputContainer}>
           <View style={styles.searchIconContainer}>
             <Image
@@ -354,7 +361,7 @@ const Customers = () => {
           />
           {searchLoading && (
             <View style={styles.searchLoadingContainer}>
-              <ActivityIndicator size="small" color={COLORS.primary} />
+              <ActivityIndicator size="small" color={COLORS.primary2} />
             </View>
           )}
         </View>
@@ -376,10 +383,11 @@ const Customers = () => {
           {hasActiveFilters && <View style={styles.filterBadge} />}
         </TouchableOpacity>
       </View>
+      </View>
 
       {loading && page === 1 ? (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={COLORS.primary} />
+          <ActivityIndicator size="large" color={COLORS.primary2} />
           <Text style={styles.loadingText}>Loading customers...</Text>
         </View>
       ) : (
@@ -392,9 +400,9 @@ const Customers = () => {
               customer={item}
               onEdit={canEdit(PAGE_NAME) ? handleEdit : undefined}
               onDelete={canDelete(PAGE_NAME) ? handleDelete : undefined}
+              onBalancePress={handleOpenBalanceDrilldown}
             />
           )}
-          ListHeaderComponent={renderListHeader}
           ListEmptyComponent={renderEmptyState}
           ListFooterComponent={renderFooter}
           onEndReached={handleLoadMore}
@@ -481,6 +489,75 @@ const Customers = () => {
         </View>
       </Modal>
 
+      <Modal
+        visible={ledgerModalVisible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setLedgerModalVisible(false)}>
+        <View style={styles.filterModalOverlay}>
+          <View style={styles.filterModalContent}>
+            <View style={styles.filterModalHeader}>
+              <Text style={styles.filterModalTitle}>
+                {selectedLedgerCustomer?.name || 'Customer'} balance
+              </Text>
+              <TouchableOpacity
+                onPress={() => setLedgerModalVisible(false)}
+                style={styles.filterCloseButton}>
+                <Image
+                  source={icons.cross}
+                  style={styles.filterCloseIcon}
+                  resizeMode="contain"
+                />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.ledgerSummaryCard}>
+              <Text style={styles.ledgerSummaryLabel}>Outstanding balance</Text>
+              <Text style={styles.ledgerSummaryValue}>
+                UGX{' '}
+                {(parseFloat(selectedLedgerCustomer?.balance || '0') || 0)
+                  .toFixed(0)
+                  .replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+              </Text>
+            </View>
+
+            {ledgerLoading ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={COLORS.primary2} />
+                <Text style={styles.loadingText}>Loading ledger entries...</Text>
+              </View>
+            ) : (
+              <FlatList
+                data={customerLedgerEntries}
+                keyExtractor={item => item.id.toString()}
+                contentContainerStyle={styles.ledgerListContent}
+                ListEmptyComponent={
+                  <View style={styles.contactsEmptyContainer}>
+                    <Text style={styles.emptyText}>No ledger entries found</Text>
+                    <Text style={styles.emptySubtext}>
+                      This customer has no open receivable entries to drill into.
+                    </Text>
+                  </View>
+                }
+                renderItem={({item}) => (
+                  <View style={styles.ledgerRow}>
+                    <View style={styles.ledgerRowTextWrap}>
+                      <Text style={styles.ledgerDocumentNo}>{item.document_no}</Text>
+                      <Text style={styles.ledgerDescription}>
+                        {item.description || 'Customer ledger entry'}
+                      </Text>
+                    </View>
+                    <Text style={styles.ledgerAmount}>
+                      UGX {item.remaining_amount.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                    </Text>
+                  </View>
+                )}
+              />
+            )}
+          </View>
+        </View>
+      </Modal>
+
       <CustomerFormModal
         visible={isFormModalVisible}
         onClose={() => {
@@ -501,39 +578,63 @@ const Customers = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.lightGray2,
+    backgroundColor: COLORS.white,
   },
   list: {
     flex: 1,
   },
   listContentContainer: {
-    paddingBottom: 180, // Extra padding to ensure last items are scrollable above FAB and bottom nav
+    paddingBottom: 180,
   },
-  searchContainer: {
-    padding: SIZES.base * 2,
+  headerSection: {
     backgroundColor: COLORS.white,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray1,
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 12,
+  },
+  titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: SIZES.base,
+    justifyContent: 'space-between',
+    marginBottom: 18,
+  },
+  screenTitle: {
+    ...FONTS.h1,
+    color: COLORS.black,
+    fontSize: 24,
+    fontWeight: '700',
+  },
+  moreButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: COLORS.transparentPrimary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  moreButtonIcon: {
+    width: 22,
+    height: 22,
+    tintColor: COLORS.primary3,
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
   },
   searchInputContainer: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.lightGray2,
-    borderRadius: SIZES.radius,
-    paddingHorizontal: SIZES.base * 1.5,
-    height: 48,
+    backgroundColor: COLORS.white,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    height: 46,
+    borderWidth: 1,
+    borderColor: COLORS.transparentPrimary2,
   },
   searchIconContainer: {
-    marginRight: SIZES.base,
+    marginRight: 10,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -552,18 +653,18 @@ const styles = StyleSheet.create({
     marginLeft: SIZES.base,
   },
   filterButton: {
-    width: 48,
-    height: 48,
-    borderRadius: SIZES.radius,
-    backgroundColor: COLORS.lightGray2,
+    width: 46,
+    height: 46,
+    borderRadius: 16,
+    backgroundColor: COLORS.white,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: COLORS.lightGray1,
+    borderColor: COLORS.transparentPrimary2,
   },
   filterButtonActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
+    backgroundColor: COLORS.transparentPrimary,
+    borderColor: COLORS.primary2,
   },
   filterIcon: {
     width: 20,
@@ -571,7 +672,7 @@ const styles = StyleSheet.create({
     tintColor: COLORS.gray2,
   },
   filterIconActive: {
-    tintColor: COLORS.white,
+    tintColor: COLORS.primary2,
   },
   filterBadge: {
     position: 'absolute',
@@ -582,105 +683,9 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     backgroundColor: COLORS.error,
   },
-  filterRow: {
-    flexDirection: 'row',
-    paddingHorizontal: SIZES.base * 2,
-    paddingVertical: SIZES.base * 1.5,
-    gap: SIZES.base,
-    backgroundColor: COLORS.white,
-  },
-  filterPill: {
-    paddingHorizontal: SIZES.base * 2,
-    paddingVertical: SIZES.base * 1.25,
-    borderRadius: SIZES.radius * 2,
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  filterPillActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  filterLabel: {
-    ...FONTS.body4,
-    color: COLORS.gray2,
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  filterLabelActive: {
-    color: COLORS.white,
-    fontWeight: '600',
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: SIZES.base * 2,
-    marginBottom: SIZES.base * 1.5,
-    paddingHorizontal: SIZES.base * 2,
-    gap: SIZES.base,
-  },
-  summaryCard: {
-    flex: 1,
-    backgroundColor: COLORS.white,
-    borderRadius: SIZES.radius,
-    padding: SIZES.base * 1.5,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
-    alignItems: 'center',
-  },
-  summaryCardIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: COLORS.primary + '15',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: SIZES.base * 0.75,
-  },
-  summaryCardIconSecondary: {
-    backgroundColor: COLORS.success + '15',
-  },
-  summaryCardIconImage: {
-    width: 24,
-    height: 24,
-    tintColor: COLORS.primary,
-  },
-  summaryCardIconImageSecondary: {
-    tintColor: COLORS.success,
-  },
-  summaryLabel: {
-    ...FONTS.body5,
-    color: COLORS.gray2,
-    marginBottom: SIZES.base * 0.25,
-    fontSize: 10,
-    textAlign: 'center',
-  },
-  summaryValue: {
-    ...FONTS.h4,
-    color: COLORS.black,
-    fontWeight: '600',
-    textAlign: 'center',
-    marginBottom: SIZES.base * 0.25,
-    fontSize: 16,
-  },
-  summarySubtext: {
-    ...FONTS.body5,
-    color: COLORS.gray2,
-    textAlign: 'center',
-    fontSize: 10,
-  },
   emptyListContainer: {
     flexGrow: 1,
+    paddingTop: 36,
   },
   emptyContainer: {
     flex: 1,
@@ -693,7 +698,7 @@ const styles = StyleSheet.create({
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: COLORS.lightGray2,
+    backgroundColor: COLORS.transparentPrimary,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: SIZES.base * 2,
@@ -701,7 +706,7 @@ const styles = StyleSheet.create({
   emptyIconImage: {
     width: 40,
     height: 40,
-    tintColor: COLORS.gray2,
+    tintColor: COLORS.primary2,
   },
   emptyText: {
     ...FONTS.h3,
@@ -719,9 +724,9 @@ const styles = StyleSheet.create({
   emptyButton: {
     paddingHorizontal: SIZES.base * 3,
     paddingVertical: SIZES.base * 1.5,
-    borderRadius: SIZES.radius,
-    backgroundColor: COLORS.primary,
-    shadowColor: COLORS.primary,
+    borderRadius: 24,
+    backgroundColor: COLORS.primary2,
+    shadowColor: COLORS.primary2,
     shadowOffset: {width: 0, height: 2},
     shadowOpacity: 0.2,
     shadowRadius: 4,
@@ -740,7 +745,7 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     ...FONTS.body3,
-    color: COLORS.gray,
+    color: COLORS.gray2,
     marginTop: SIZES.base,
   },
   footerLoader: {
@@ -750,19 +755,19 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: SIZES.padding,
-    bottom: 130, // Position well above bottom navigation to ensure full visibility
+    bottom: 130,
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: COLORS.primary,
+    backgroundColor: COLORS.primary2,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
+    shadowColor: COLORS.primary3,
     shadowOffset: {width: 0, height: 4},
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.28,
     shadowRadius: 8,
     elevation: 8,
-    zIndex: 1000, // Ensure it's above other elements
+    zIndex: 1000,
   },
   fabText: {
     fontSize: 32,
@@ -828,6 +833,63 @@ const styles = StyleSheet.create({
   },
   filterScrollView: {
     maxHeight: 400,
+  },
+  ledgerSummaryCard: {
+    marginHorizontal: 20,
+    marginTop: 16,
+    marginBottom: 12,
+    padding: 16,
+    borderRadius: 16,
+    backgroundColor: COLORS.transparentPrimary,
+    borderWidth: 1,
+    borderColor: COLORS.transparentPrimary2,
+  },
+  ledgerSummaryLabel: {
+    ...FONTS.body4,
+    color: COLORS.primary3,
+    marginBottom: 6,
+    fontWeight: '600',
+  },
+  ledgerSummaryValue: {
+    ...FONTS.h3,
+    color: COLORS.primary2,
+    fontWeight: '700',
+  },
+  ledgerListContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 20,
+  },
+  ledgerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.lightGray1,
+    gap: 12,
+  },
+  ledgerRowTextWrap: {
+    flex: 1,
+  },
+  ledgerDocumentNo: {
+    ...FONTS.body3,
+    color: COLORS.black,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  ledgerDescription: {
+    ...FONTS.body4,
+    color: COLORS.gray2,
+  },
+  ledgerAmount: {
+    ...FONTS.body4,
+    color: COLORS.primary2,
+    fontWeight: '700',
+  },
+  contactsEmptyContainer: {
+    paddingVertical: 40,
+    paddingHorizontal: 8,
+    alignItems: 'center',
   },
   filterSection: {
     padding: SIZES.base * 2,

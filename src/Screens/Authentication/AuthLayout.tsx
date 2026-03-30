@@ -1,65 +1,114 @@
 import React from 'react';
-import {View, Text, Image} from 'react-native';
-import {KeyboardAwareScrollView} from 'react-native-keyboard-aware-scroll-view';
-import {images, FONTS, SIZES, COLORS} from '../../constants';
+import {View, Text, Image, StyleSheet, ViewStyle} from 'react-native';
+import {images} from '../../constants';
+import {authOnboarding} from '../../design-system/authOnboardingTokens';
+import {useTheme} from '../../context/ThemeContext';
 
-const AuthLayout = ({title, subtitle, titleContainerStyle, children}) => {
+const ao = authOnboarding;
+const padH = ao.screenPadding.horizontal;
+const afterTitle = ao.sectionSpacing.afterTitle;
+
+type Props = {
+  title: string;
+  subtitle?: React.ReactNode;
+  titleContainerStyle?: ViewStyle;
+  showLogo?: boolean;
+  children: React.ReactNode;
+};
+
+/**
+ * Form shell for flows wrapped in an outer `ScrollView` (SignUp, legacy SignIn).
+ * For standalone screens (Login), use `Components/layouts/AuthLayout`.
+ */
+const AuthLayout = ({
+  title,
+  subtitle,
+  titleContainerStyle,
+  showLogo = false,
+  children,
+}: Props) => {
+  const {colors} = useTheme();
+  const hasSubtitle =
+    subtitle != null &&
+    subtitle !== '' &&
+    !(typeof subtitle === 'string' && subtitle.trim() === '');
+
   return (
-    <View
-      style={{
-        flex: 1,
-        paddingVertical: SIZES.height > 800 ? SIZES.padding : SIZES.radius,
-        backgroundColor: COLORS.white,
-      }}>
-      <KeyboardAwareScrollView
-        keyboardDismissMode="on-drag"
-        contentContainerStyle={{
-          flex: 1,
-          paddingHorizontal: SIZES.padding,
-        }}>
-        {/* App Logo */}
-        <View
-          style={{
-            alignItems: 'center',
-          }}>
-          <Image
-            source={images.logo_zentro}
-            resizeMode="contain"
-            style={{
-              height: 100,
-              width: 230,
-            }}
-          />
-        </View>
+    <View style={[styles.root, {backgroundColor: colors.background}]}>
+      <View style={styles.inner}>
+        {showLogo ? (
+          <View style={styles.logoWrap}>
+            <Image
+              source={images.logo_zentro}
+              style={styles.logo}
+              resizeMode="contain"
+            />
+          </View>
+        ) : null}
 
-        {/* Title */}
-        <View
-          style={{
-            marginTop: SIZES.height > 800 ? SIZES.padding : 0,
-            ...titleContainerStyle,
-          }}>
+        <View style={titleContainerStyle}>
           <Text
-            style={{
-              textAlign: 'center',
-              ...FONTS.h2,
-            }}>
+            style={[
+              styles.title,
+              {color: colors.textPrimary},
+              hasSubtitle ? styles.titleWithSubtitle : styles.titleOnly,
+            ]}>
             {title}
           </Text>
-          <Text
-            style={{
-              textAlign: 'center',
-              color: COLORS.darkGray,
-              marginTop: SIZES.base,
-              ...FONTS.body3,
-            }}>
-            {subtitle}
-          </Text>
+          {hasSubtitle ? (
+            typeof subtitle === 'string' ? (
+              <Text style={[styles.subtitle, {color: colors.textSecondary}]}>
+                {subtitle}
+              </Text>
+            ) : (
+              <View style={styles.subtitleWrap}>{subtitle}</View>
+            )
+          ) : null}
         </View>
 
         {children}
-      </KeyboardAwareScrollView>
+      </View>
     </View>
   );
 };
+
+const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+  },
+  inner: {
+    paddingHorizontal: padH,
+    paddingTop: ao.screenPadding.vertical,
+    paddingBottom: ao.spacing.lg,
+  },
+  logoWrap: {
+    alignItems: 'center',
+    marginBottom: ao.spacing.lg,
+  },
+  logo: {
+    width: 160,
+    height: 64,
+  },
+  title: {
+    fontSize: ao.typo.title,
+    fontWeight: '700',
+    textAlign: 'left',
+  },
+  titleOnly: {
+    marginBottom: afterTitle,
+  },
+  titleWithSubtitle: {
+    marginBottom: ao.spacing.sm,
+  },
+  subtitle: {
+    fontSize: ao.typo.body,
+    letterSpacing: 0.2,
+    marginBottom: afterTitle,
+    textAlign: 'left',
+  },
+  subtitleWrap: {
+    marginBottom: afterTitle,
+  },
+});
 
 export default AuthLayout;

@@ -15,9 +15,10 @@ import {FONTS, SIZES, COLORS, icons, constants} from '../../constants';
 import Options from './Options';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {ScrollView} from 'react-native';
-import {useAuth, useAppContext} from '../../context/Store';
+import {useAuth, useSetSelectedTab} from '../../context/Store';
 import {getRoleDisplayName} from '../../utils/utils';
 import {usePermissions} from '../../hooks/usePermissions';
+import {useTheme} from '../../context/ThemeContext';
 import {
   fetchKPIMetrics,
   fetchRecentTransactions,
@@ -38,8 +39,9 @@ interface SalesInvoice {
 }
 
 export default function Home() {
+  const {colors} = useTheme();
   const {auth, accessToken} = useAuth();
-  const {setSelectedTab} = useAppContext();
+  const setSelectedTab = useSetSelectedTab();
   const {isModuleVisible, hasAnyPageAccess, canRead, canCreate} = usePermissions();
   const [currentDateTime, setCurrentDateTime] = useState(new Date());
   const [isAuthLoading, setIsAuthLoading] = React.useState(true);
@@ -267,11 +269,13 @@ export default function Home() {
 
     return (
       <View style={styles.headerSection}>
-        <View style={styles.headerCard}>
+        <View style={[styles.headerCard, {backgroundColor: colors.card}]}>
           <View style={styles.headerMain}>
             <View style={styles.welcomeContainer}>
-              <Text style={styles.welcomeText}>Welcome back</Text>
-              <Text style={styles.nameText}>
+              <Text style={[styles.welcomeText, {color: colors.textSecondary}]}>
+                Welcome back
+              </Text>
+              <Text style={[styles.nameText, {color: colors.textPrimary}]}>
                 {isAuthLoading ? 'Loading...' : auth.username || 'User'}
               </Text>
               <View style={styles.roleContainer}>
@@ -286,7 +290,9 @@ export default function Home() {
             </View>
 
             <View style={styles.quickInfo}>
-              <Text style={styles.dateText}>{formattedDate}</Text>
+              <Text style={[styles.dateText, {color: colors.textSecondary}]}>
+                {formattedDate}
+              </Text>
               <View style={styles.statusBadge}>
                 <View style={styles.statusDot} />
                 <Text style={styles.statusText}>Store Open</Text>
@@ -324,7 +330,9 @@ export default function Home() {
         <View style={styles.statsSection}>
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={COLORS.primary} />
-            <Text style={styles.loadingText}>Loading metrics...</Text>
+            <Text style={[styles.loadingText, {color: colors.textSecondary}]}>
+              Loading metrics...
+            </Text>
           </View>
         </View>
       );
@@ -340,7 +348,7 @@ export default function Home() {
     return (
       <View style={styles.statsSection}>
         {/* Main Sales Card */}
-        <View style={styles.mainStatsCard}>
+        <View style={[styles.mainStatsCard, {backgroundColor: colors.card}]}>
           <View style={styles.salesHeader}>
             <View>
               <Text style={styles.salesLabel}>Today's Revenue</Text>
@@ -368,9 +376,9 @@ export default function Home() {
         </View>
 
         {/* Secondary Stats Row */}
-        <View style={styles.secondaryStatsContainer}>
+          <View style={styles.secondaryStatsContainer}>
           {/* Orders Today */}
-          <View style={styles.statCard}>
+          <View style={[styles.statCard, {backgroundColor: colors.card}]}>
             <View style={styles.statHeader}>
               <Image
                 source={icons.cart}
@@ -382,7 +390,7 @@ export default function Home() {
           </View>
 
           {/* Products Sold */}
-          <View style={styles.statCard}>
+          <View style={[styles.statCard, {backgroundColor: colors.card}]}>
             <View style={styles.statHeader}>
               <Image
                 source={icons.product}
@@ -640,7 +648,8 @@ export default function Home() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView
+      style={[styles.container, {backgroundColor: colors.screenMuted}]}>
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
@@ -648,11 +657,11 @@ export default function Home() {
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            colors={[COLORS.primary]} // Android spinner color
-            tintColor={COLORS.primary} // iOS spinner color
-            title="Pull to refresh" // iOS text
-            titleColor={COLORS.gray} // iOS text color
-            progressBackgroundColor={COLORS.white} // Android background
+            colors={[COLORS.primary]}
+            tintColor={COLORS.primary}
+            title="Pull to refresh"
+            titleColor={colors.textSecondary}
+            progressBackgroundColor={colors.surface}
           />
         }>
         {renderHeader()}

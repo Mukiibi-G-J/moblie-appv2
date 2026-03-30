@@ -7,6 +7,8 @@ import {
   Text,
   StyleSheet,
   ActivityIndicator,
+  StyleProp,
+  ViewStyle,
 } from 'react-native';
 import {COLORS, FONTS, SIZES, icons} from '../constants';
 import {useSearchMode} from '../context/SearchModeStore';
@@ -21,6 +23,9 @@ interface SearchBarProps {
   inputRef: React.RefObject<TextInput>;
   onPress?: () => void; // New prop for navigation to search page
   onFocus?: () => void; // New prop for handling focus
+  onScanPress?: () => void;
+  showScanButton?: boolean;
+  containerStyle?: StyleProp<ViewStyle>;
 }
 
 const SearchBar = ({
@@ -33,6 +38,9 @@ const SearchBar = ({
   inputRef,
   onPress,
   onFocus,
+  onScanPress,
+  showScanButton = false,
+  containerStyle,
 }: SearchBarProps) => {
   const {state} = useSearchMode();
   const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -75,7 +83,7 @@ const SearchBar = ({
 
   return (
     <TouchableOpacity
-      style={styles.container}
+      style={[styles.container, containerStyle]}
       onPress={onPress}
       activeOpacity={0.7}>
       <Image source={icons.search} style={styles.searchIcon} />
@@ -113,6 +121,17 @@ const SearchBar = ({
       {/* Show navigation arrow if onPress is provided */}
       {onPress && (
         <Image source={icons.down_arrow} style={styles.navigationIcon} />
+      )}
+
+      {showScanButton && (
+        <TouchableOpacity
+          onPress={event => {
+            event.stopPropagation();
+            onScanPress?.();
+          }}
+          style={styles.scanButton}>
+          <Image source={icons.focus} style={styles.scanIcon} />
+        </TouchableOpacity>
       )}
     </TouchableOpacity>
   );
@@ -157,6 +176,15 @@ const styles = StyleSheet.create({
     width: 20,
     height: 20,
     tintColor: COLORS.gray,
+  },
+  scanButton: {
+    marginLeft: SIZES.base,
+    padding: 4,
+  },
+  scanIcon: {
+    width: 22,
+    height: 22,
+    tintColor: COLORS.primary2,
   },
 });
 

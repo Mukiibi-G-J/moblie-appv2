@@ -6,15 +6,17 @@ import {
   ScrollView,
   TextInput,
   TouchableOpacity,
+  Image,
   StyleSheet,
   Alert,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import {Picker} from '@react-native-picker/picker';
+import {useNavigation, useRoute} from '@react-navigation/native';
 import {COLORS, FONTS, SIZES} from '../../constants/theme';
 import {Item} from './Items';
+import icons from '../../constants/icons';
 import {createItem, updateItem, fetchCategories} from '../../services/app.services';
 import Toast from 'react-native-toast-message';
 
@@ -51,6 +53,8 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
   canEdit,
   canDelete,
 }) => {
+  const navigation = useNavigation();
+  const route = useRoute<any>();
   const isEditMode = !!item;
 
   // Form state
@@ -147,6 +151,54 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
       loadCategories();
     }
   }, [visible, loadCategories]);
+
+  const getSelectedCategoryLabel = () => {
+    if (!formData.category_id) {
+      return 'Select category';
+    }
+    const selected = categories.find(
+      cat => (cat.id || cat.code) === formData.category_id,
+    );
+    return selected?.name || selected?.description || selected?.code || 'Select category';
+  };
+
+  const openCategoriesPickerForForm = () => {
+    const initialCodes: string[] = [];
+    if (formData.category_id != null) {
+      const match = categories.find(
+        c => String(c.id || c.code) === String(formData.category_id),
+      );
+      if (match?.code) {
+        initialCodes.push(String(match.code));
+      }
+    }
+    (navigation as any).navigate('ItemCategories', {
+      pickerMode: true,
+      returnScreen: 'AllItems',
+      initialSelectedCodes: initialCodes,
+    });
+  };
+
+  useEffect(() => {
+    if (!visible) {
+      return;
+    }
+    const pick = route.params?.categoryPick;
+    if (pick === undefined) {
+      return;
+    }
+    navigation.setParams({categoryPick: undefined} as never);
+    setFormData(prev => {
+      if (pick.code == null || pick.code === '') {
+        return {...prev, category_id: null};
+      }
+      const cat = categories.find(c => c.code === pick.code);
+      return {
+        ...prev,
+        category_id: (cat?.id ?? cat?.code ?? pick.code) as number | null,
+      };
+    });
+  }, [visible, route.params?.categoryPick, navigation, categories]);
 
   const validateForm = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -266,16 +318,17 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
   }
 
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent={true}
-      onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <KeyboardAvoidingView
-          style={styles.modalContent}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
+    <>
+      <Modal
+        visible={visible}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={onClose}>
+        <View style={styles.modalOverlay}>
+          <KeyboardAvoidingView
+            style={styles.modalContent}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
           {/* Header */}
           <View style={styles.header}>
             <Text style={styles.title}>
@@ -348,29 +401,25 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
                     </Text>
                   </View>
                 ) : (
-                  <View style={styles.pickerContainer}>
-                    <Picker
-                      selectedValue={formData.category_id || 0}
-                      onValueChange={value => {
-                        if (value === 0) {
-                          setFormData({...formData, category_id: null});
-                        } else {
-                          setFormData({...formData, category_id: value});
-                        }
-                      }}
-                      style={styles.picker}
-                      itemStyle={styles.pickerItem}>
-                      <Picker.Item label="Select category" value={0} color={COLORS.black} />
-                      {categories.map(category => (
-                        <Picker.Item
-                          key={category.id || category.code}
-                          label={category.name || category.description || category.code}
-                          value={category.id || category.code}
-                          color={COLORS.black}
-                        />
-                      ))}
-                    </Picker>
-                  </View>
+                  <TouchableOpacity
+                    style={styles.pickerContainer}
+                    activeOpacity={0.7}
+                    onPress={openCategoriesPickerForForm}>
+                    <View style={styles.pickerButtonInner}>
+                      <Text
+                        style={[
+                          styles.pickerButtonText,
+                          !formData.category_id && styles.pickerButtonPlaceholder,
+                        ]}>
+                        {getSelectedCategoryLabel()}
+                      </Text>
+                      <Image
+                        source={icons.down_arrow}
+                        style={styles.pickerArrow}
+                        resizeMode="contain"
+                      />
+                    </View>
+                  </TouchableOpacity>
                 )}
               </View>
 
@@ -433,39 +482,44 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
               </TouchableOpacity>
             )}
           </View>
-        </KeyboardAvoidingView>
-      </View>
-    </Modal>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+    </>
   );
 };
 
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: COLORS.overlay2,
+    backgroundColor: 'rgba(17, 24, 39, 0.32)',
     justifyContent: 'flex-end',
   },
   modalContent: {
     backgroundColor: COLORS.white,
-    borderTopLeftRadius: SIZES.radius * 2,
-    borderTopRightRadius: SIZES.radius * 2,
-    maxHeight: '90%',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    maxHeight: '92%',
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: SIZES.padding,
+    paddingHorizontal: SIZES.padding,
+    paddingVertical: SIZES.base * 2,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.lightGray1,
   },
   title: {
     ...FONTS.h2,
     color: COLORS.black,
+    fontWeight: '700',
   },
   closeButton: {
     width: 32,
     height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.lightGray1,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -474,24 +528,26 @@ const styles = StyleSheet.create({
     color: COLORS.gray2,
   },
   scrollView: {
-    maxHeight: '70%',
+    flexShrink: 1,
+    minHeight: 0,
   },
   scrollContent: {
     paddingBottom: SIZES.base * 2,
   },
   formCard: {
     marginHorizontal: SIZES.padding,
-    marginVertical: SIZES.base,
+    marginTop: SIZES.base * 1.5,
+    marginBottom: SIZES.base,
     backgroundColor: COLORS.white,
-    borderRadius: SIZES.radius * 1.5,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: COLORS.lightGray1,
-    paddingBottom: SIZES.padding,
+    paddingBottom: SIZES.base,
     shadowColor: '#000',
     shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 1,
   },
   fieldContainer: {
     paddingHorizontal: SIZES.padding,
@@ -507,11 +563,11 @@ const styles = StyleSheet.create({
     height: 48,
     borderWidth: 1,
     borderColor: COLORS.lightGray1,
-    borderRadius: SIZES.radius,
+    borderRadius: 10,
     paddingHorizontal: SIZES.base * 1.5,
     ...FONTS.body3,
     color: COLORS.black,
-    backgroundColor: COLORS.lightGray2,
+    backgroundColor: '#F8FAFC',
   },
   textArea: {
     height: 80,
@@ -543,25 +599,38 @@ const styles = StyleSheet.create({
   pickerContainer: {
     borderWidth: 1,
     borderColor: COLORS.lightGray1,
-    borderRadius: SIZES.radius,
-    backgroundColor: COLORS.lightGray2,
-    overflow: 'hidden',
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
+    // Picker dropdown can extend beyond the container bounds on Android.
+    // If we clip it, the dropdown can appear as a black block.
+    overflow: 'visible',
   },
-  picker: {
+  pickerButtonInner: {
     height: 50,
-    backgroundColor: COLORS.lightGray2,
+    paddingHorizontal: SIZES.base * 1.5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  pickerButtonText: {
+    ...FONTS.body3,
     color: COLORS.black,
   },
-  pickerItem: {
-    color: COLORS.black,
+  pickerButtonPlaceholder: {
+    color: COLORS.gray3,
+  },
+  pickerArrow: {
+    width: 16,
+    height: 16,
+    tintColor: COLORS.gray2,
   },
   priceInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
     borderColor: COLORS.lightGray1,
-    borderRadius: SIZES.radius,
-    backgroundColor: COLORS.lightGray2,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
     paddingHorizontal: SIZES.base * 1.5,
     height: 48,
   },
@@ -580,24 +649,29 @@ const styles = StyleSheet.create({
   footer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    padding: SIZES.padding,
+    paddingHorizontal: SIZES.padding,
+    paddingTop: SIZES.base * 1.5,
+    paddingBottom: SIZES.base * 2,
     borderTopWidth: 1,
     borderTopColor: COLORS.lightGray1,
   },
   button: {
     flex: 1,
-    height: 48,
-    borderRadius: SIZES.radius,
+    minHeight: 48,
+    borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
     marginHorizontal: SIZES.base / 2,
   },
   cancelButton: {
-    backgroundColor: COLORS.lightGray1,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.lightGray1,
   },
   cancelButtonText: {
     ...FONTS.body3,
-    color: COLORS.black,
+    color: COLORS.gray2,
+    fontWeight: '600',
   },
   saveButton: {
     backgroundColor: COLORS.primary,
@@ -605,7 +679,7 @@ const styles = StyleSheet.create({
   buttonText: {
     ...FONTS.body3,
     color: COLORS.white,
-    fontWeight: '600',
+    fontWeight: '700',
   },
 });
 

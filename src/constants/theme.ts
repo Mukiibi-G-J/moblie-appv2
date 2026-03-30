@@ -69,6 +69,10 @@ export const COLORS: Colors = {
   white: '#FFFFFF',
   black: '#1A202C', // Soft Black
 
+  darkGray: '#666666',
+  darkGray2: '#757575',
+  red: '#FF4757',
+
   // Transparent Colors
   transparent: 'transparent',
   transparentPrimary: 'rgba(2, 134, 255, 0.08)', // Very Light Blue
@@ -83,6 +87,11 @@ export const COLORS: Colors = {
   surface: '#FFFFFF',
   surfaceLight: '#F8FAFC',
   surfaceDark: '#1A202C',
+
+  lightOrange: '#D4D4D4',
+  lightOrange2: '#E5E5E5',
+
+  blue: '#0066CC',
 };
 
 export const SIZES: Sizes = {

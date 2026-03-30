@@ -1,227 +1,186 @@
 import React from 'react';
 import {
+  Alert,
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   Image,
-  ImageSourcePropType,
 } from 'react-native';
-import {COLORS, FONTS, SIZES, icons} from '../../constants';
+import {COLORS, FONTS, icons} from '../../constants';
 import {Vendor} from '../../@types/vendor';
+
+const isProtectedGeneralVendor = (vendor: Vendor) =>
+  vendor.no === 'VENDOR-000001';
 
 interface SupplierListItemProps {
   vendor: Vendor;
   onEdit?: (vendor: Vendor) => void;
   onDelete?: (vendor: Vendor) => void;
+  onBalancePress?: (vendor: Vendor) => void;
 }
 
 const SupplierListItem: React.FC<SupplierListItemProps> = ({
   vendor,
   onEdit,
   onDelete,
+  onBalancePress,
 }) => {
-  const formatBalance = (balance?: string) => {
-    if (!balance) return 'UGX 0';
-    const numBalance = parseFloat(balance) || 0;
-    return `UGX ${numBalance.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
+  const isGeneralVendor = isProtectedGeneralVendor(vendor);
+  const initials =
+    vendor.name
+      ?.split(' ')
+      .filter(Boolean)
+      .slice(0, 2)
+      .map(part => part[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase() || 'SU';
+  const numericBalance = parseFloat(vendor.balance || '0') || 0;
+  const hasBalance = Math.abs(numericBalance) > 0;
+  const formattedBalance = `UGX ${numericBalance
+    .toFixed(0)
+    .replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
+  const secondaryLine =
+    vendor.phone || vendor.email || vendor.no || vendor.city || 'No contact info';
+
+  const handleOpenActions = () => {
+    const options: Array<{
+      text: string;
+      style?: 'cancel' | 'destructive';
+      onPress?: () => void;
+    }> = [];
+
+    if (onEdit && !isGeneralVendor) {
+      options.push({
+        text: 'Edit supplier',
+        onPress: () => onEdit(vendor),
+      });
+    }
+
+    if (onDelete && !isGeneralVendor) {
+      options.push({
+        text: 'Delete supplier',
+        style: 'destructive',
+        onPress: () => onDelete(vendor),
+      });
+    }
+
+    options.push({text: 'Cancel', style: 'cancel'});
+
+    if (options.length === 1) {
+      Alert.alert(
+        vendor.name || 'Supplier',
+        'The General Vendor cannot be edited or deleted.',
+        options,
+      );
+      return;
+    }
+
+    Alert.alert(vendor.name || 'Supplier', 'Choose an action', options);
   };
 
-  const isGeneralVendor = vendor.no === 'VENDOR-000001';
-
   return (
-    <View style={styles.container}>
-      <View style={styles.headerRow}>
-        <View style={styles.vendorRow}>
-          <View style={styles.iconWrapper}>
-            <Image
-              source={icons.profile as ImageSourcePropType}
-              style={styles.icon}
-            />
-          </View>
-          <View style={styles.vendorInfo}>
-            <Text style={styles.vendorName}>{vendor.name}</Text>
-            <Text style={styles.vendorNo}>{vendor.no}</Text>
-          </View>
-        </View>
-        <View style={styles.balanceWrapper}>
-          <Text style={styles.balance}>{formatBalance(vendor.balance)}</Text>
-          {vendor.balance && parseFloat(vendor.balance) > 0 && (
-            <View style={styles.balanceBadge}>
-              <Text style={styles.balanceBadgeText}>Outstanding</Text>
-            </View>
-          )}
-        </View>
+    <TouchableOpacity
+      activeOpacity={onEdit && !isGeneralVendor ? 0.8 : 1}
+      style={styles.container}
+      onPress={onEdit && !isGeneralVendor ? () => onEdit(vendor) : undefined}>
+      <View style={styles.avatar}>
+        <Text style={styles.avatarText}>{initials}</Text>
       </View>
 
-      {(vendor.phone || vendor.email || vendor.city) && (
-        <View style={styles.detailsRow}>
-          {vendor.phone && (
-            <>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Phone</Text>
-                <Text style={styles.detailValue}>{vendor.phone}</Text>
-              </View>
-              {(vendor.email || vendor.city) && (
-                <View style={styles.detailDivider} />
-              )}
-            </>
-          )}
-          {vendor.email && (
-            <>
-              <View style={styles.detailItem}>
-                <Text style={styles.detailLabel}>Email</Text>
-                <Text style={styles.detailValue}>{vendor.email}</Text>
-              </View>
-              {vendor.city && <View style={styles.detailDivider} />}
-            </>
-          )}
-          {vendor.city && (
-            <View style={styles.detailItem}>
-              <Text style={styles.detailLabel}>City</Text>
-              <Text style={styles.detailValue}>{vendor.city}</Text>
-            </View>
-          )}
-        </View>
-      )}
-
-      {vendor.blocked && (
-        <View style={styles.blockedRow}>
+      <View style={styles.content}>
+        <Text style={styles.vendorName} numberOfLines={1}>
+          {vendor.name}
+        </Text>
+        <Text style={styles.secondaryText} numberOfLines={1}>
+          {secondaryLine}
+        </Text>
+        <TouchableOpacity
+          disabled={!hasBalance || !onBalancePress}
+          onPress={() => onBalancePress?.(vendor)}
+          activeOpacity={hasBalance ? 0.7 : 1}
+          style={styles.balanceLinkWrap}>
+          <Text
+            style={[
+              styles.balanceText,
+              hasBalance ? styles.balanceTextInteractive : styles.balanceTextMuted,
+            ]}>
+            Balance: {formattedBalance}
+          </Text>
+        </TouchableOpacity>
+        {vendor.blocked ? (
           <View style={styles.blockedBadge}>
             <Text style={styles.blockedBadgeText}>Blocked</Text>
           </View>
-        </View>
-      )}
+        ) : null}
+      </View>
 
-      {(onEdit || (onDelete && !isGeneralVendor)) && (
-        <View style={styles.actionsRow}>
-          {onEdit && !isGeneralVendor && (
-            <TouchableOpacity
-              style={[styles.actionChip, styles.editChip]}
-              onPress={() => onEdit(vendor)}>
-              <Text style={styles.actionChipText}>Edit</Text>
-            </TouchableOpacity>
-          )}
-          {onDelete && !isGeneralVendor && (
-            <TouchableOpacity
-              style={[styles.actionChip, styles.deleteChip]}
-              onPress={() => onDelete(vendor)}>
-              <Text style={styles.actionChipText}>Delete</Text>
-            </TouchableOpacity>
-          )}
-        </View>
+      {(onEdit || onDelete) && (
+        <TouchableOpacity
+          onPress={handleOpenActions}
+          style={styles.actionButton}
+          hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
+          <Image source={icons.menu} style={styles.actionIcon} resizeMode="contain" />
+        </TouchableOpacity>
       )}
-    </View>
+    </TouchableOpacity>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
-    marginHorizontal: SIZES.base * 2,
-    marginVertical: SIZES.base * 0.75,
-    borderRadius: SIZES.radius,
-    padding: SIZES.base * 1.5,
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: SIZES.base * 0.75,
-  },
-  vendorRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
+    marginHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.lightGray1,
   },
-  iconWrapper: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: COLORS.primary + '15',
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 10,
+    backgroundColor: COLORS.transparentPrimary,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: SIZES.base * 0.75,
+    marginRight: 14,
   },
-  icon: {
-    width: 18,
-    height: 18,
-    tintColor: COLORS.primary,
+  avatarText: {
+    color: COLORS.primary3,
+    fontSize: 16,
+    fontWeight: '700',
   },
-  vendorInfo: {
+  content: {
     flex: 1,
   },
   vendorName: {
     ...FONTS.body2,
     color: COLORS.black,
-    fontWeight: '600',
-    marginBottom: 2,
-    fontSize: 16,
-  },
-  vendorNo: {
-    ...FONTS.body4,
-    color: COLORS.gray2,
-    fontSize: 13,
-  },
-  balanceWrapper: {
-    alignItems: 'flex-end',
-  },
-  balance: {
-    ...FONTS.h3,
-    color: COLORS.primary,
-    fontWeight: '600',
+    fontWeight: '700',
+    fontSize: 15,
     marginBottom: 4,
-    fontSize: 18,
   },
-  balanceBadge: {
-    backgroundColor: '#FEF3C7',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  balanceBadgeText: {
-    ...FONTS.body5,
-    color: '#92400E',
-    fontSize: 10,
-  },
-  detailsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: SIZES.base * 0.75,
-    paddingTop: SIZES.base * 0.75,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.lightGray1,
-  },
-  detailItem: {
-    flex: 1,
-  },
-  detailLabel: {
-    ...FONTS.body5,
-    color: COLORS.gray2,
-    marginBottom: 2,
-    fontSize: 12,
-  },
-  detailValue: {
+  secondaryText: {
     ...FONTS.body4,
-    color: COLORS.black,
+    color: COLORS.gray2,
     fontSize: 13,
   },
-  detailDivider: {
-    width: 1,
-    height: 30,
-    backgroundColor: COLORS.lightGray2,
-    marginHorizontal: SIZES.base,
+  balanceLinkWrap: {
+    alignSelf: 'flex-start',
+    marginTop: 6,
   },
-  blockedRow: {
-    marginTop: SIZES.base * 0.5,
-    paddingTop: SIZES.base * 0.5,
+  balanceText: {
+    ...FONTS.body4,
+    fontSize: 13,
+  },
+  balanceTextInteractive: {
+    color: COLORS.primary2,
+    textDecorationLine: 'underline',
+    fontWeight: '600',
+  },
+  balanceTextMuted: {
+    color: COLORS.gray2,
   },
   blockedBadge: {
     backgroundColor: COLORS.error + '15',
@@ -229,6 +188,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 10,
     alignSelf: 'flex-start',
+    marginTop: 8,
   },
   blockedBadgeText: {
     ...FONTS.body5,
@@ -236,31 +196,18 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '600',
   },
-  actionsRow: {
-    flexDirection: 'row',
-    marginTop: SIZES.base * 0.75,
-    paddingTop: SIZES.base * 0.75,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.lightGray1,
-    gap: SIZES.base * 0.5,
-  },
-  actionChip: {
-    paddingHorizontal: SIZES.base * 1.5,
-    paddingVertical: SIZES.base * 0.5,
-    borderRadius: SIZES.radius,
-    minWidth: 55,
+  actionButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.transparentPrimary,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  editChip: {
-    backgroundColor: COLORS.primary2 + '15',
-  },
-  deleteChip: {
-    backgroundColor: COLORS.error + '15',
-  },
-  actionChipText: {
-    ...FONTS.body4,
-    fontWeight: '600',
-    fontSize: 13,
+  actionIcon: {
+    width: 16,
+    height: 16,
+    tintColor: COLORS.primary3,
   },
 });
 

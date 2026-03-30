@@ -116,7 +116,6 @@ const OnBoarding = ({navigation}: {navigation: any}) => {
     try {
       const value = await AsyncStorage.getItem('@onboarding_complete');
       if (value !== null && value === 'true') {
-        // Onboarding has been completed before, navigate to SignIn
         navigation.replace('SignIn');
       }
     } catch (error) {

@@ -14,7 +14,7 @@ import {
   FlatList,
   Image,
 } from 'react-native';
-import {COLORS, FONTS, SIZES} from '../../constants/theme';
+import {COLORS} from '../../constants/theme';
 import icons from '../../constants/icons';
 import {
   ItemCategory,
@@ -93,9 +93,9 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
     const newErrors: Record<string, string> = {};
 
     if (!formData.code || !formData.code.trim()) {
-      newErrors.code = 'Category code is required';
+      newErrors.code = 'Category name is required';
     } else if (formData.code.trim().length > 255) {
-      newErrors.code = 'Category code must be 255 characters or less';
+      newErrors.code = 'Category name must be 255 characters or less';
     }
 
     if (formData.description && formData.description.trim().length > 255) {
@@ -199,51 +199,103 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
   });
 
   const getSelectedParentLabel = () => {
-    if (!formData.parent_id) return 'No Parent (Root Category)';
+    if (!formData.parent_id) return 'No parent category';
     const selected = parentOptions.find(cat => cat.code === formData.parent_id);
-    return selected ? selected.description || selected.code : 'Select Parent';
+    return selected ? selected.description || selected.code : 'Select parent category';
   };
+
+  const previewTitle = (formData.code || 'Ca').trim();
+  const previewMonogram = previewTitle
+    .replace(/[^a-zA-Z0-9 ]/g, '')
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase() || previewTitle.slice(0, 2).toUpperCase() || 'CA';
+  const previewLabel = (formData.description || formData.code || 'Category').trim();
 
   return (
     <Modal
       visible={visible}
       animationType="slide"
-      transparent={true}
+      transparent={false}
       onRequestClose={onClose}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          {/* Header */}
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>
-              {isEditMode ? 'Edit Category' : 'Create Category'}
-            </Text>
+        style={styles.pageRoot}>
+        <View style={styles.page}>
+          <View style={styles.pageHeader}>
             <TouchableOpacity
               onPress={onClose}
-              style={styles.closeButton}
+              style={styles.headerIconButton}
               hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
-              <Text style={styles.closeButtonText}>✕</Text>
+              <Image
+                source={icons.cross}
+                style={styles.headerIcon}
+                resizeMode="contain"
+              />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.headerSaveButton, loading && styles.buttonDisabled]}
+              onPress={handleSave}
+              disabled={loading}
+              activeOpacity={0.85}>
+              {loading ? (
+                <ActivityIndicator size="small" color={COLORS.white} />
+              ) : (
+                <Text style={styles.headerSaveText}>Save</Text>
+              )}
             </TouchableOpacity>
           </View>
 
-          {/* Form */}
           <ScrollView
             style={styles.formContainer}
+            contentContainerStyle={styles.formContent}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled">
-            {/* Code Field */}
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>
-                Category Code <Text style={styles.required}>*</Text>
-              </Text>
+            <Text style={styles.pageTitle}>
+              {isEditMode ? 'Edit category' : 'Create category'}
+            </Text>
+
+            <View style={styles.previewSection}>
+              <View style={styles.previewTile}>
+                <Text style={styles.previewTileIcon}>◈</Text>
+                <Text style={styles.previewTileMonogram}>{previewMonogram}</Text>
+                <Text
+                  style={styles.previewTileLabel}
+                  numberOfLines={1}
+                  ellipsizeMode="tail">
+                  {previewLabel}
+                </Text>
+              </View>
+
+              <TouchableOpacity
+                style={styles.previewTileButton}
+                onPress={() =>
+                  Toast.show({
+                    type: 'info',
+                    text1: 'POS tile preview',
+                    text2: 'Tile customization will be added in a later update.',
+                  })
+                }
+                activeOpacity={0.8}>
+                <Text style={styles.previewTileButtonText}>Edit POS tile</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Details</Text>
+
               <TextInput
                 style={[
                   styles.input,
                   errors.code && styles.inputError,
                   isEditMode && styles.inputDisabled,
                 ]}
-                placeholder="Enter category code (e.g., CAT001)"
+                placeholder="Category name"
                 placeholderTextColor={COLORS.gray3}
                 value={formData.code}
                 onChangeText={text =>
@@ -253,82 +305,65 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
                 autoCapitalize="characters"
                 maxLength={255}
               />
-              {errors.code && (
+              {errors.code ? (
                 <Text style={styles.errorText}>{errors.code}</Text>
-              )}
-              {isEditMode && (
+              ) : null}
+              {isEditMode ? (
                 <Text style={styles.helpText}>
-                  Code cannot be changed after creation
+                  Category name cannot be changed after creation.
                 </Text>
-              )}
-            </View>
+              ) : null}
 
-            {/* Description Field */}
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Description</Text>
               <TextInput
-                style={[styles.input, errors.description && styles.inputError]}
-                placeholder="Enter category description (optional)"
+                style={[styles.input, styles.inputSpaced, errors.description && styles.inputError]}
+                placeholder="Description (optional)"
                 placeholderTextColor={COLORS.gray3}
                 value={formData.description}
                 onChangeText={text =>
                   setFormData({...formData, description: text})
                 }
-                autoCapitalize="characters"
+                autoCapitalize="sentences"
                 maxLength={255}
-                multiline={false}
               />
-              {errors.description && (
+              {errors.description ? (
                 <Text style={styles.errorText}>{errors.description}</Text>
+              ) : (
+                <Text style={styles.helpText}>
+                  Add a clearer label for reporting and search.
+                </Text>
               )}
-              <Text style={styles.helpText}>
-                Description will be auto-uppercased by the system
-              </Text>
             </View>
 
-            {/* Parent Category Field */}
-            <View style={styles.formGroup}>
-              <Text style={styles.label}>Parent Category</Text>
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Parent category</Text>
               <TouchableOpacity
-                style={styles.pickerButton}
+                style={styles.parentRow}
                 onPress={() => setParentPickerVisible(true)}
                 activeOpacity={0.7}>
-                <Text style={styles.pickerButtonText}>
+                <Text
+                  style={[
+                    styles.parentRowText,
+                    !formData.parent_id && styles.parentRowPlaceholder,
+                  ]}>
                   {getSelectedParentLabel()}
                 </Text>
-                <Image
-                  source={icons.down_arrow}
-                  style={styles.pickerArrow}
-                  resizeMode="contain"
-                />
+                <Text style={styles.parentRowChevron}>›</Text>
               </TouchableOpacity>
-              <Text style={styles.helpText}>
-                Select a parent category to create a subcategory (optional)
-              </Text>
+            </View>
+
+            <View style={styles.sectionDivider} />
+
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Channels</Text>
+              <View style={styles.channelsCard}>
+                <Text style={styles.channelsTitle}>Available in POS</Text>
+                <Text style={styles.channelsText}>
+                  This category will appear in your product flow and can be used
+                  across your selling channels.
+                </Text>
+              </View>
             </View>
           </ScrollView>
-
-          {/* Footer Actions */}
-          <View style={styles.modalFooter}>
-            <TouchableOpacity
-              style={[styles.button, styles.cancelButton]}
-              onPress={onClose}
-              disabled={loading}>
-              <Text style={styles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.button, styles.saveButton, loading && styles.buttonDisabled]}
-              onPress={handleSave}
-              disabled={loading}>
-              {loading ? (
-                <ActivityIndicator size="small" color={COLORS.white} />
-              ) : (
-                <Text style={styles.saveButtonText}>
-                  {isEditMode ? 'Update' : 'Create'}
-                </Text>
-              )}
-            </TouchableOpacity>
-          </View>
         </View>
       </KeyboardAvoidingView>
 
@@ -381,7 +416,7 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
             {/* Categories List */}
             <FlatList
               data={[
-                {code: '', description: 'No Parent (Root Category)', isRoot: true},
+                {code: '', description: 'No parent category', isRoot: true},
                 ...filteredParentOptions,
               ]}
               keyExtractor={item => item.code || 'root'}
@@ -406,7 +441,7 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
                       formData.parent_id === item.code &&
                         styles.pickerItemTextSelected,
                     ]}>
-                    {item.description || item.code || 'No Parent (Root Category)'}
+                    {item.description || item.code || 'No parent category'}
                   </Text>
                   {formData.parent_id === item.code && (
                     <Image
@@ -434,148 +469,262 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
 };
 
 const styles = StyleSheet.create({
-  modalOverlay: {
+  pageRoot: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
     backgroundColor: COLORS.white,
-    borderTopLeftRadius: SIZES.radius * 2,
-    borderTopRightRadius: SIZES.radius * 2,
-    maxHeight: '90%',
-    paddingBottom: Platform.OS === 'ios' ? 34 : SIZES.padding,
   },
-  modalHeader: {
+  page: {
+    flex: 1,
+    backgroundColor: COLORS.white,
+  },
+  pageHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: SIZES.padding,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray,
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'ios' ? 12 : 16,
+    paddingBottom: 8,
   },
-  modalTitle: {
-    fontSize: SIZES.h2,
-    fontFamily: FONTS.bold,
-    color: COLORS.black,
+  headerIconButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.transparentPrimary,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  closeButton: {
-    padding: SIZES.base,
+  headerIcon: {
+    width: 20,
+    height: 20,
+    tintColor: COLORS.primary3,
   },
-  closeButtonText: {
-    fontSize: 24,
-    color: COLORS.gray,
+  headerSaveButton: {
+    minWidth: 108,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.primary2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    shadowColor: COLORS.primary3,
+    shadowOffset: {width: 0, height: 8},
+    shadowOpacity: 0.2,
+    shadowRadius: 16,
+    elevation: 6,
+  },
+  headerSaveText: {
+    color: COLORS.white,
+    fontSize: 18,
+    fontWeight: '700',
   },
   formContainer: {
-    padding: SIZES.padding,
+    flex: 1,
   },
-  formGroup: {
-    marginBottom: SIZES.padding,
+  formContent: {
+    paddingHorizontal: 20,
+    paddingBottom: Platform.OS === 'ios' ? 40 : 28,
   },
-  label: {
-    fontSize: SIZES.body3,
-    fontFamily: FONTS.medium,
+  pageTitle: {
+    fontSize: 24,
+    fontWeight: '700',
     color: COLORS.black,
-    marginBottom: SIZES.base,
+    marginTop: 22,
+    marginBottom: 28,
   },
-  required: {
-    color: COLORS.error,
+  previewSection: {
+    alignItems: 'center',
+    marginBottom: 28,
+  },
+  previewTile: {
+    width: 202,
+    height: 158,
+    borderRadius: 12,
+    backgroundColor: COLORS.primary3,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    justifyContent: 'space-between',
+    shadowColor: COLORS.primary3,
+    shadowOffset: {width: 0, height: 12},
+    shadowOpacity: 0.22,
+    shadowRadius: 18,
+    elevation: 8,
+  },
+  previewTileIcon: {
+    color: COLORS.accent2,
+    fontSize: 14,
+    opacity: 0.9,
+  },
+  previewTileMonogram: {
+    color: COLORS.white,
+    fontSize: 40,
+    fontWeight: '700',
+    lineHeight: 44,
+    marginTop: 10,
+  },
+  previewTileLabel: {
+    color: 'rgba(255,255,255,0.82)',
+    fontSize: 14,
+    fontWeight: '500',
+    marginTop: 8,
+  },
+  previewTileButton: {
+    marginTop: 16,
+    minHeight: 54,
+    borderRadius: 27,
+    backgroundColor: COLORS.transparentPrimary,
+    paddingHorizontal: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewTileButtonText: {
+    color: COLORS.primary3,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  section: {
+    marginBottom: 26,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.primary3,
+    marginBottom: 14,
   },
   input: {
     borderWidth: 1,
-    borderColor: COLORS.lightGray,
-    borderRadius: SIZES.radius,
-    padding: SIZES.base,
-    fontSize: SIZES.body3,
-    fontFamily: FONTS.regular,
+    borderColor: COLORS.transparentPrimary2,
+    borderRadius: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+    fontSize: 17,
     color: COLORS.black,
     backgroundColor: COLORS.white,
+    minHeight: 58,
+  },
+  inputSpaced: {
+    marginTop: 14,
   },
   inputError: {
     borderColor: COLORS.error,
   },
   inputDisabled: {
     backgroundColor: COLORS.lightGray2,
-    color: COLORS.gray,
+    color: COLORS.gray2,
   },
-  pickerButton: {
-    borderWidth: 1,
-    borderColor: COLORS.lightGray,
-    borderRadius: SIZES.radius,
-    padding: SIZES.base,
-    backgroundColor: COLORS.white,
+  parentRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    minHeight: 44,
+    paddingVertical: 18,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.transparentPrimary,
   },
-  pickerButtonText: {
-    fontSize: SIZES.body3,
-    fontFamily: FONTS.regular,
-    color: COLORS.black,
+  parentRowText: {
     flex: 1,
+    fontSize: 17,
+    color: COLORS.black,
   },
-  pickerArrow: {
-    width: 16,
-    height: 16,
-    tintColor: COLORS.gray2,
+  parentRowPlaceholder: {
+    color: COLORS.gray2,
+  },
+  parentRowChevron: {
+    fontSize: 28,
+    lineHeight: 28,
+    color: COLORS.primary2,
+    marginLeft: 12,
+  },
+  sectionDivider: {
+    height: 8,
+    backgroundColor: COLORS.transparentPrimary,
+    borderRadius: 999,
+    marginTop: 10,
+    marginBottom: 26,
+  },
+  channelsCard: {
+    borderRadius: 16,
+    backgroundColor: COLORS.transparentPrimary,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: COLORS.transparentPrimary2,
+  },
+  channelsTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.primary3,
+    marginBottom: 6,
+  },
+  channelsText: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: COLORS.secondary2,
   },
   pickerModalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    backgroundColor: 'rgba(15, 23, 42, 0.2)',
     justifyContent: 'flex-end',
   },
   pickerModalContent: {
     backgroundColor: COLORS.white,
-    borderTopLeftRadius: SIZES.radius * 2,
-    borderTopRightRadius: SIZES.radius * 2,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     maxHeight: '80%',
-    paddingBottom: Platform.OS === 'ios' ? 34 : SIZES.padding,
+    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 10},
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    elevation: 10,
   },
   pickerModalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: SIZES.padding,
+    paddingHorizontal: 20,
+    paddingVertical: 18,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray,
+    borderBottomColor: COLORS.lightGray1,
   },
   pickerModalTitle: {
-    fontSize: SIZES.h3,
-    fontFamily: FONTS.bold,
+    fontSize: 18,
+    fontWeight: '700',
     color: COLORS.black,
   },
   pickerCloseButton: {
-    padding: SIZES.base * 0.5,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.transparentPrimary,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   pickerCloseIcon: {
-    width: 20,
-    height: 20,
-    tintColor: COLORS.gray,
+    width: 16,
+    height: 16,
+    tintColor: COLORS.primary3,
   },
   pickerSearchContainer: {
-    padding: SIZES.padding,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray,
+    borderBottomColor: COLORS.lightGray1,
   },
   pickerSearchInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.lightGray2,
-    borderRadius: SIZES.radius,
-    paddingHorizontal: SIZES.base * 1.5,
-    height: 44,
+    backgroundColor: COLORS.transparentPrimary,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    height: 48,
   },
   pickerSearchIcon: {
     width: 18,
     height: 18,
     tintColor: COLORS.gray2,
-    marginRight: SIZES.base * 0.75,
+    marginRight: 10,
   },
   pickerSearchInput: {
     flex: 1,
-    fontSize: 14,
-    fontFamily: FONTS.regular,
+    fontSize: 15,
     color: COLORS.black,
     paddingVertical: 0,
   },
@@ -583,7 +732,8 @@ const styles = StyleSheet.create({
     maxHeight: 400,
   },
   pickerItem: {
-    padding: SIZES.base * 1.5,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.lightGray1,
     flexDirection: 'row',
@@ -591,78 +741,42 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   pickerItemSelected: {
-    backgroundColor: COLORS.primary + '10',
+    backgroundColor: COLORS.transparentPrimary,
   },
   pickerItemText: {
     fontSize: 15,
-    fontFamily: FONTS.regular,
     color: COLORS.black,
     flex: 1,
   },
   pickerItemTextSelected: {
-    fontFamily: FONTS.medium,
-    color: COLORS.primary,
+    fontWeight: '600',
+    color: COLORS.primary2,
   },
   pickerCheckIcon: {
     width: 20,
     height: 20,
-    tintColor: COLORS.primary,
+    tintColor: COLORS.primary2,
   },
   pickerEmptyContainer: {
-    padding: SIZES.padding * 2,
+    padding: 32,
     alignItems: 'center',
   },
   pickerEmptyText: {
     fontSize: 14,
-    fontFamily: FONTS.regular,
     color: COLORS.gray2,
   },
   errorText: {
-    fontSize: SIZES.body4,
-    fontFamily: FONTS.regular,
+    fontSize: 13,
     color: COLORS.error,
-    marginTop: 4,
+    marginTop: 8,
   },
   helpText: {
-    fontSize: SIZES.body4,
-    fontFamily: FONTS.regular,
-    color: COLORS.gray3,
-    marginTop: 4,
-  },
-  modalFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    padding: SIZES.padding,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.lightGray,
-    gap: SIZES.base,
-  },
-  button: {
-    flex: 1,
-    paddingVertical: SIZES.base,
-    borderRadius: SIZES.radius,
-    justifyContent: 'center',
-    alignItems: 'center',
-    minHeight: 44,
-  },
-  cancelButton: {
-    backgroundColor: COLORS.lightGray2,
-  },
-  cancelButtonText: {
-    fontSize: SIZES.body2,
-    fontFamily: FONTS.medium,
-    color: COLORS.black,
-  },
-  saveButton: {
-    backgroundColor: COLORS.primary,
+    fontSize: 13,
+    color: COLORS.gray2,
+    marginTop: 8,
   },
   buttonDisabled: {
     opacity: 0.6,
-  },
-  saveButtonText: {
-    fontSize: SIZES.body2,
-    fontFamily: FONTS.medium,
-    color: COLORS.white,
   },
 });
 

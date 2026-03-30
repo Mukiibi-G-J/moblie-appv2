@@ -7,16 +7,16 @@ import {
   Modal,
   Alert,
 } from 'react-native';
-import React, {useContext, useEffect, useState} from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import AuthLayout from './AuthLayout';
-import {COLORS, FONTS, icons, SIZES} from '../../constants';
+import { COLORS, FONTS, icons, SIZES } from '../../constants';
 import FormInput from '../../Components/FormInput';
 import TextButton from '../../Components/TextButton';
 import CustomSwitch from '../../Components/CustomSwitch';
 import TextIconButton from '../../Components/TextIconButton';
 import utils from '../../utils/utils';
-import {KeyboardAvoidingView, Platform, ScrollView} from 'react-native';
-import {AppContextType, useAppContext} from '../../context/Store';
+import { KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import { AppContextType, useAppContext } from '../../context/Store';
 import Toast from 'react-native-toast-message';
 import {
   getEmail,
@@ -27,9 +27,9 @@ import {
 } from '../../utils/tenant';
 import CustomAlert from '../../Components/CustomAlert';
 
-const SignIn = ({navigation}: {navigation: any}) => {
+const SignIn = ({ navigation }: { navigation: any }) => {
   const context = useAppContext();
-  const {login} = context as AppContextType;
+  const { login } = context as AppContextType;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [emailError, setEmailError] = useState('');
@@ -54,7 +54,7 @@ const SignIn = ({navigation}: {navigation: any}) => {
         setTenant(tenant);
       }
       if (verifiedEmail === 'false') {
-        navigation.navigate('Otp', {email: email});
+        navigation.navigate('Otp', { email: email });
       }
     };
     checkEmail();
@@ -66,7 +66,7 @@ const SignIn = ({navigation}: {navigation: any}) => {
 
   const handleSubmit = async () => {
     if (isEnableSignIn()) {
-      const userCredentials = {email, password};
+      const userCredentials = { email, password };
       setLoading(true);
       try {
         if (inputedTenant) {
@@ -78,7 +78,7 @@ const SignIn = ({navigation}: {navigation: any}) => {
           // Navigate to Home screen and reset the entire navigation stack
           navigation.reset({
             index: 0,
-            routes: [{name: 'Home'}],
+            routes: [{ name: 'Home' }],
           });
           Toast.show({
             text1: 'Login Successful',
@@ -160,11 +160,11 @@ const SignIn = ({navigation}: {navigation: any}) => {
 
   return (
     <KeyboardAvoidingView
-      style={{flex: 1}}
+      style={{ flex: 1 }}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 40 : 0}>
       <ScrollView
-        contentContainerStyle={{flexGrow: 1}}
+        contentContainerStyle={{ flexGrow: 1 }}
         keyboardShouldPersistTaps="handled">
         <AuthLayout
           titleContainerStyle={{
@@ -184,12 +184,12 @@ const SignIn = ({navigation}: {navigation: any}) => {
                 label="Company Name"
                 value={inputedTenant ? inputedTenant : tenant}
                 placeholder="Enter your Company Name"
-                containerStyle={{marginTop: SIZES.radius}}
+                containerStyle={{ marginTop: SIZES.radius }}
                 inputContainerStyle={{
                   borderBottomWidth: 0,
                   borderBottomColor: COLORS.gray,
                 }}
-                inputStyle={{fontSize: 16, color: COLORS.black}}
+                inputStyle={{ fontSize: 16, color: COLORS.black }}
                 prependComponent={''}
                 appendComponent={''}
                 secureTextEntry={false}
@@ -205,12 +205,12 @@ const SignIn = ({navigation}: {navigation: any}) => {
                 label="Company Name"
                 value={inputedTenant}
                 placeholder="Enter your Company Name"
-                containerStyle={{marginTop: SIZES.radius}}
+                containerStyle={{ marginTop: SIZES.radius }}
                 inputContainerStyle={{
                   borderBottomWidth: 0,
                   borderBottomColor: COLORS.gray,
                 }}
-                inputStyle={{fontSize: 16, color: COLORS.black}}
+                inputStyle={{ fontSize: 16, color: COLORS.black }}
                 prependComponent={''}
                 appendComponent={''}
                 secureTextEntry={false}
@@ -227,12 +227,12 @@ const SignIn = ({navigation}: {navigation: any}) => {
               value={email}
               autoCompleteType="email"
               placeholder="Enter your email"
-              containerStyle={{marginTop: SIZES.radius}}
+              containerStyle={{ marginTop: SIZES.radius }}
               inputContainerStyle={{
                 borderBottomWidth: 0,
                 borderBottomColor: COLORS.gray,
               }}
-              inputStyle={{fontSize: 16, color: COLORS.black}}
+              inputStyle={{ fontSize: 16, color: COLORS.black }}
               prependComponent={''}
               appendComponent={''}
               secureTextEntry={false}
@@ -243,7 +243,7 @@ const SignIn = ({navigation}: {navigation: any}) => {
               }}
             />
             {emailError && (
-              <Text style={{color: COLORS.red, ...FONTS.body4, marginTop: 4}}>
+              <Text style={{ color: COLORS.red, ...FONTS.body4, marginTop: 4 }}>
                 {emailError}
               </Text>
             )}
@@ -252,7 +252,7 @@ const SignIn = ({navigation}: {navigation: any}) => {
               label="Password"
               secureTextEntry={!showPass}
               autoCompleteType="password"
-              containerStyle={{marginTop: SIZES.radius}}
+              containerStyle={{ marginTop: SIZES.radius }}
               value={password}
               onChange={(value: string) => setPassword(value)}
               placeholder="Enter your password"
@@ -261,7 +261,7 @@ const SignIn = ({navigation}: {navigation: any}) => {
                 borderBottomWidth: 0,
                 borderBottomColor: COLORS.gray,
               }}
-              inputStyle={{fontSize: 16, color: COLORS.black}}
+              inputStyle={{ fontSize: 16, color: COLORS.black }}
               maxLength={100}
               prependComponent={''}
               appendComponent={
@@ -288,7 +288,7 @@ const SignIn = ({navigation}: {navigation: any}) => {
               <ActivityIndicator
                 size="large"
                 color={COLORS.primary}
-                style={{marginTop: SIZES.radius}}
+                style={{ marginTop: SIZES.radius }}
               />
             )}
 
@@ -298,7 +298,7 @@ const SignIn = ({navigation}: {navigation: any}) => {
                 marginTop: SIZES.radius,
                 justifyContent: 'space-between',
               }}>
-              <View style={{flexDirection: 'row', alignItems: 'center'}}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                 <CustomSwitch
                   label="Save Me"
                   value={saveMe}
@@ -308,8 +308,8 @@ const SignIn = ({navigation}: {navigation: any}) => {
               </View>
               <TextButton
                 label="Forgot Password?"
-                buttonContainerStyle={{backgroundColor: null}}
-                labelStyle={{color: COLORS.primary, ...FONTS.body4}}
+                buttonContainerStyle={{ backgroundColor: null }}
+                labelStyle={{ color: COLORS.primary, ...FONTS.body4 }}
                 onPress={() => navigation.navigate('ForgotPassword')}
                 disabled={false}
               />
@@ -318,7 +318,7 @@ const SignIn = ({navigation}: {navigation: any}) => {
             <TextButton
               label="Sign In"
               disabled={!isEnableSignIn() || loading}
-              labelStyle={{color: COLORS.white, ...FONTS.body4}}
+              labelStyle={{ color: COLORS.white, ...FONTS.body4 }}
               buttonContainerStyle={{
                 height: 55,
                 alignItems: 'center',
@@ -339,14 +339,14 @@ const SignIn = ({navigation}: {navigation: any}) => {
                 marginTop: SIZES.radius,
                 justifyContent: 'center',
               }}>
-              <Text style={{color: COLORS.darkGray, ...FONTS.body3}}>
+              <Text style={{ color: COLORS.darkGray, ...FONTS.body3 }}>
                 Don't have an account?{' '}
               </Text>
               <TextButton
                 disabled={loading}
                 label="Sign Up"
-                buttonContainerStyle={{backgroundColor: null}}
-                labelStyle={{color: COLORS.primary, ...FONTS.h3}}
+                buttonContainerStyle={{ backgroundColor: null }}
+                labelStyle={{ color: COLORS.primary, ...FONTS.h3 }}
                 onPress={() => navigation.navigate('SignUp')}
               />
             </View>

@@ -14,6 +14,7 @@ import {SafeAreaView} from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import {COLORS, FONTS, SIZES} from '../constants';
 import {CartItem, SalesInvoiceData} from '../@types/types.dto';
+import {validateCartTracking} from '../utils/salesTracking';
 import {
   fetchCustomers,
   fetchPaymentMethods,
@@ -34,6 +35,7 @@ interface SalesCompletionModalProps {
   username: string;
   userId: number;
   documentDate?: string; // Optional global selling date
+  initialSelectedCustomer?: Customer | null;
 }
 
 const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
@@ -45,6 +47,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
   username,
   userId,
   documentDate,
+  initialSelectedCustomer,
 }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(
@@ -74,7 +77,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
       fetchCustomersData();
       fetchPaymentMethodsData();
     }
-  }, [isVisible]);
+  }, [isVisible, initialSelectedCustomer]);
 
   const fetchCustomersData = async () => {
     setLoadingCustomers(true);
@@ -93,7 +96,12 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
       if (generalCustomer) {
         // Use existing General customer as default
         setCustomers(customersData);
-        setSelectedCustomer(generalCustomer);
+        setSelectedCustomer(
+          initialSelectedCustomer && initialSelectedCustomer.id != null
+            ? customersData.find(customer => customer.id === initialSelectedCustomer.id) ||
+                initialSelectedCustomer
+            : generalCustomer,
+        );
         console.log(
           '✅ Found existing General customer:',
           generalCustomer.name,
@@ -109,7 +117,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
 
         const allCustomers = [fallbackGeneralCustomer, ...customersData];
         setCustomers(allCustomers);
-        setSelectedCustomer(fallbackGeneralCustomer);
+        setSelectedCustomer(initialSelectedCustomer || fallbackGeneralCustomer);
         console.log('⚠️ No General customer found, created fallback');
       }
     } catch (error) {
@@ -202,6 +210,12 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
       return;
     }
 
+    const trackingValidation = validateCartTracking(cartItems);
+    if (!trackingValidation.ok) {
+      setErrorMessage(trackingValidation.message);
+      return;
+    }
+
     setIsProcessing(true);
 
     try {
@@ -251,8 +265,8 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
             quantity: item.quantity.toString(),
             unit_price: item.unit_price.toString(),
             total_amount: itemTotal,
-            unit_of_measure: 'PCS',
-            tracking_code: '',
+            unit_of_measure: item.unit_of_measure || 'PCS',
+            tracking_code: (item.selectedTrackingCode || '').trim(),
             description: '',
           };
         }),

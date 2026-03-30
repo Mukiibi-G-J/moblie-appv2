@@ -8,10 +8,8 @@ import {
   DrawerContentScrollView,
 } from '@react-navigation/drawer';
 import MainLayout from '../Screens/MainLayout';
-import {useAppContext, useAuth} from '../context/Store';
+import {useAppContext, useAuth, useTabContext} from '../context/Store';
 import {usePermissions} from '../hooks/usePermissions';
-import {useState} from 'react';
-import {useNavigation} from '@react-navigation/native';
 
 const Drawer = createDrawerNavigator();
 const CustomDrawerItem = ({
@@ -99,39 +97,15 @@ const CustomDrawerContent = ({
       isBottomTab: true,
     },
     {
-      key: 'items',
-      label: constants.screens.items,
-      icon: icons.product,
-      moduleCode: 'items',
-      action: () => {
-        setSelectedTab(constants.screens.items);
-        navigation.navigate('MainLayout');
-      },
-      isFocused: selectedTab === constants.screens.items,
-      isBottomTab: true,
-    },
-    {
-      key: 'customers',
-      label: constants.screens.customers,
-      icon: icons.profile,
-      moduleCode: 'customers',
-      action: () => {
-        setSelectedTab(constants.screens.customers);
-        navigation.navigate('MainLayout');
-      },
-      isFocused: selectedTab === constants.screens.customers,
-      isBottomTab: true,
-    },
-    {
-      key: 'reports',
-      label: constants.screens.reports,
-      icon: icons.reports,
+      key: 'more',
+      label: constants.screens.more,
+      icon: icons.menu,
       moduleCode: 'reports',
       action: () => {
-        setSelectedTab(constants.screens.reports);
+        setSelectedTab(constants.screens.more);
         navigation.navigate('MainLayout');
       },
-      isFocused: selectedTab === constants.screens.reports,
+      isFocused: selectedTab === constants.screens.more,
       isBottomTab: true,
     },
   ];
@@ -621,8 +595,7 @@ const CustomDrawerContent = ({
 };
 
 const CustomDrawer = () => {
-  const [selectedTab, setSelectedTab] = useState(constants.screens.home);
-  const navigation = useNavigation();
+  const {selectedTab, setSelectedTab} = useTabContext();
 
   return (
     <View

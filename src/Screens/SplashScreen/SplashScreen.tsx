@@ -1,4 +1,4 @@
-import React, {useEffect, useRef} from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   View,
   StyleSheet,
@@ -9,8 +9,9 @@ import {
 } from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import images from '../../constants/images';
+import {gradientBrand} from '../../design-system/theme';
 
-const {width, height} = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
 
 const SplashScreen = () => {
   // Animation values
@@ -55,10 +56,10 @@ const SplashScreen = () => {
 
   return (
     <LinearGradient
-      colors={['#00A3FF', '#0066CC', '#0047AB']} // Zentro brand colors
+      colors={[...gradientBrand.colors]}
       style={styles.container}
-      start={{x: 0, y: 0}}
-      end={{x: 1, y: 1}}>
+      start={gradientBrand.start}
+      end={gradientBrand.end}>
       <StatusBar
         translucent
         backgroundColor="transparent"
@@ -70,7 +71,7 @@ const SplashScreen = () => {
           styles.logoContainer,
           {
             opacity: fadeIn,
-            transform: [{scale}],
+            transform: [{ scale }],
           },
         ]}>
         <Image
@@ -86,7 +87,7 @@ const SplashScreen = () => {
           styles.iconContainer,
           {
             opacity: iconOpacity,
-            transform: [{scale: iconScale}],
+            transform: [{ scale: iconScale }],
           },
         ]}>
         <Image

@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useCallback} from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -16,28 +16,32 @@ import {
   Platform,
   KeyboardAvoidingView,
 } from 'react-native';
-import {useNavigation} from '@react-navigation/native';
-import {Picker} from '@react-native-picker/picker';
+import { useNavigation, useRoute } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Picker } from '@react-native-picker/picker';
 import {
   launchImageLibrary,
   launchCamera,
   ImageLibraryOptions,
   CameraOptions,
 } from 'react-native-image-picker';
-import Svg, {Rect, Path} from 'react-native-svg';
 import {
   fetchItems,
   updateItem,
+  createItem,
   fetchCategories,
+  fetchAllItemLedgerEntries,
   uploadItemImage,
   deleteItemImage,
-  createItem,
 } from '../../services/app.services';
-import {usePermissions} from '../../hooks/usePermissions';
-import {PAGE_NAMES} from '../../constants/pageNames';
-import {COLORS, SIZES, FONTS} from '../../constants/theme';
+import { usePermissions } from '../../hooks/usePermissions';
+import { PAGE_NAMES } from '../../constants/pageNames';
+import { COLORS, SIZES, FONTS } from '../../constants/theme';
 import icons from '../../constants/icons';
-import ItemFormModal from './ItemFormModal';
+import MainBottomTabBar from '../../Components/MainBottomTabBar';
+import { useTheme } from '../../context/ThemeContext';
+import { useTabContext } from '../../context/Store';
+import Toast from 'react-native-toast-message';
 // CameraRoll import removed - using native gallery picker instead
 
 export interface Item {
@@ -51,7 +55,7 @@ export interface Item {
     id: number;
   }[];
   inventory: number;
-  category_id?: number;
+  category_id?: number | string | null;
   item_category?: any;
   description?: string;
   unit_cost?: number;
@@ -74,43 +78,86 @@ interface Category {
   description?: string;
 }
 
+interface InventoryEntry {
+  lot_no?: string;
+  remaining_quantity?: number;
+  quantity?: number;
+  document_no?: string;
+  entry_type?: string;
+  document_type?: string;
+  expiry_date?: string;
+  posting_date?: string;
+  date?: string;
+  location_name?: string;
+}
+
+const createEmptyItemDraft = (): Item => ({
+  system_id: '',
+  item_name: '',
+  unit_price: 0,
+  item_images: [],
+  inventory: 0,
+  description: '',
+});
+
 const EditItemModal = ({
   visible,
   onClose,
   item,
   onSave,
   canEdit,
+  canCreate,
   canDelete,
+  mode = 'edit',
 }: {
   visible: boolean;
   onClose: () => void;
   item: Item | null;
   onSave: (updatedItem: Item) => void;
   canEdit: boolean;
+  canCreate?: boolean;
   canDelete: boolean;
+  mode?: 'edit' | 'create';
 }) => {
-  const [editedItem, setEditedItem] = useState<Item | null>(null);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [selectedImage, setSelectedImage] = useState<any>(null);
+  const navigation = useNavigation();
+  const route = useRoute<any>();
+  const insets = useSafeAreaInsets();
+  const isCreateMode = mode === 'create';
+  const [editedItem, setEditedItem] = useState < Item | null > (null);
+  const [categories, setCategories] = useState < Category[] > ([]);
+  const [selectedImage, setSelectedImage] = useState < any > (null);
   const [categoriesLoading, setCategoriesLoading] = useState(false);
   const [imageUploadLoading, setImageUploadLoading] = useState(false);
   const [imageDeleteLoading, setImageDeleteLoading] = useState(false);
-  const [imageUploadError, setImageUploadError] = useState<string | null>(null);
+  const [imageUploadError, setImageUploadError] = useState < string | null > (null);
   const [imageUploadSuccess, setImageUploadSuccess] = useState(false);
+  const [inventoryEntriesVisible, setInventoryEntriesVisible] = useState(false);
+  const [inventoryEntriesLoading, setInventoryEntriesLoading] = useState(false);
+  const [inventoryEntriesError, setInventoryEntriesError] = useState<string | null>(null);
+  const [inventoryEntries, setInventoryEntries] = useState<InventoryEntry[]>([]);
   // Removed in-app gallery states since we're using native gallery
+
+  const formatAmountWithCommas = (value: number | string | undefined | null) => {
+    const numericValue =
+      typeof value === 'number' ? value : parseFloat(String(value || 0));
+    if (!Number.isFinite(numericValue)) {
+      return '0';
+    }
+    return numericValue.toLocaleString('en-US');
+  };
 
   const loadCategories = useCallback(async () => {
     try {
       setCategoriesLoading(true);
       const categoriesData = await fetchCategories();
-      
+
       // fetchCategories now returns an array directly (handles both array and paginated responses)
       if (!Array.isArray(categoriesData)) {
         console.warn('Categories response is not an array:', categoriesData);
         setCategories([]);
         return;
       }
-      
+
       // Map categories to expected format (code/description -> id/name)
       const mappedCategories = categoriesData.map((cat: any, index: number) => ({
         id: cat.id || cat.code || `cat_${index}`, // Use code as id if no id exists
@@ -118,7 +165,7 @@ const EditItemModal = ({
         name: cat.name || cat.description || cat.code,
         description: cat.description || cat.code,
       }));
-      
+
       setCategories(mappedCategories);
     } catch (error) {
       console.error('Error loading categories:', error);
@@ -131,10 +178,144 @@ const EditItemModal = ({
   useEffect(() => {
     if (item) {
       setEditedItem(item);
+    } else if (visible && isCreateMode) {
+      setEditedItem(createEmptyItemDraft());
     }
+    setSelectedImage(null);
+    setImageUploadError(null);
+    setImageUploadSuccess(false);
     loadCategories();
-  }, [item, loadCategories]);
-  
+  }, [item, visible, isCreateMode, loadCategories]);
+
+  useEffect(() => {
+    if (!visible) {
+      setInventoryEntriesVisible(false);
+      setInventoryEntries([]);
+      setInventoryEntriesError(null);
+    }
+  }, [visible]);
+
+  const getSelectedCategoryLabel = () => {
+    if (!editedItem || !editedItem.category_id) {
+      return 'Select category';
+    }
+    const selected = categories.find(
+      cat => (cat.id || cat.code) === editedItem.category_id,
+    );
+    return selected?.name || selected?.description || selected?.code || 'Select category';
+  };
+
+  const getItemInitials = (name?: string) => {
+    const words = (name || '')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+    if (words.length === 0) {
+      return 'IT';
+    }
+    if (words.length === 1) {
+      return words[0].slice(0, 2).toUpperCase();
+    }
+    return `${words[0][0]}${words[1][0]}`.toUpperCase();
+  };
+
+  const formatInventoryEntryDate = (value?: string) => {
+    if (!value) {
+      return 'No date';
+    }
+
+    const parsedDate = new Date(value);
+    if (Number.isNaN(parsedDate.getTime())) {
+      return value;
+    }
+
+    return parsedDate.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  };
+
+  const handleOpenInventoryEntries = async () => {
+    if (isCreateMode || !editedItem) {
+      return;
+    }
+
+    const itemId = editedItem.id || editedItem.no || editedItem.system_id;
+    if (!itemId) {
+      Alert.alert('Unavailable', 'Inventory details are not available for this item.');
+      return;
+    }
+
+    setInventoryEntriesVisible(true);
+    setInventoryEntriesLoading(true);
+    setInventoryEntriesError(null);
+
+    try {
+      const entries = await fetchAllItemLedgerEntries(itemId);
+      setInventoryEntries(entries || []);
+    } catch (error: any) {
+      console.error('Error loading inventory ledger entries:', error);
+      setInventoryEntries([]);
+      setInventoryEntriesError(
+        error?.response?.data?.detail ||
+          error?.message ||
+          'Failed to load ledger entries.',
+      );
+    } finally {
+      setInventoryEntriesLoading(false);
+    }
+  };
+
+  const openCategoriesPicker = () => {
+    if (!editedItem || categoriesLoading) {
+      return;
+    }
+
+    const initialCodes: string[] = [];
+    if (editedItem.category_id != null) {
+      const match = categories.find(
+        c => String(c.id || c.code) === String(editedItem.category_id),
+      );
+      if (match?.code) {
+        initialCodes.push(String(match.code));
+      }
+    }
+
+    (navigation as any).navigate('ItemCategories', {
+      pickerMode: true,
+      returnScreen: 'AllItems',
+      returnMode: isCreateMode ? 'create' : 'edit',
+      itemDraft: editedItem,
+      initialSelectedCodes: initialCodes,
+    });
+  };
+
+  useEffect(() => {
+    if (!visible) {
+      return;
+    }
+    const pick = route.params?.categoryPick;
+    if (pick === undefined) {
+      return;
+    }
+
+    navigation.setParams({categoryPick: undefined} as never);
+    setEditedItem(prev => {
+      if (!prev) {
+        return prev;
+      }
+      if (pick.code == null || pick.code === '') {
+        return {...prev, category_id: null};
+      }
+      const cat = categories.find(c => c.code === pick.code);
+      return {
+        ...prev,
+        category_id: (cat?.id ?? cat?.code ?? pick.code) as number | string | null,
+      };
+    });
+  }, [visible, route.params?.categoryPick, navigation, categories]);
+
   // Map item_category to category_id when categories are loaded
   useEffect(() => {
     if (editedItem && categories.length > 0 && editedItem.item_category) {
@@ -163,6 +344,11 @@ const EditItemModal = ({
 
   const handleImagePick = async () => {
     console.log('handleImagePick called');
+
+    if (isCreateMode) {
+      Alert.alert('Save item first', 'Create the item before adding an image.');
+      return;
+    }
 
     const options: ImageLibraryOptions = {
       mediaType: 'photo',
@@ -265,13 +451,13 @@ const EditItemModal = ({
           'Permission Denied',
           'Photo library access is required to select images. Please grant permission in Settings.',
           [
-            {text: 'Cancel', style: 'cancel'},
+            { text: 'Cancel', style: 'cancel' },
             {
               text: 'Settings',
               onPress: () => {
                 Alert.alert(
                   'Settings',
-                  'Please go to Settings > Apps > Zentro App > Permissions and enable "Photos and videos"',
+                  'Please go to Settings > Apps > Zentroapp > Permissions and enable "Photos and videos"',
                 );
               },
             },
@@ -304,7 +490,7 @@ const EditItemModal = ({
         'Gallery Unavailable',
         'Gallery access is currently unavailable due to a system conflict. Please use the camera option instead.',
         [
-          {text: 'OK', style: 'default'},
+          { text: 'OK', style: 'default' },
           {
             text: 'Try Camera',
             onPress: async () => {
@@ -472,7 +658,7 @@ const EditItemModal = ({
         }
 
         Alert.alert('Upload Failed', errorMessage, [
-          {text: 'OK', style: 'default'},
+          { text: 'OK', style: 'default' },
           {
             text: 'Try Again',
             onPress: () => {
@@ -519,7 +705,7 @@ const EditItemModal = ({
     }
 
     Alert.alert('Delete Image', 'Are you sure you want to delete this image?', [
-      {text: 'Cancel', style: 'cancel'},
+      { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
         style: 'destructive',
@@ -556,60 +742,88 @@ const EditItemModal = ({
     }
   };
 
-  console.log(
-    'EditItemModal render - visible:',
-    visible,
-    'editedItem:',
-    !!editedItem,
-  );
+  const previewUri =
+    selectedImage?.uri ||
+    (editedItem?.item_images?.[0]?.url
+      ? editedItem.item_images[0].url
+      : undefined);
+
   return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent={true}
-      onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <KeyboardAvoidingView
-          style={styles.modalContent}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
-          {!editedItem ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={COLORS.primary} />
-              <Text style={styles.loadingText}>Loading item data...</Text>
-              <TouchableOpacity
-                style={[styles.button, styles.cancelButton]}
-                onPress={onClose}>
-                <Text style={styles.buttonText}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <>
-              {/* Modal Header */}
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Edit Item</Text>
+    <>
+      <Modal
+        visible={visible}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={onClose}>
+        <View style={styles.editItemModalRoot}>
+          <KeyboardAvoidingView
+            style={styles.editItemModalFlex}
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
+            {!editedItem ? (
+              <View style={styles.editItemLoadingWrap}>
+                <ActivityIndicator size="large" color={COLORS.primary2} />
+                <Text style={styles.editItemLoadingText}>Loading item…</Text>
                 <TouchableOpacity
+                  style={styles.editItemLoadingClose}
                   onPress={onClose}
-                  style={styles.modalCloseButton}
                   activeOpacity={0.7}>
-                  <Image
-                    source={icons.cross}
-                    style={styles.modalCloseIcon}
-                    resizeMode="contain"
-                  />
+                  <Text style={styles.editItemLoadingCloseText}>Close</Text>
                 </TouchableOpacity>
               </View>
+            ) : (
+              <>
+                <View
+                  style={[
+                    styles.editItemHeader,
+                    {
+                      paddingTop: Math.max(insets.top, 12),
+                      borderBottomColor: COLORS.lightGray1,
+                    },
+                  ]}>
+                  <View style={styles.editItemHeaderSide}>
+                    <TouchableOpacity
+                      onPress={onClose}
+                      style={styles.editItemCloseCircle}
+                      activeOpacity={0.7}
+                      accessibilityRole="button"
+                      accessibilityLabel="Close">
+                      <Image
+                        source={icons.cross as any}
+                        style={styles.editItemCloseIcon}
+                        resizeMode="contain"
+                      />
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={styles.editItemHeaderTitle}>
+                    {isCreateMode ? 'Create Item' : 'Edit Item'}
+                  </Text>
+                  <View style={[styles.editItemHeaderSide, styles.editItemHeaderSideEnd]}>
+                    {(isCreateMode ? canCreate : canEdit) ? (
+                      <TouchableOpacity
+                        style={styles.editItemSavePill}
+                        onPress={handleSave}
+                        activeOpacity={0.85}
+                        accessibilityRole="button"
+                        accessibilityLabel="Save item">
+                        <Text style={styles.editItemSavePillText}>Save</Text>
+                      </TouchableOpacity>
+                    ) : (
+                      <View style={styles.editItemHeaderSpacer} />
+                    )}
+                  </View>
+                </View>
 
-              <ScrollView
-                style={styles.modalScrollView}
-                contentContainerStyle={styles.modalScrollContent}
-                showsVerticalScrollIndicator={true}
-                keyboardShouldPersistTaps="handled"
-                nestedScrollEnabled={true}>
-                {/* Image Section */}
-                <View style={styles.imageSection}>
-                  {/* Error Message */}
-                  {imageUploadError && (
+                <ScrollView
+                  style={styles.modalScrollView}
+                  contentContainerStyle={[
+                    styles.editItemScrollContent,
+                    { paddingBottom: Math.max(insets.bottom, 20) + 24 },
+                  ]}
+                  showsVerticalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                  nestedScrollEnabled={true}>
+                  {imageUploadError ? (
                     <View style={styles.errorContainer}>
                       <View style={styles.errorIconContainer}>
                         <Text style={styles.errorIcon}>⚠</Text>
@@ -619,10 +833,8 @@ const EditItemModal = ({
                         <Text style={styles.errorText}>{imageUploadError}</Text>
                       </View>
                     </View>
-                  )}
-
-                  {/* Success Message */}
-                  {imageUploadSuccess && (
+                  ) : null}
+                  {imageUploadSuccess ? (
                     <View style={styles.successContainer}>
                       <View style={styles.successIconContainer}>
                         <Text style={styles.successIcon}>✓</Text>
@@ -634,198 +846,321 @@ const EditItemModal = ({
                         </Text>
                       </View>
                     </View>
-                  )}
-                  <Image
-                    source={{
-                      uri:
-                        selectedImage?.uri ||
-                        (editedItem.item_images &&
-                        editedItem.item_images.length > 0
-                          ? editedItem.item_images[0].url
-                          : undefined),
-                    }}
-                    style={styles.productImageLarge}
-                    defaultSource={require('../../assets/icons/product.png')}
-                    onError={error => {
-                      console.log('Image loading error:', error);
-                    }}
-                    onLoad={() => {
-                      console.log('Image loaded successfully');
-                    }}
-                    resizeMode="cover"
-                  />
-                  <View style={styles.imageButtonContainer}>
-                    <TouchableOpacity
-                      style={[
-                        styles.imagePickerButton,
-                        imageUploadLoading && styles.disabledButton,
-                      ]}
-                      onPress={handleImagePick}
-                      disabled={imageUploadLoading}>
-                      {imageUploadLoading ? (
-                        <View style={styles.uploadLoadingContainer}>
-                          <ActivityIndicator
-                            size="small"
-                            color={COLORS.white}
-                          />
-                          <Text style={styles.buttonText}>Uploading...</Text>
-                        </View>
+                  ) : null}
+
+                  <View style={styles.squareTileOuter}>
+                    <View style={styles.squareTileInner}>
+                      {previewUri ? (
+                        <Image
+                          source={{ uri: previewUri }}
+                          style={styles.squareTileImage}
+                          resizeMode="cover"
+                        />
                       ) : (
-                        <Text style={styles.buttonText}>Change Image</Text>
+                        <>
+                          <Text style={styles.squareTileInitials}>
+                            {getItemInitials(
+                              editedItem.item_name || (isCreateMode ? 'New Item' : 'Item'),
+                            )}
+                          </Text>
+                          <Text style={styles.squareTileName} numberOfLines={2}>
+                            {editedItem.item_name || (isCreateMode ? 'New Item' : 'Item')}
+                          </Text>
+                        </>
                       )}
-                    </TouchableOpacity>
-
-                    {editedItem.item_images &&
-                      editedItem.item_images.length > 0 &&
-                      canDelete && (
-                        <TouchableOpacity
-                          style={[
-                            styles.deleteImageButton,
-                            imageDeleteLoading && styles.disabledButton,
-                          ]}
-                          onPress={handleDeleteImage}
-                          disabled={imageDeleteLoading}>
-                          {imageDeleteLoading ? (
-                            <View style={styles.uploadLoadingContainer}>
-                              <ActivityIndicator
-                                size="small"
-                                color={COLORS.white}
-                              />
-                              <Text style={styles.buttonText}>Deleting...</Text>
-                            </View>
-                          ) : (
-                            <Text style={styles.buttonText}>Delete Image</Text>
-                          )}
-                        </TouchableOpacity>
-                      )}
+                    </View>
                   </View>
-                </View>
 
-                {/* Item Name */}
-                <Text style={styles.label}>Item Name</Text>
-                <TextInput
-                  style={styles.input}
-                  value={editedItem.item_name}
-                  onChangeText={text =>
-                    setEditedItem({...editedItem, item_name: text})
-                  }
-                />
+                  <TouchableOpacity
+                    style={[
+                      styles.squareChangeImagePill,
+                      imageUploadLoading && { opacity: 0.6 },
+                    ]}
+                    onPress={handleImagePick}
+                    disabled={imageUploadLoading}
+                    activeOpacity={0.7}>
+                    {imageUploadLoading ? (
+                      <ActivityIndicator size="small" color={COLORS.gray2} />
+                    ) : (
+                      <Text style={styles.squareChangeImagePillText}>
+                        {isCreateMode ? 'Add image later' : 'Change image'}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
 
-                {/* Category Dropdown */}
-                <Text style={styles.label}>Category</Text>
-                <View style={styles.pickerContainer}>
-                  {categoriesLoading ? (
-                    <View style={styles.categoryLoadingContainer}>
-                      <ActivityIndicator size="small" color={COLORS.primary} />
-                      <Text style={styles.categoryLoadingText}>
-                        Loading categories...
+                  {!isCreateMode &&
+                    editedItem.item_images &&
+                    editedItem.item_images.length > 0 &&
+                    canDelete ? (
+                    <TouchableOpacity
+                      onPress={handleDeleteImage}
+                      disabled={imageDeleteLoading}
+                      style={styles.squareRemoveImage}>
+                      <Text style={styles.squareRemoveImageText}>
+                        {imageDeleteLoading ? 'Removing…' : 'Remove image'}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
+
+                  <View style={styles.squareOutlineField}>
+                    <Text style={styles.squareOutlineLabel}>Name</Text>
+                    <TextInput
+                      style={styles.squareOutlineInput}
+                      value={editedItem.item_name}
+                      onChangeText={text =>
+                        setEditedItem({ ...editedItem, item_name: text })
+                      }
+                      placeholder="Item name"
+                      placeholderTextColor={COLORS.gray3}
+                    />
+                  </View>
+
+                  <View style={[styles.squareOutlineField, styles.squareOutlineFieldTall]}>
+                    <Text style={styles.squareOutlineLabel}>Description</Text>
+                    <TextInput
+                      style={[styles.squareOutlineInput, styles.squareOutlineMultiline]}
+                      value={editedItem.description ?? ''}
+                      onChangeText={text =>
+                        setEditedItem({ ...editedItem, description: text })
+                      }
+                      placeholder="Description"
+                      placeholderTextColor={COLORS.gray3}
+                      multiline
+                      textAlignVertical="top"
+                    />
+                  </View>
+
+                  <View style={styles.editItemThickBar} />
+
+                  <Text style={styles.editItemSectionHeading}>Categorization</Text>
+                  <TouchableOpacity
+                    style={styles.editItemCategoryRow}
+                    onPress={openCategoriesPicker}
+                    disabled={categoriesLoading}
+                    activeOpacity={0.65}>
+                    <View style={styles.editItemFolderIconWrap}>
+                      <Image
+                        source={icons.product as any}
+                        style={styles.editItemFolderIcon}
+                        resizeMode="contain"
+                      />
+                    </View>
+                    <View style={styles.editItemCategoryRowText}>
+                      <Text style={styles.editItemCategoryRowTitle}>Categories</Text>
+                      <Text style={styles.editItemCategoryRowSubtitle}>
+                        {categoriesLoading
+                          ? 'Loading…'
+                          : editedItem.category_id
+                            ? getSelectedCategoryLabel()
+                            : 'None selected'}
                       </Text>
                     </View>
-                  ) : (
-                    <Picker
-                      selectedValue={editedItem.category_id || 0}
-                      onValueChange={itemValue => {
-                        // Handle 0 as "no category"
-                        if (itemValue === 0) {
-                          setEditedItem({...editedItem, category_id: null});
-                        } else {
-                          setEditedItem({...editedItem, category_id: itemValue});
-                        }
-                      }}
-                      style={styles.picker}
-                      itemStyle={styles.pickerItem}>
-                      <Picker.Item label="Select category" value={0} color={COLORS.black} />
-                      {categories?.map(category => (
-                        <Picker.Item
-                          key={category.id || category.code}
-                          label={category.name || category.description || category.code}
-                          value={category.id || category.code}
-                          color={COLORS.black}
-                        />
-                      ))}
-                    </Picker>
-                  )}
-                </View>
-
-                {/* Price */}
-                <Text style={styles.label}>Price (UGX)</Text>
-                <View style={styles.priceInputContainer}>
-                  <Text style={styles.pricePrefix}>UGX</Text>
-                  <TextInput
-                    style={styles.priceInput}
-                    value={editedItem.unit_price.toLocaleString()}
-                    onChangeText={text => {
-                      // Remove commas and convert to number
-                      const numericValue =
-                        parseFloat(text.replace(/,/g, '')) || 0;
-                      setEditedItem({
-                        ...editedItem,
-                        unit_price: numericValue,
-                      });
-                    }}
-                    keyboardType="numeric"
-                    placeholder="0"
-                    placeholderTextColor={COLORS.gray3}
-                  />
-                </View>
-              </ScrollView>
-
-              {/* Buttons - Outside ScrollView so they're always visible */}
-              <View style={styles.buttonContainer}>
-                <TouchableOpacity
-                  style={[styles.button, styles.cancelButton]}
-                  onPress={onClose}
-                  activeOpacity={0.7}>
-                  <Text style={styles.buttonText}>Cancel</Text>
-                </TouchableOpacity>
-                {canEdit && (
-                  <TouchableOpacity
-                    style={[styles.button, styles.saveButton]}
-                    onPress={handleSave}
-                    activeOpacity={0.7}>
-                    <Text style={styles.buttonText}>Save</Text>
+                    <Image
+                      source={icons.down_arrow as any}
+                      style={styles.squareSettingsChevron}
+                      resizeMode="contain"
+                    />
                   </TouchableOpacity>
-                )}
-              </View>
-            </>
-          )}
-        </KeyboardAvoidingView>
-      </View>
 
-      {/* Native gallery picker is used instead of in-app modal */}
-    </Modal>
+                  <View style={styles.editItemThickBar} />
+
+                  <Text style={styles.editItemSectionHeading}>Options</Text>
+                  <Text style={styles.editItemOptionsCopy}>
+                    Add a custom set of options to create variations for an item. For
+                    example, add a size option set to create variations for small,
+                    medium, and large.
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() =>
+                      Toast.show({
+                        type: 'info',
+                        text1: 'Learn more',
+                        text2: 'Option sets will be available in a future update.',
+                      })
+                    }
+                    activeOpacity={0.7}>
+                    <Text style={styles.editItemLearnMore}>Learn more</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.editItemAddOptionsPill}
+                    onPress={() =>
+                      Toast.show({
+                        type: 'info',
+                        text1: 'Add options',
+                        text2: 'This will be available in a future update.',
+                      })
+                    }
+                    activeOpacity={0.7}>
+                    <Text style={styles.editItemAddOptionsPillText}>Add options</Text>
+                  </TouchableOpacity>
+
+                  <View style={styles.editItemThickBar} />
+
+                  <Text style={styles.editItemSectionHeading}>Price and inventory</Text>
+                  <View style={styles.squareOutlineField}>
+                    <Text style={styles.squareOutlineLabel}>Price (UGX)</Text>
+                    <View style={styles.squarePriceRow}>
+                      <Text style={styles.squarePricePrefix}>UGX</Text>
+                      <TextInput
+                        style={styles.squarePriceInput}
+                        value={formatAmountWithCommas(editedItem.unit_price)}
+                        onChangeText={text => {
+                          const numericValue =
+                            parseFloat(text.replace(/,/g, '')) || 0;
+                          setEditedItem({
+                            ...editedItem,
+                            unit_price: numericValue,
+                          });
+                        }}
+                        keyboardType="numeric"
+                        placeholder="0"
+                        placeholderTextColor={COLORS.gray3}
+                      />
+                    </View>
+                  </View>
+
+                  {!isCreateMode ? (
+                    <View style={styles.squareOutlineField}>
+                      <Text style={styles.squareOutlineLabel}>Quantity</Text>
+                      <TouchableOpacity
+                        style={styles.squareOutlineStaticRow}
+                        activeOpacity={0.7}
+                        onPress={handleOpenInventoryEntries}>
+                        <Text
+                          style={[
+                            styles.squareOutlineStaticValue,
+                            styles.squareOutlineLinkValue,
+                          ]}>
+                          {String(
+                            Math.max(0, Math.floor(Number(editedItem.inventory) || 0)),
+                          )}
+                        </Text>
+                        <Text style={styles.squareOutlineStaticChevron}>v</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ) : null}
+                </ScrollView>
+              </>
+            )}
+          </KeyboardAvoidingView>
+        </View>
+
+        {/* Native gallery picker is used instead of in-app modal */}
+      </Modal>
+      <Modal
+        visible={inventoryEntriesVisible && visible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setInventoryEntriesVisible(false)}>
+        <View style={styles.inventoryEntriesOverlay}>
+          <View style={styles.inventoryEntriesSheet}>
+            <View style={styles.inventoryEntriesHeader}>
+              <View style={styles.inventoryEntriesHeaderTextWrap}>
+                <Text style={styles.inventoryEntriesTitle}>Inventory Details</Text>
+                <Text style={styles.inventoryEntriesSubtitle} numberOfLines={1}>
+                  {editedItem?.item_name || 'Item'}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setInventoryEntriesVisible(false)}
+                activeOpacity={0.7}
+                style={styles.inventoryEntriesCloseButton}>
+                <Text style={styles.inventoryEntriesCloseText}>Close</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.inventoryEntriesSummaryCard}>
+              <Text style={styles.inventoryEntriesSummaryLabel}>Current Quantity</Text>
+              <Text style={styles.inventoryEntriesSummaryValue}>
+                {String(Math.max(0, Math.floor(Number(editedItem?.inventory) || 0)))}
+              </Text>
+            </View>
+
+            {inventoryEntriesLoading ? (
+              <View style={styles.inventoryEntriesStateWrap}>
+                <ActivityIndicator size="small" color={COLORS.primary2} />
+                <Text style={styles.inventoryEntriesStateText}>
+                  Loading ledger entries...
+                </Text>
+              </View>
+            ) : inventoryEntriesError ? (
+              <View style={styles.inventoryEntriesStateWrap}>
+                <Text style={styles.inventoryEntriesErrorText}>
+                  {inventoryEntriesError}
+                </Text>
+              </View>
+            ) : (
+              <ScrollView
+                style={styles.inventoryEntriesList}
+                showsVerticalScrollIndicator={false}>
+                {inventoryEntries.length > 0 ? (
+                  inventoryEntries.map((entry, index) => (
+                    <View
+                      key={`${entry.document_no || 'entry'}-${entry.lot_no || index}-${index}`}
+                      style={styles.inventoryEntryCard}>
+                      <View style={styles.inventoryEntryTopRow}>
+                        <Text style={styles.inventoryEntryType}>
+                          {entry.entry_type || entry.document_type || 'Entry'}
+                        </Text>
+                        <Text style={styles.inventoryEntryDate}>
+                          {formatInventoryEntryDate(
+                            entry.posting_date || entry.date || entry.expiry_date,
+                          )}
+                        </Text>
+                      </View>
+
+                      <Text style={styles.inventoryEntryDocument}>
+                        {entry.document_no || 'No document number'}
+                      </Text>
+
+                      <View style={styles.inventoryEntryMetaRow}>
+                        <Text style={styles.inventoryEntryMetaText}>
+                          Qty: {Number(entry.quantity ?? entry.remaining_quantity ?? 0)}
+                        </Text>
+                        <Text style={styles.inventoryEntryMetaText}>
+                          Remaining: {Number(entry.remaining_quantity ?? 0)}
+                        </Text>
+                      </View>
+
+                      <View style={styles.inventoryEntryMetaRow}>
+                        <Text style={styles.inventoryEntryMetaText}>
+                          Lot: {entry.lot_no || '-'}
+                        </Text>
+                        <Text style={styles.inventoryEntryMetaText}>
+                          Location: {entry.location_name || '-'}
+                        </Text>
+                      </View>
+                    </View>
+                  ))
+                ) : (
+                  <View style={styles.inventoryEntriesStateWrap}>
+                    <Text style={styles.inventoryEntriesStateText}>
+                      No ledger entries found.
+                    </Text>
+                  </View>
+                )}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 };
 
-// GalleryGrid component removed - using native gallery picker instead
-
-// Simple package SVG icon
-const PackageSVG = () => (
-  <Svg width={32} height={32} viewBox="0 0 32 32" fill="none">
-    <Rect
-      x="4"
-      y="8"
-      width="24"
-      height="16"
-      rx="3"
-      stroke="#888"
-      strokeWidth="2"
-      fill="#fff"
-    />
-    <Path d="M4 12l12 8 12-8" stroke="#888" strokeWidth="2" fill="none" />
-    <Path d="M16 20v6" stroke="#888" strokeWidth="2" strokeLinecap="round" />
-  </Svg>
-);
-
 const Items = () => {
   const navigation = useNavigation();
-  const {canRead, canCreate, canEdit, canDelete} = usePermissions();
+  const route = useRoute<any>();
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  const { selectedTab, setSelectedTab } = useTabContext();
+  const { canRead, canCreate, canEdit, canDelete } = usePermissions();
   const PAGE_NAME = PAGE_NAMES.ITEMS;
 
   // Early return if no read permission
   if (!canRead(PAGE_NAME)) {
     return (
-      <View style={[styles.container, {flex: 1}]}>
+      <View style={[styles.container, { flex: 1, backgroundColor: colors.background }]}>
         <View style={styles.accessDeniedContainer}>
           <Text style={styles.accessDeniedTitle}>Access Denied</Text>
           <Text style={styles.accessDeniedMessage}>
@@ -838,37 +1173,47 @@ const Items = () => {
 
   const [editModal, setEditModal] = useState(false);
   const [createModal, setCreateModal] = useState(false);
-  const [selectedItem, setSelectedItem] = useState<Item | null>(null);
+  const [createDraftItem, setCreateDraftItem] = useState<Item | null>(null);
+  const [selectedItem, setSelectedItem] = useState < Item | null > (null);
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(0);
-  const [items, setItems] = useState<Item[]>([]);
+  const [hasNextPage, setHasNextPage] = useState(true);
+  const [items, setItems] = useState < Item[] > ([]);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [filterModal, setFilterModal] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState<number | null>(null);
-  const [stockFilter, setStockFilter] = useState<
+  const [selectedCategory, setSelectedCategory] = useState < number | null > (null);
+  const [stockFilter, setStockFilter] = useState <
     'all' | 'in_stock' | 'low_stock' | 'out_of_stock'
-  >('all');
-  const [categories, setCategories] = useState<Category[]>([]);
+    > ('all');
+  const [categories, setCategories] = useState < Category[] > ([]);
   const [categoriesLoading, setCategoriesLoading] = useState(false);
-  const itemsPerPage = 10;
+
+  const formatAmountWithCommas = (value: number | string | undefined | null) => {
+    const numericValue =
+      typeof value === 'number' ? value : parseFloat(String(value || 0));
+    if (!Number.isFinite(numericValue)) {
+      return '0';
+    }
+    return numericValue.toLocaleString('en-US');
+  };
 
   const loadCategories = useCallback(async () => {
     try {
       setCategoriesLoading(true);
       const categoriesData = await fetchCategories();
-      
+
       // fetchCategories now returns an array directly (handles both array and paginated responses)
       if (!Array.isArray(categoriesData)) {
         console.warn('Categories response is not an array:', categoriesData);
         setCategories([]);
         return;
       }
-      
+
       // Map categories to expected format (code/description -> id/name)
       const mappedCategories = categoriesData.map((cat: any, index: number) => ({
         id: cat.id || cat.code || `cat_${index}`, // Use code as id if no id exists
@@ -876,7 +1221,7 @@ const Items = () => {
         name: cat.name || cat.description || cat.code,
         description: cat.description || cat.code,
       }));
-      
+
       setCategories(mappedCategories);
     } catch (error) {
       console.error('Error loading categories:', error);
@@ -890,167 +1235,168 @@ const Items = () => {
     loadCategories();
   }, [loadCategories]);
 
-  const loadItems = async () => {
-    try {
-      setLoading(true);
-      const response: PaginatedResponse = await fetchItems(
-        currentPage,
-        searchQuery,
-        selectedCategory || undefined,
-      );
-
-      // Add safety checks for response data
-      let filteredResults = response?.results || [];
-
-      // Apply stock filter on client side
-      if (stockFilter !== 'all' && Array.isArray(filteredResults)) {
-        filteredResults = filteredResults.filter(item => {
-          const inventory = item?.inventory || 0;
-          if (stockFilter === 'out_of_stock') return inventory === 0;
-          if (stockFilter === 'low_stock')
-            return inventory > 0 && inventory < 10;
-          if (stockFilter === 'in_stock') return inventory >= 10;
-          return true;
-        });
-      }
-
-      if (response && Array.isArray(filteredResults)) {
-        setItems(filteredResults);
-        // Adjust total pages based on filtered results
-        const totalCount =
-          stockFilter !== 'all' ? filteredResults.length : response.count || 0;
-        setTotalPages(Math.ceil(totalCount / itemsPerPage));
-      } else {
-        console.warn('Invalid response format from fetchItems');
-        setItems([]);
-        setTotalPages(0);
-      }
-    } catch (error) {
-      console.error('Error fetching items:', error);
-      setItems([]);
-      setTotalPages(0);
-    } finally {
-      setLoading(false);
-      setSearchLoading(false);
+  useEffect(() => {
+    const reopenMode = route.params?.reopenItemModal as 'create' | 'edit' | undefined;
+    if (!reopenMode) {
+      return;
     }
-  };
+
+    const incomingDraft = (route.params?.itemDraft as Item | null | undefined) ?? null;
+    const categoryCode = route.params?.categoryPick?.code as string | null | undefined;
+
+    const resolvedCategoryValue =
+      categoryCode === undefined
+        ? incomingDraft?.category_id
+        : categoryCode === null || categoryCode === ''
+          ? null
+          : (categories.find(cat => cat.code === categoryCode)?.id ??
+              categories.find(cat => cat.code === categoryCode)?.code ??
+              categoryCode);
+
+    const nextDraft =
+      incomingDraft != null
+        ? {
+            ...incomingDraft,
+            category_id: resolvedCategoryValue,
+          }
+        : createEmptyItemDraft();
+
+    if (reopenMode === 'create') {
+      setEditModal(false);
+      setSelectedItem(null);
+      setCreateDraftItem(nextDraft);
+      setCreateModal(true);
+    } else {
+      setCreateModal(false);
+      setCreateDraftItem(null);
+      setSelectedItem(nextDraft);
+      setEditModal(true);
+    }
+
+    navigation.setParams({
+      reopenItemModal: undefined,
+      itemDraft: undefined,
+      categoryPick: undefined,
+    } as never);
+  }, [
+    route.params?.reopenItemModal,
+    route.params?.itemDraft,
+    route.params?.categoryPick,
+    categories,
+    navigation,
+  ]);
+
+  const applyStockFilter = useCallback(
+    (results: Item[]) => {
+      if (stockFilter === 'all') {
+        return results;
+      }
+
+      return results.filter(item => {
+        const inventory = item?.inventory || 0;
+        if (stockFilter === 'out_of_stock') return inventory === 0;
+        if (stockFilter === 'low_stock') return inventory > 0 && inventory < 10;
+        if (stockFilter === 'in_stock') return inventory >= 10;
+        return true;
+      });
+    },
+    [stockFilter],
+  );
+
+  const mergeUniqueItems = useCallback((existing: Item[], incoming: Item[]) => {
+    const seen = new Set<string>();
+    return [...existing, ...incoming].filter(item => {
+      const key = String(item?.id || item?.no || item?.system_id || '');
+      if (!key || seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  }, []);
+
+  const loadItems = useCallback(
+    async (pageToLoad: number = 1, replace: boolean = true) => {
+      try {
+        if (replace) {
+          setLoading(true);
+        } else {
+          setLoadingMore(true);
+        }
+
+        const response: PaginatedResponse = await fetchItems(
+          pageToLoad,
+          searchQuery,
+          selectedCategory || undefined,
+        );
+
+        const pageResults = Array.isArray(response?.results) ? response.results : [];
+        const filteredResults = applyStockFilter(pageResults);
+
+        setItems(prev =>
+          replace ? filteredResults : mergeUniqueItems(prev, filteredResults),
+        );
+        setCurrentPage(pageToLoad);
+        setHasNextPage(Boolean(response?.next));
+      } catch (error) {
+        console.error('Error fetching items:', error);
+        if (replace) {
+          setItems([]);
+        }
+        setHasNextPage(false);
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
+        setRefreshing(false);
+        setSearchLoading(false);
+      }
+    },
+    [applyStockFilter, mergeUniqueItems, searchQuery, selectedCategory],
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
-    try {
-      const response: PaginatedResponse = await fetchItems(
-        currentPage,
-        searchQuery,
-        selectedCategory || undefined,
-      );
-
-      // Add safety checks for response data
-      let filteredResults = response?.results || [];
-
-      // Apply stock filter on client side
-      if (stockFilter !== 'all' && Array.isArray(filteredResults)) {
-        filteredResults = filteredResults.filter(item => {
-          const inventory = item?.inventory || 0;
-          if (stockFilter === 'out_of_stock') return inventory === 0;
-          if (stockFilter === 'low_stock')
-            return inventory > 0 && inventory < 10;
-          if (stockFilter === 'in_stock') return inventory >= 10;
-          return true;
-        });
-      }
-
-      if (response && Array.isArray(filteredResults)) {
-        setItems(filteredResults);
-        const totalCount =
-          stockFilter !== 'all' ? filteredResults.length : response.count || 0;
-        setTotalPages(Math.ceil(totalCount / itemsPerPage));
-      } else {
-        console.warn('Invalid response format from fetchItems in refresh');
-        setItems([]);
-        setTotalPages(0);
-      }
-    } catch (error) {
-      console.error('Error refreshing items:', error);
-      setItems([]);
-      setTotalPages(0);
-    } finally {
-      setRefreshing(false);
-    }
+    setHasNextPage(true);
+    await loadItems(1, true);
   };
 
   useEffect(() => {
     const debounceTimer = setTimeout(() => {
-      loadItems();
-    }, 500); // Debounce search
+      setHasNextPage(true);
+      loadItems(1, true);
+    }, 500);
 
     return () => clearTimeout(debounceTimer);
-  }, [currentPage, searchQuery, selectedCategory, stockFilter]);
+  }, [searchQuery, selectedCategory, stockFilter, loadItems]);
 
   const handleSearch = (text: string) => {
     setSearchQuery(text);
-    setCurrentPage(1); // Reset to first page when searching
     setSearchLoading(true);
   };
 
   const handleApplyFilter = () => {
-    setCurrentPage(1); // Reset to first page when filtering
     setFilterModal(false);
-    loadItems();
+    setHasNextPage(true);
+    setSearchLoading(true);
+    loadItems(1, true);
   };
 
   const handleClearFilter = () => {
     setSelectedCategory(null);
     setStockFilter('all');
-    setCurrentPage(1);
     setFilterModal(false);
+    setHasNextPage(true);
   };
 
   const hasActiveFilters = selectedCategory !== null || stockFilter !== 'all';
 
-  const renderPagination = () => (
-    <View style={styles.paginationContainer}>
-      <TouchableOpacity
-        style={[styles.pageButton, currentPage === 1 && styles.disabledButton]}
-        onPress={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-        disabled={currentPage === 1}
-        activeOpacity={0.7}>
-        <Text
-          style={
-            currentPage === 1
-              ? styles.disabledButtonText
-              : styles.pageButtonText
-          }>
-          ⟨ Previous
-        </Text>
-      </TouchableOpacity>
+  const handleLoadMore = () => {
+    if (loading || loadingMore || refreshing || !hasNextPage) {
+      return;
+    }
 
-      <View style={styles.pageInfoContainer}>
-        <Text style={styles.pageInfo}>
-          Page {currentPage} of {totalPages || 0}
-        </Text>
-      </View>
-
-      <TouchableOpacity
-        style={[
-          styles.pageButton,
-          currentPage === (totalPages || 0) && styles.disabledButton,
-        ]}
-        onPress={() =>
-          setCurrentPage(prev => Math.min(totalPages || 0, prev + 1))
-        }
-        disabled={currentPage === (totalPages || 0)}
-        activeOpacity={0.7}>
-        <Text
-          style={
-            currentPage === (totalPages || 0)
-              ? styles.disabledButtonText
-              : styles.pageButtonText
-          }>
-          Next ⟩
-        </Text>
-      </TouchableOpacity>
-    </View>
-  );
+    loadItems(currentPage + 1, false);
+  };
 
   const handleCreateItem = () => {
     if (!canCreate(PAGE_NAME)) {
@@ -1060,7 +1406,10 @@ const Items = () => {
       );
       return;
     }
+    // Ensure only one form modal is open at a time.
+    setEditModal(false);
     setSelectedItem(null);
+    setCreateDraftItem(null);
     setCreateModal(true);
   };
 
@@ -1071,82 +1420,87 @@ const Items = () => {
       return;
     }
     console.log('Setting selectedItem and opening modal');
+    // Ensure only one form modal is open at a time.
+    setCreateModal(false);
     setSelectedItem(item);
     setEditModal(true);
   };
 
-  const getStockStatus = (inventory: number) => {
-    if (inventory === 0) return {color: COLORS.error, label: 'Out of Stock'};
-    if (inventory < 10) return {color: COLORS.warning, label: 'Low Stock'};
-    return {color: COLORS.success, label: 'In Stock'};
+  const formatCurrencyLabel = (value: number | string | undefined | null) => {
+    const numericValue =
+      typeof value === 'number' ? value : parseFloat(String(value || 0));
+    if (!Number.isFinite(numericValue)) {
+      return 'USh0.00';
+    }
+    return `USh${numericValue.toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
   };
 
-  const renderItemCard = ({item}: {item: Item}) => {
-    const stockStatus = getStockStatus(item?.inventory || 0);
+  const getItemInitials = (name?: string) => {
+    const words = (name || '')
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean);
+
+    if (words.length === 0) {
+      return 'IT';
+    }
+
+    if (words.length === 1) {
+      return words[0].slice(0, 2).toUpperCase();
+    }
+
+    return `${words[0][0]}${words[1][0]}`.toUpperCase();
+  };
+
+  const renderItemCard = ({ item }: { item: Item }) => {
+    const initials = getItemInitials(item?.item_name);
     return (
       <TouchableOpacity
-        style={styles.itemCard}
+        style={[styles.itemCard, { borderBottomColor: colors.border }]}
         activeOpacity={0.7}
+        disabled={!canEdit(PAGE_NAME)}
         onPress={() => canEdit(PAGE_NAME) && handleEditItem(item)}>
-        <View style={styles.itemImageContainer}>
+        <View
+          style={[
+            styles.itemImageContainer,
+            { backgroundColor: colors.screenMuted },
+          ]}>
           {item?.item_images &&
-          item.item_images.length > 0 &&
-          item.item_images[0]?.url ? (
+            item.item_images.length > 0 &&
+            item.item_images[0]?.url ? (
             <Image
-              source={{uri: item.item_images[0].url}}
+              source={{ uri: item.item_images[0].url }}
               style={styles.itemImage}
               resizeMode="cover"
             />
           ) : (
-            <View style={styles.placeholderImage}>
-              <PackageSVG />
+            <View
+              style={[
+                styles.placeholderImage,
+                { backgroundColor: colors.screenMuted },
+              ]}>
+              <Text style={[styles.itemInitials, { color: colors.textSecondary }]}>
+                {initials}
+              </Text>
             </View>
           )}
         </View>
 
         <View style={styles.itemInfo}>
-          <Text style={styles.itemName} numberOfLines={2}>
-            {item?.item_name || 'Unnamed Item'}
-          </Text>
-          <View style={styles.priceContainer}>
-            <Text style={styles.itemPrice}>
-              UGX {(item?.unit_price || 0).toLocaleString()}
+          <View style={styles.itemTopRow}>
+            <Text
+              style={[styles.itemName, { color: colors.textPrimary }]}
+              numberOfLines={1}>
+              {item?.item_name || 'Unnamed Item'}
+            </Text>
+            <Text style={[styles.itemPrice, { color: colors.textPrimary }]}>
+              {formatCurrencyLabel(item?.unit_price)}
             </Text>
           </View>
-          <View style={styles.stockContainer}>
-            <View
-              style={[
-                styles.stockIndicator,
-                {backgroundColor: stockStatus.color + '20'},
-              ]}>
-              <View
-                style={[styles.stockDot, {backgroundColor: stockStatus.color}]}
-              />
-              <Text
-                style={[
-                  styles.itemInventory,
-                  {color: stockStatus.color, fontWeight: '600'},
-                ]}>
-                {item?.inventory || 0} units
-              </Text>
-            </View>
-          </View>
         </View>
-
-        {canEdit(PAGE_NAME) && (
-          <TouchableOpacity
-            style={styles.editButton}
-            onPress={() => {
-              console.log(
-                'Edit button pressed for item:',
-                item?.id || item?.no,
-              );
-              handleEditItem(item);
-            }}
-            activeOpacity={0.8}>
-            <Text style={styles.editButtonText}>Edit</Text>
-          </TouchableOpacity>
-        )}
       </TouchableOpacity>
     );
   };
@@ -1171,7 +1525,7 @@ const Items = () => {
         system_id:
           selectedItem.system_id || selectedItem.no || itemId.toString(),
       };
-      
+
       // Convert category_id to item_category code if needed
       if (selectedItem.category_id) {
         const selectedCategory = categories.find(
@@ -1204,137 +1558,252 @@ const Items = () => {
     }
   };
 
-  const handleFormSave = (savedItem: Item) => {
-    setCreateModal(false);
-    setSelectedItem(null);
-    loadItems();
+  const handleCreateSave = async (draftItem: Item) => {
+    if (!canCreate(PAGE_NAME)) {
+      Alert.alert('Access Denied', 'You do not have permission to create items.');
+      return;
+    }
+
+    if (!draftItem.item_name || !draftItem.item_name.trim()) {
+      Alert.alert('Validation Error', 'Item name is required.');
+      return;
+    }
+
+    try {
+      const itemToCreate: any = {
+        item_name: draftItem.item_name.trim(),
+      };
+
+      if (draftItem.description && draftItem.description.trim()) {
+        itemToCreate.description = draftItem.description.trim();
+      }
+
+      if ((Number(draftItem.unit_price) || 0) > 0) {
+        itemToCreate.unit_price = Number(draftItem.unit_price) || 0;
+      }
+
+      if (draftItem.category_id) {
+        const selectedCategory = categories.find(
+          cat => (cat.id || cat.code) === draftItem.category_id,
+        );
+        if (selectedCategory?.code) {
+          itemToCreate.item_category = selectedCategory.code;
+        }
+      }
+
+      const response = await createItem(itemToCreate);
+      if (response.status === 200 || response.status === 201) {
+        setSuccessMessage('Item created successfully');
+        setShowSuccessModal(true);
+        setCreateModal(false);
+        setCreateDraftItem(null);
+        setSelectedItem(null);
+        loadItems();
+      } else {
+        Alert.alert('Error', 'Failed to create item');
+      }
+    } catch (error: any) {
+      console.error('Error creating item:', error);
+      const errorMessage =
+        error?.response?.data?.detail ||
+        error?.response?.data?.error ||
+        error?.response?.data?.item_name?.[0] ||
+        error?.message ||
+        'Failed to create item';
+      Alert.alert('Error', errorMessage);
+    }
+  };
+
+  const onSelectMainTab = (tab: string) => {
+    setSelectedTab(tab);
+    navigation.navigate('Home' as never);
   };
 
   return (
-    <View style={styles.container}>
-      {/* Search Bar */}
-      <View style={styles.searchContainer}>
-        <View style={styles.searchInputContainer}>
-          <View style={styles.searchIconContainer}>
-            <Image
-              source={icons.search}
-              style={styles.searchIcon}
-              resizeMode="contain"
-            />
-          </View>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <View
+        style={[
+          styles.allItemsHeader,
+          {
+            paddingTop: Math.max(insets.top, 10),
+            backgroundColor: colors.background,
+          },
+        ]}>
+        <TouchableOpacity
+          style={[
+            styles.headerRoundButton,
+            {
+              borderColor: colors.border,
+              backgroundColor: colors.card,
+            },
+          ]}
+          onPress={() => navigation.goBack()}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Go back">
+          <Image
+            source={icons.back as any}
+            style={[styles.headerRoundIcon, { tintColor: colors.textPrimary }]}
+            resizeMode="contain"
+          />
+        </TouchableOpacity>
+        <Text style={[styles.allItemsTitle, { color: colors.textPrimary }]}>
+          All items
+        </Text>
+        <View style={styles.headerTrailing}>
+          {canCreate(PAGE_NAME) ? (
+            <TouchableOpacity
+              onPress={handleCreateItem}
+              style={styles.headerActionButton}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="Add item">
+              <Image
+                source={icons.plus as any}
+                style={styles.headerActionIcon}
+                resizeMode="contain"
+              />
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.headerTrailingSpacer} />
+          )}
+        </View>
+      </View>
+
+      <View
+        style={[
+          styles.searchContainer,
+          { backgroundColor: colors.background },
+        ]}>
+        <View
+          style={[
+            styles.searchPill,
+            {
+              backgroundColor: colors.inputBackground,
+              borderColor: colors.border,
+            },
+          ]}>
+          <Image
+            source={icons.search as any}
+            style={[styles.searchIcon, { tintColor: colors.iconMuted }]}
+            resizeMode="contain"
+          />
           <TextInput
-            style={styles.searchInput}
-            placeholder="Search items..."
-            placeholderTextColor={COLORS.gray3}
+            style={[styles.searchInput, { color: colors.textPrimary }]}
+            placeholder="Search"
+            placeholderTextColor={colors.placeholder}
             value={searchQuery}
             onChangeText={handleSearch}
           />
-          {searchLoading && (
+          {searchLoading ? (
             <View style={styles.searchLoadingContainer}>
-              <ActivityIndicator size="small" color={COLORS.primary} />
+              <ActivityIndicator size="small" color={COLORS.primary2} />
             </View>
-          )}
+          ) : null}
+          <TouchableOpacity
+            style={styles.filterInlineHit}
+            onPress={() => setFilterModal(true)}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Filter items">
+            <Image
+              source={icons.filter as any}
+              style={[
+                styles.filterIconInline,
+                { tintColor: hasActiveFilters ? COLORS.primary2 : colors.iconMuted },
+              ]}
+              resizeMode="contain"
+            />
+            {hasActiveFilters ? <View style={styles.filterBadge} /> : null}
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity
-          style={styles.categoryButton}
-          onPress={() => navigation.navigate('ItemCategories' as never)}
-          activeOpacity={0.7}>
-          <Text style={styles.categoryButtonText}>📁</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.filterButton,
-            hasActiveFilters && styles.filterButtonActive,
-          ]}
-          onPress={() => setFilterModal(true)}
-          activeOpacity={0.7}>
-          <Image
-            source={icons.filter}
-            style={[
-              styles.filterIcon,
-              hasActiveFilters && styles.filterIconActive,
-            ]}
-            resizeMode="contain"
-          />
-          {hasActiveFilters && <View style={styles.filterBadge} />}
-        </TouchableOpacity>
       </View>
 
-      {/* Loading Indicator */}
-      {loading && (
+      {loading ? (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={COLORS.primary} />
-          <Text style={styles.loadingText}>Loading items...</Text>
+          <ActivityIndicator size="large" color={COLORS.primary2} />
+          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+            Loading items...
+          </Text>
+        </View>
+      ) : (
+        <View style={styles.listFlex}>
+          <FlatList
+            style={styles.listFlex}
+            data={items || []}
+            renderItem={renderItemCard}
+            keyExtractor={item =>
+              item?.id?.toString() ||
+              item?.no ||
+              item?.system_id ||
+              Math.random().toString()
+            }
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            }
+            contentContainerStyle={
+              (items?.length || 0) === 0 ? styles.listEmptyGrow : undefined
+            }
+            onEndReached={handleLoadMore}
+            onEndReachedThreshold={0.35}
+            ListFooterComponent={
+              loadingMore ? (
+                <View style={styles.listFooterLoader}>
+                  <ActivityIndicator size="small" color={COLORS.primary2} />
+                </View>
+              ) : null
+            }
+            ListEmptyComponent={
+              <View style={styles.emptyContainer}>
+                <View
+                  style={[
+                    styles.emptyIconContainer,
+                    { backgroundColor: colors.screenMuted },
+                  ]}>
+                  <Text style={styles.emptyIcon}>📦</Text>
+                </View>
+                <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
+                  No items found
+                </Text>
+                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                  {searchQuery
+                    ? 'Try adjusting your search terms'
+                    : canCreate(PAGE_NAME)
+                      ? 'Create your first item to get started.'
+                      : 'No items available at the moment'}
+                </Text>
+                {canCreate(PAGE_NAME) && !searchQuery ? (
+                  <TouchableOpacity
+                    style={styles.emptyButton}
+                    onPress={handleCreateItem}>
+                    <Text style={styles.emptyButtonText}>Create Item</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            }
+          />
         </View>
       )}
 
-      {/* Items List */}
-      {!loading && (
-        <FlatList
-          data={items || []}
-          renderItem={renderItemCard}
-          keyExtractor={item =>
-            item?.id?.toString() ||
-            item?.no ||
-            item?.system_id ||
-            Math.random().toString()
-          }
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-          }
-          contentContainerStyle={
-            (items?.length || 0) === 0 ? {flex: 1} : undefined
-          }
-          ListEmptyComponent={
-            <View style={styles.emptyContainer}>
-              <View style={styles.emptyIconContainer}>
-                <Text style={styles.emptyIcon}>📦</Text>
-              </View>
-              <Text style={styles.emptyTitle}>No items found</Text>
-              <Text style={styles.emptyText}>
-                {searchQuery
-                  ? 'Try adjusting your search terms'
-                  : canCreate(PAGE_NAME)
-                  ? 'Create your first item to get started.'
-                  : 'No items available at the moment'}
-              </Text>
-              {canCreate(PAGE_NAME) && !searchQuery && (
-                <TouchableOpacity
-                  style={styles.emptyButton}
-                  onPress={handleCreateItem}>
-                  <Text style={styles.emptyButtonText}>Create Item</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          }
-        />
-      )}
-
-      {/* Pagination */}
-      {(totalPages || 0) > 1 && renderPagination()}
-
-      {/* Create Item FAB */}
-      {canCreate(PAGE_NAME) && (
-        <TouchableOpacity
-          style={styles.fab}
-          onPress={handleCreateItem}
-          activeOpacity={0.8}>
-          <Text style={styles.fabText}>+</Text>
-        </TouchableOpacity>
-      )}
+      <MainBottomTabBar
+        selectedTab={selectedTab}
+        onSelectTab={onSelectMainTab}
+      />
 
       {/* Create Item Modal */}
-      <ItemFormModal
+      <EditItemModal
         visible={createModal}
         onClose={() => {
           setCreateModal(false);
+          setCreateDraftItem(null);
           setSelectedItem(null);
         }}
-        item={null}
-        onSave={handleFormSave}
+        item={createDraftItem}
+        onSave={handleCreateSave}
         canCreate={canCreate(PAGE_NAME)}
         canEdit={canEdit(PAGE_NAME)}
         canDelete={canDelete(PAGE_NAME)}
+        mode="create"
       />
 
       {/* Edit Item Modal */}
@@ -1347,6 +1816,7 @@ const Items = () => {
         }}
         item={selectedItem}
         onSave={handleItemSave}
+        canCreate={canCreate(PAGE_NAME)}
         canEdit={canEdit(PAGE_NAME)}
         canDelete={canDelete(PAGE_NAME)}
       />
@@ -1427,17 +1897,17 @@ const Items = () => {
                 <Text style={styles.filterLabel}>Stock Status</Text>
                 <View style={styles.stockFilterContainer}>
                   {[
-                    {value: 'all', label: 'All Items'},
-                    {value: 'in_stock', label: 'In Stock'},
-                    {value: 'low_stock', label: 'Low Stock'},
-                    {value: 'out_of_stock', label: 'Out of Stock'},
+                    { value: 'all', label: 'All Items' },
+                    { value: 'in_stock', label: 'In Stock' },
+                    { value: 'low_stock', label: 'Low Stock' },
+                    { value: 'out_of_stock', label: 'Out of Stock' },
                   ].map(option => (
                     <TouchableOpacity
                       key={option.value}
                       style={[
                         styles.stockFilterButton,
                         stockFilter === option.value &&
-                          styles.stockFilterButtonActive,
+                        styles.stockFilterButtonActive,
                       ]}
                       onPress={() => setStockFilter(option.value as any)}
                       activeOpacity={0.7}>
@@ -1445,7 +1915,7 @@ const Items = () => {
                         style={[
                           styles.stockFilterText,
                           stockFilter === option.value &&
-                            styles.stockFilterTextActive,
+                          styles.stockFilterTextActive,
                         ]}>
                         {option.label}
                       </Text>
@@ -1500,7 +1970,43 @@ const Items = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.lightGray2,
+  },
+  allItemsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: SIZES.padding,
+    paddingBottom: 10,
+  },
+  headerRoundButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerRoundIcon: {
+    width: 20,
+    height: 20,
+  },
+  allItemsTitle: {
+    flex: 1,
+    textAlign: 'center',
+    ...FONTS.h3,
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+  },
+  headerTrailing: {
+    width: 40,
+    height: 40,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  headerTrailingSpacer: {
+    width: 40,
+    height: 40,
   },
   accessDeniedContainer: {
     flex: 1,
@@ -1511,7 +2017,7 @@ const styles = StyleSheet.create({
     margin: SIZES.base * 2,
     borderRadius: SIZES.radius,
     shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 2},
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 8,
     elevation: 3,
@@ -1528,111 +2034,73 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   searchContainer: {
-    padding: SIZES.base * 2,
-    backgroundColor: COLORS.white,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray1,
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
+    paddingHorizontal: SIZES.padding,
+    paddingTop: 4,
+    paddingBottom: 12,
+  },
+  searchPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: SIZES.base,
-  },
-  searchInputContainer: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.lightGray2,
-    borderRadius: SIZES.radius,
-    paddingHorizontal: SIZES.base * 1.5,
-    height: 48,
-  },
-  searchIconContainer: {
-    marginRight: SIZES.base,
-    justifyContent: 'center',
-    alignItems: 'center',
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    minHeight: 48,
+    borderWidth: StyleSheet.hairlineWidth * 2,
   },
   searchIcon: {
     width: 20,
     height: 20,
-    tintColor: COLORS.gray2,
+    marginRight: 10,
   },
   searchInput: {
     flex: 1,
     ...FONTS.body3,
-    color: COLORS.black,
-    paddingVertical: 0,
+    paddingVertical: 12,
+    minHeight: 48,
   },
-  categoryButton: {
-    width: 48,
-    height: 48,
-    borderRadius: SIZES.radius,
-    backgroundColor: COLORS.lightGray2,
+  filterInlineHit: {
+    position: 'relative',
+    padding: 8,
+    marginRight: -4,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
-    marginRight: SIZES.base,
   },
-  categoryButtonText: {
-    fontSize: 20,
-  },
-  filterButton: {
-    width: 48,
-    height: 48,
-    borderRadius: SIZES.radius,
-    backgroundColor: COLORS.lightGray2,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
-  },
-  filterButtonActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  filterIcon: {
+  filterIconInline: {
     width: 20,
     height: 20,
-    tintColor: COLORS.gray2,
-  },
-  filterIconActive: {
-    tintColor: COLORS.white,
   },
   filterBadge: {
     position: 'absolute',
-    top: 6,
-    right: 6,
+    top: 4,
+    right: 4,
     width: 8,
     height: 8,
     borderRadius: 4,
     backgroundColor: COLORS.error,
   },
+  listFlex: {
+    flex: 1,
+  },
+  listEmptyGrow: {
+    flexGrow: 1,
+  },
+  listFooterLoader: {
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   itemCard: {
-    backgroundColor: COLORS.white,
-    marginHorizontal: SIZES.base * 2,
-    marginVertical: SIZES.base,
-    borderRadius: SIZES.radius,
-    padding: SIZES.base * 2,
+    marginHorizontal: SIZES.padding,
+    paddingVertical: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   itemImageContainer: {
-    width: 72,
-    height: 72,
-    borderRadius: SIZES.radius,
+    width: 44,
+    height: 44,
+    borderRadius: 10,
     overflow: 'hidden',
-    marginRight: SIZES.base * 1.5,
+    marginRight: 14,
     backgroundColor: COLORS.lightGray2,
   },
   itemImage: {
@@ -1642,63 +2110,33 @@ const styles = StyleSheet.create({
   placeholderImage: {
     width: '100%',
     height: '100%',
-    backgroundColor: COLORS.lightGray2,
     justifyContent: 'center',
     alignItems: 'center',
   },
+  itemInitials: {
+    ...FONTS.body3,
+    fontWeight: '700',
+  },
   itemInfo: {
     flex: 1,
-    marginRight: SIZES.base,
   },
-  itemName: {
-    ...FONTS.h4,
-    color: COLORS.black,
-    marginBottom: SIZES.base * 0.5,
-  },
-  priceContainer: {
-    marginBottom: SIZES.base * 0.5,
-  },
-  itemPrice: {
-    ...FONTS.h5,
-    color: COLORS.primary,
-    fontWeight: '600',
-  },
-  stockContainer: {
-    marginTop: SIZES.base * 0.5,
-  },
-  stockIndicator: {
+  itemTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-start',
-    paddingHorizontal: SIZES.base,
-    paddingVertical: SIZES.base * 0.5,
-    borderRadius: 12,
+    justifyContent: 'space-between',
+    gap: 12,
   },
-  stockDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginRight: SIZES.base * 0.5,
+  itemName: {
+    ...FONTS.h3,
+    flex: 1,
+    marginRight: 10,
+    fontSize: 16,
+    fontWeight: '700',
   },
-  itemInventory: {
-    ...FONTS.body5,
-    fontSize: 11,
-  },
-  editButton: {
-    backgroundColor: COLORS.primary,
-    paddingHorizontal: SIZES.base * 2,
-    paddingVertical: SIZES.base * 1.25,
-    borderRadius: SIZES.radius,
-    shadowColor: COLORS.primary,
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  editButtonText: {
-    ...FONTS.button,
-    color: COLORS.white,
-    fontSize: 13,
+  itemPrice: {
+    ...FONTS.body3,
+    fontWeight: '600',
+    flexShrink: 0,
   },
   emptyContainer: {
     flex: 1,
@@ -1738,7 +2176,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primary,
     borderRadius: SIZES.radius,
     shadowColor: COLORS.primary,
-    shadowOffset: {width: 0, height: 2},
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 4,
     elevation: 3,
@@ -1749,42 +2187,26 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
   },
-  fab: {
-    position: 'absolute',
-    right: SIZES.base * 2,
-    bottom: 130, // Position well above bottom navigation
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: COLORS.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 4},
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
-    zIndex: 1000,
-  },
-  fabText: {
-    fontSize: 32,
-    color: COLORS.white,
-    fontWeight: '300',
-    lineHeight: 32,
-  },
   paginationContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: SIZES.base * 2,
-    backgroundColor: COLORS.white,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.lightGray1,
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: -2},
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 3,
+    paddingVertical: 10,
+    paddingHorizontal: SIZES.padding,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  headerActionButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.primary2,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerActionIcon: {
+    width: 18,
+    height: 18,
+    tintColor: COLORS.white,
   },
   pageButton: {
     paddingHorizontal: SIZES.base * 2,
@@ -1815,74 +2237,466 @@ const styles = StyleSheet.create({
     color: COLORS.gray2,
     fontWeight: '500',
   },
-  modalOverlay: {
+  editItemModalRoot: {
     flex: 1,
-    backgroundColor: COLORS.overlay2,
+    backgroundColor: COLORS.white,
+  },
+  editItemModalFlex: {
+    flex: 1,
+    backgroundColor: COLORS.white,
+  },
+  editItemLoadingWrap: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: SIZES.base * 2.5,
+    paddingHorizontal: SIZES.padding,
   },
-  modalContent: {
-    backgroundColor: COLORS.white,
-    borderRadius: SIZES.radius * 2,
-    width: '100%',
-    maxHeight: '90%',
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 10},
-    shadowOpacity: 0.3,
-    shadowRadius: 20,
-    elevation: 15,
-    overflow: 'hidden',
+  editItemLoadingText: {
+    ...FONTS.body3,
+    color: COLORS.gray2,
+    marginTop: SIZES.base * 1.5,
   },
-  modalHeader: {
+  editItemLoadingClose: {
+    marginTop: SIZES.padding * 2,
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+  },
+  editItemLoadingCloseText: {
+    ...FONTS.body3,
+    color: COLORS.primary2,
+    fontWeight: '600',
+  },
+  editItemHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    padding: SIZES.padding,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray1,
+    paddingHorizontal: SIZES.padding,
+    paddingBottom: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     backgroundColor: COLORS.white,
   },
-  modalTitle: {
-    ...FONTS.h2,
-    color: COLORS.black,
-    flex: 1,
+  editItemHeaderSide: {
+    width: 88,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
-  modalCloseButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: COLORS.lightGray2,
+  editItemHeaderSideEnd: {
+    justifyContent: 'flex-end',
+  },
+  editItemHeaderSpacer: {
+    width: 72,
+    height: 36,
+  },
+  editItemCloseCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.lightGray1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  modalCloseIcon: {
-    width: 16,
-    height: 16,
-    tintColor: COLORS.gray2,
+  editItemCloseIcon: {
+    width: 18,
+    height: 18,
+    tintColor: COLORS.black,
+  },
+  editItemHeaderTitle: {
+    flex: 1,
+    textAlign: 'center',
+    ...FONTS.h3,
+    fontSize: 17,
+    fontWeight: '700',
+    color: COLORS.black,
+    letterSpacing: -0.2,
+  },
+  editItemSavePill: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: COLORS.primary2,
+    minWidth: 72,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editItemSavePillText: {
+    ...FONTS.body4,
+    color: COLORS.white,
+    fontWeight: '600',
+    fontSize: 15,
   },
   modalScrollView: {
-    maxHeight: 400,
+    flex: 1,
+    flexGrow: 1,
   },
-  modalScrollContent: {
-    padding: SIZES.padding,
-    paddingBottom: SIZES.base * 2,
+  editItemScrollContent: {
+    paddingHorizontal: SIZES.padding,
+    paddingTop: SIZES.padding * 1.25,
+  },
+  squareTileOuter: {
+    alignSelf: 'center',
+    width: '60%',
+    maxWidth: 180,
+    aspectRatio: 1,
+    backgroundColor: '#ECECEC',
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 10,
+    marginBottom: 10,
+  },
+  squareTileInner: {
+    backgroundColor: COLORS.white,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    width: '66%',
+    minHeight: 72,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  squareTileImage: {
+    width: 56,
+    height: 56,
+    borderRadius: 6,
+    backgroundColor: COLORS.lightGray2,
+  },
+  squareTileInitials: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: COLORS.black,
+    letterSpacing: -0.5,
+  },
+  squareTileName: {
+    ...FONTS.body4,
+    fontSize: 11,
+    color: COLORS.gray2,
+    marginTop: 4,
+    textAlign: 'center',
+    fontWeight: '500',
+  },
+  squareChangeImagePill: {
+    alignSelf: 'center',
+    backgroundColor: '#E8EAED',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 999,
+    marginBottom: 6,
+    minWidth: 124,
+    alignItems: 'center',
+  },
+  squareChangeImagePillText: {
+    ...FONTS.body4,
+    color: COLORS.gray2,
+    fontWeight: '600',
+    fontSize: 13,
+  },
+  squareRemoveImage: {
+    alignSelf: 'center',
+    paddingVertical: 8,
+    marginBottom: 8,
+  },
+  squareRemoveImageText: {
+    ...FONTS.body5,
+    color: COLORS.error,
+    fontWeight: '600',
+  },
+  squareOutlineField: {
+    borderWidth: 1,
+    borderColor: COLORS.lightGray1,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 12,
+    marginBottom: 18,
+    backgroundColor: COLORS.white,
+  },
+  squareOutlineFieldTall: {
+    minHeight: 120,
+    paddingBottom: 14,
+  },
+  squareOutlineLabel: {
+    ...FONTS.body5,
+    fontSize: 12,
+    color: COLORS.gray2,
+    fontWeight: '600',
+    marginBottom: 6,
+  },
+  squareOutlineInput: {
+    ...FONTS.body3,
+    fontSize: 16,
+    color: COLORS.black,
+    padding: 0,
+    margin: 0,
+  },
+  squareOutlineStaticRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  squareOutlineStaticValue: {
+    ...FONTS.body3,
+    fontSize: 16,
+    color: COLORS.black,
+    flex: 1,
+    marginRight: SIZES.base,
+  },
+  squareOutlineLinkValue: {
+    textDecorationLine: 'underline',
+  },
+  squareOutlineStaticChevron: {
+    ...FONTS.body4,
+    color: COLORS.gray2,
+    fontWeight: '700',
+  },
+  inventoryEntriesOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(17, 24, 39, 0.32)',
+    justifyContent: 'flex-end',
+  },
+  inventoryEntriesSheet: {
+    backgroundColor: COLORS.white,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '82%',
+    paddingHorizontal: SIZES.padding,
+    paddingTop: SIZES.padding,
+    paddingBottom: SIZES.padding,
+  },
+  inventoryEntriesHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  inventoryEntriesHeaderTextWrap: {
+    flex: 1,
+    marginRight: 12,
+  },
+  inventoryEntriesTitle: {
+    ...FONTS.h2,
+    color: COLORS.black,
+    fontWeight: '700',
+  },
+  inventoryEntriesSubtitle: {
+    ...FONTS.body4,
+    color: COLORS.gray2,
+    marginTop: 4,
+  },
+  inventoryEntriesCloseButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: COLORS.lightGray2,
+  },
+  inventoryEntriesCloseText: {
+    ...FONTS.body4,
+    color: COLORS.black,
+    fontWeight: '600',
+  },
+  inventoryEntriesSummaryCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+  },
+  inventoryEntriesSummaryLabel: {
+    ...FONTS.body4,
+    color: COLORS.gray2,
+    marginBottom: 6,
+  },
+  inventoryEntriesSummaryValue: {
+    ...FONTS.h1,
+    color: COLORS.black,
+    fontWeight: '700',
+  },
+  inventoryEntriesList: {
+    flexGrow: 0,
+  },
+  inventoryEntriesStateWrap: {
+    paddingVertical: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  inventoryEntriesStateText: {
+    ...FONTS.body4,
+    color: COLORS.gray2,
+    marginTop: 10,
+    textAlign: 'center',
+  },
+  inventoryEntriesErrorText: {
+    ...FONTS.body4,
+    color: COLORS.error,
+    textAlign: 'center',
+  },
+  inventoryEntryCard: {
+    borderWidth: 1,
+    borderColor: COLORS.lightGray1,
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 12,
+    backgroundColor: COLORS.white,
+  },
+  inventoryEntryTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  inventoryEntryType: {
+    ...FONTS.h4,
+    color: COLORS.black,
+    fontWeight: '700',
+  },
+  inventoryEntryDate: {
+    ...FONTS.body5,
+    color: COLORS.gray2,
+  },
+  inventoryEntryDocument: {
+    ...FONTS.body4,
+    color: COLORS.primary2,
+    fontWeight: '600',
+    marginBottom: 10,
+  },
+  inventoryEntryMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginTop: 4,
+  },
+  inventoryEntryMetaText: {
+    ...FONTS.body5,
+    color: COLORS.gray2,
+    flex: 1,
+  },
+  squareOutlineMultiline: {
+    minHeight: 72,
+    paddingTop: 4,
+  },
+  squareSettingsChevron: {
+    width: 14,
+    height: 14,
+    tintColor: COLORS.gray3,
+    transform: [{ rotate: '-90deg' }],
+  },
+  editItemThickBar: {
+    height: 8,
+    backgroundColor: '#EBEBEB',
+    borderRadius: 2,
+    marginVertical: 22,
+    marginHorizontal: -SIZES.padding,
+  },
+  editItemSectionHeading: {
+    ...FONTS.h3,
+    fontSize: 17,
+    fontWeight: '700',
+    color: COLORS.black,
+    marginBottom: 12,
+    letterSpacing: -0.2,
+  },
+  editItemCategoryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    paddingHorizontal: 2,
+  },
+  editItemFolderIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: COLORS.lightGray1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+  editItemFolderIcon: {
+    width: 22,
+    height: 22,
+    tintColor: COLORS.gray2,
+  },
+  editItemCategoryRowText: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 8,
+  },
+  editItemCategoryRowTitle: {
+    ...FONTS.body3,
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.black,
+  },
+  editItemCategoryRowSubtitle: {
+    ...FONTS.body4,
+    fontSize: 14,
+    color: COLORS.gray2,
+    marginTop: 4,
+  },
+  editItemOptionsCopy: {
+    ...FONTS.body4,
+    fontSize: 14,
+    lineHeight: 20,
+    color: COLORS.gray2,
+    marginBottom: 10,
+  },
+  editItemLearnMore: {
+    ...FONTS.body4,
+    fontSize: 15,
+    color: COLORS.black,
+    textDecorationLine: 'underline',
+    fontWeight: '500',
+    marginBottom: 18,
+  },
+  editItemAddOptionsPill: {
+    alignSelf: 'stretch',
+    backgroundColor: '#E8EAED',
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 999,
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  editItemAddOptionsPillText: {
+    ...FONTS.body3,
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.black,
+  },
+  squarePriceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  squarePricePrefix: {
+    ...FONTS.body3,
+    fontSize: 16,
+    fontWeight: '600',
+    color: COLORS.primary2,
+    marginRight: 8,
+  },
+  squarePriceInput: {
+    flex: 1,
+    ...FONTS.body3,
+    fontSize: 16,
+    color: COLORS.black,
+    padding: 0,
   },
   imageSection: {
     alignItems: 'center',
     marginBottom: SIZES.padding,
-    backgroundColor: COLORS.lightGray2,
-    borderRadius: SIZES.radius * 1.5,
-    padding: SIZES.base * 2.5,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: SIZES.base * 1.5,
     borderWidth: 1,
     borderColor: COLORS.lightGray1,
-    marginTop: SIZES.base,
   },
   productImageLarge: {
-    width: 160,
-    height: 160,
+    width: 130,
+    height: 130,
     borderRadius: SIZES.radius,
-    marginBottom: SIZES.base * 2,
+    marginBottom: SIZES.base * 1.5,
     borderWidth: 2,
     borderColor: COLORS.lightGray1,
     backgroundColor: COLORS.white,
@@ -1890,12 +2704,14 @@ const styles = StyleSheet.create({
   imagePickerButton: {
     backgroundColor: COLORS.primary,
     paddingHorizontal: SIZES.base * 1.5,
-    paddingVertical: SIZES.base * 1.5,
-    borderRadius: SIZES.radius,
+    minHeight: 48,
+    borderRadius: 10,
     flex: 1,
     marginHorizontal: SIZES.base * 0.5,
+    justifyContent: 'center',
+    alignItems: 'center',
     shadowColor: COLORS.primary,
-    shadowOffset: {width: 0, height: 2},
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 4,
     elevation: 3,
@@ -1909,12 +2725,14 @@ const styles = StyleSheet.create({
   deleteImageButton: {
     backgroundColor: COLORS.error,
     paddingHorizontal: SIZES.base * 1.5,
-    paddingVertical: SIZES.base * 1.5,
-    borderRadius: SIZES.radius,
+    minHeight: 48,
+    borderRadius: 10,
     flex: 1,
     marginHorizontal: SIZES.base * 0.5,
+    justifyContent: 'center',
+    alignItems: 'center',
     shadowColor: COLORS.error,
-    shadowOffset: {width: 0, height: 2},
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 4,
     elevation: 3,
@@ -1996,13 +2814,13 @@ const styles = StyleSheet.create({
   input: {
     borderWidth: 1,
     borderColor: COLORS.lightGray1,
-    borderRadius: SIZES.radius,
+    borderRadius: 10,
     paddingHorizontal: SIZES.base * 1.5,
     paddingVertical: SIZES.base * 1.5,
     ...FONTS.body3,
     color: COLORS.black,
     marginBottom: SIZES.base * 2,
-    backgroundColor: COLORS.lightGray2,
+    backgroundColor: '#F8FAFC',
     minHeight: 48,
   },
   priceInputContainer: {
@@ -2010,8 +2828,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderColor: COLORS.lightGray1,
-    borderRadius: SIZES.radius,
-    backgroundColor: COLORS.lightGray2,
+    borderRadius: 10,
+    backgroundColor: '#F8FAFC',
     marginBottom: SIZES.base * 2,
     paddingHorizontal: SIZES.base * 1.5,
     minHeight: 48,
@@ -2031,30 +2849,118 @@ const styles = StyleSheet.create({
   pickerContainer: {
     borderWidth: 1,
     borderColor: COLORS.lightGray1,
-    borderRadius: SIZES.radius,
+    borderRadius: 10,
     marginBottom: SIZES.base * 2,
-    backgroundColor: COLORS.lightGray2,
+    backgroundColor: '#F8FAFC',
+    // Picker dropdown can extend beyond the container bounds on Android.
+    // If we clip it, the dropdown can appear as a black block.
+    overflow: 'visible',
+  },
+  picker: {
+    height: 50,
+    color: COLORS.black,
+  },
+  pickerItem: {
+    color: COLORS.black,
+  },
+  categoryPickerButton: {
+    height: 50,
+    paddingHorizontal: SIZES.base * 1.5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  categoryPickerButtonText: {
+    ...FONTS.body3,
+    color: COLORS.black,
+    flex: 1,
+    marginRight: SIZES.base,
+  },
+  categoryPickerButtonPlaceholder: {
+    color: COLORS.gray3,
+  },
+  categoryPickerArrow: {
+    width: 16,
+    height: 16,
+    tintColor: COLORS.gray2,
+  },
+  categoryPickerModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: SIZES.base * 2,
+  },
+  categoryPickerModalContent: {
+    width: '100%',
+    backgroundColor: COLORS.white,
+    borderRadius: SIZES.radius * 2,
+    maxHeight: 320,
     overflow: 'hidden',
+    elevation: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.2,
+    shadowRadius: 24,
   },
-  picker: {
-    height: 50,
+  categoryPickerModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: SIZES.padding,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.lightGray1,
+  },
+  categoryPickerModalTitle: {
+    ...FONTS.h3,
     color: COLORS.black,
   },
-  pickerItem: {
-    color: COLORS.black,
+  categoryPickerCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.lightGray2,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  picker: {
-    height: 50,
-    color: COLORS.black,
+  categoryPickerCloseIcon: {
+    width: 16,
+    height: 16,
+    tintColor: COLORS.gray2,
   },
-  pickerItem: {
+  categoryPickerModalList: {
+    maxHeight: 240,
+  },
+  categoryPickerModalItem: {
+    paddingHorizontal: SIZES.padding,
+    paddingVertical: SIZES.base * 1.5,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.lightGray1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  categoryPickerModalItemText: {
+    ...FONTS.body3,
     color: COLORS.black,
+    flex: 1,
+    marginRight: SIZES.base,
+  },
+  categoryPickerModalItemTextSelected: {
+    color: COLORS.primary,
+    fontWeight: '600',
+  },
+  categoryPickerCheckIcon: {
+    width: 18,
+    height: 18,
+    tintColor: COLORS.primary,
   },
   buttonContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    padding: SIZES.padding,
-    paddingTop: SIZES.base * 2,
+    paddingHorizontal: SIZES.padding,
+    paddingTop: SIZES.base * 1.5,
+    paddingBottom: SIZES.base * 2,
     gap: SIZES.base,
     borderTopWidth: 1,
     borderTopColor: COLORS.lightGray1,
@@ -2063,31 +2969,57 @@ const styles = StyleSheet.create({
   },
   button: {
     flex: 1,
-    paddingVertical: SIZES.base * 1.5,
-    borderRadius: SIZES.radius,
+    minHeight: 48,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
     shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 2,
+    elevation: 1,
   },
   cancelButton: {
-    backgroundColor: COLORS.error,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.lightGray1,
   },
   saveButton: {
-    backgroundColor: COLORS.success,
+    backgroundColor: COLORS.primary,
   },
   buttonText: {
     ...FONTS.button,
     color: COLORS.white,
     textAlign: 'center',
     fontSize: 15,
+    fontWeight: '600',
+  },
+  imageActionButtonText: {
+    ...FONTS.body4,
+    color: COLORS.white,
+    textAlign: 'center',
+    fontWeight: '700',
+  },
+  cancelButtonText: {
+    ...FONTS.button,
+    color: COLORS.gray2,
+    textAlign: 'center',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  saveButtonText: {
+    ...FONTS.button,
+    color: COLORS.white,
+    textAlign: 'center',
+    fontSize: 15,
+    fontWeight: '700',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: SIZES.padding * 2,
+    minHeight: 200,
   },
   loadingSpinner: {
     alignItems: 'center',
@@ -2115,7 +3047,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 6,
   },
   errorContainer: {
     backgroundColor: COLORS.error + '15',
@@ -2127,7 +3059,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     shadowColor: COLORS.error,
-    shadowOffset: {width: 0, height: 2},
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
@@ -2168,7 +3100,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     shadowColor: COLORS.success,
-    shadowOffset: {width: 0, height: 2},
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
@@ -2215,7 +3147,7 @@ const styles = StyleSheet.create({
     maxWidth: 300,
     width: '100%',
     shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 10},
+    shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.3,
     shadowRadius: 20,
     elevation: 15,
@@ -2229,7 +3161,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: SIZES.base * 2.5,
     shadowColor: COLORS.success,
-    shadowOffset: {width: 0, height: 4},
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 5,
@@ -2258,7 +3190,7 @@ const styles = StyleSheet.create({
     paddingVertical: SIZES.base * 1.5,
     borderRadius: SIZES.radius,
     shadowColor: COLORS.success,
-    shadowOffset: {width: 0, height: 4},
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 5,
@@ -2281,7 +3213,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: SIZES.radius * 2,
     maxHeight: '80%',
     shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: -5},
+    shadowOffset: { width: 0, height: -5 },
     shadowOpacity: 0.2,
     shadowRadius: 10,
     elevation: 10,
@@ -2371,7 +3303,7 @@ const styles = StyleSheet.create({
   applyFilterButton: {
     backgroundColor: COLORS.primary,
     shadowColor: COLORS.primary,
-    shadowOffset: {width: 0, height: 2},
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.2,
     shadowRadius: 4,
     elevation: 3,

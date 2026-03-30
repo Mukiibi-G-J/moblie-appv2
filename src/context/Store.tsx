@@ -1,9 +1,18 @@
-import React, {createContext, useContext, useEffect, useState} from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {DeviceEventEmitter} from 'react-native';
 import {loginUser} from '../services/auth.services';
 import {jwtDecode} from 'jwt-decode';
 import Toast from 'react-native-toast-message';
 import {AuthState, DecodedToken} from '../types/auth';
+import {AUTH_FORCE_LOGOUT_EVENT} from '../utils/authEvents';
 
 export interface AppContextType {
   auth: AuthState;
@@ -14,10 +23,10 @@ export interface AppContextType {
   }) => Promise<any>;
   logout: () => Promise<void>;
   clearAuthState: () => void;
-  selectedTab: string;
-  setSelectedTab: (tab: string) => void;
 }
 const AppContext = createContext<AppContextType | null>(null);
+const SelectedTabContext = createContext<string>('Home');
+const SetSelectedTabContext = createContext<(tab: string) => void>(() => {});
 
 const getEmptyAuthState = (): AuthState => ({
   user_id: '',
@@ -40,19 +49,19 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
   const [cartItems, setCartItems] = useState([]);
   const [selectedTab, setSelectedTab] = useState('Home');
 
-  const clearAuthState = () => {
+  const clearAuthState = useCallback(() => {
     // Clear auth state without clearing AsyncStorage (for token expiry scenarios)
     setAuth(getEmptyAuthState());
 
     // Clear cart items from state
     setCartItems([]);
-  };
+  }, []);
 
   /**
    * Map decoded JWT token to AuthState
    * Extracts all permission fields from the token
    */
-  const mapTokenToAuthState = (decodedToken: DecodedToken): AuthState => {
+  const mapTokenToAuthState = useCallback((decodedToken: DecodedToken): AuthState => {
     return {
       user_id: decodedToken.user_id?.toString() || '',
       username: decodedToken.username || '',
@@ -71,7 +80,7 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
       permission_sets: decodedToken.permission_sets || [],
       page_permissions: decodedToken.page_permissions || {},
     };
-  };
+  }, []);
 
   // Check for accessToken in AsyncStorage on mount
   useEffect(() => {
@@ -111,7 +120,7 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
       }
     };
     checkAccessToken();
-  }, []);
+  }, [clearAuthState, mapTokenToAuthState]);
 
   // Load cart items from AsyncStorage on mount
   useEffect(() => {
@@ -124,7 +133,7 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
     loadCartItems();
   }, []);
 
-  const login = async (userCredentials: {
+  const login = useCallback(async (userCredentials: {
     email: string;
     password: string;
     tenant?: string;
@@ -171,9 +180,9 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
     } catch (error) {
       throw error; // Rethrow the error to be caught in SignIn
     }
-  };
+  }, [clearAuthState, mapTokenToAuthState]);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     // Clear auth state
     setAuth(getEmptyAuthState());
 
@@ -186,25 +195,57 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
     setTimeout(() => {
       setAuth(prevAuth => ({...prevAuth}));
     }, 100);
-  };
+  }, []);
+
+  // Ensure axios/network layer can force logout (e.g. on 401).
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener(AUTH_FORCE_LOGOUT_EVENT, () => {
+      logout();
+    });
+    return () => {
+      sub.remove();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const appContextValue = useMemo(
+    () => ({
+      auth,
+      login,
+      logout,
+      clearAuthState,
+    }),
+    [auth, clearAuthState, login, logout],
+  );
 
   return (
-    <AppContext.Provider
-      value={{
-        auth,
-        login,
-        logout,
-        clearAuthState,
-        selectedTab,
-        setSelectedTab,
-      }}>
-      {children}
+    <AppContext.Provider value={appContextValue}>
+      <SelectedTabContext.Provider value={selectedTab}>
+        <SetSelectedTabContext.Provider value={setSelectedTab}>
+          {children}
+        </SetSelectedTabContext.Provider>
+      </SelectedTabContext.Provider>
     </AppContext.Provider>
   );
 };
 
 export const useAppContext = () => {
   return useContext(AppContext);
+};
+
+export const useSelectedTab = () => {
+  return useContext(SelectedTabContext);
+};
+
+export const useSetSelectedTab = () => {
+  return useContext(SetSelectedTabContext);
+};
+
+export const useTabContext = () => {
+  return {
+    selectedTab: useSelectedTab(),
+    setSelectedTab: useSetSelectedTab(),
+  };
 };
 
 // New useAuth hook

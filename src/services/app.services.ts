@@ -26,6 +26,70 @@ export const searchItems = async (searchQuery: string): Promise<CartItem[]> => {
   }
 };
 
+/** Single page from item ledger API (lot / remaining qty for sales tracking). */
+export type ItemLedgerApiPage = {
+  results?: ItemLedgerEntryRow[];
+  ledger_entries?: ItemLedgerEntryRow[];
+  count?: number;
+  next?: string | null;
+};
+
+export type ItemLedgerEntryRow = {
+  lot_no?: string;
+  remaining_quantity?: number;
+  document_no?: string;
+  entry_type?: string;
+  document_type?: string;
+  expiry_date?: string;
+};
+
+export const getItemLedgerEntries = async (
+  itemId: string | number,
+  page: number = 1,
+  pageSize: number = 500,
+): Promise<ItemLedgerApiPage> => {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axios = createAxiosInstance(tenant) || undefined;
+  const response = await axios.get(`/api/item-ledger/${itemId}/`, {
+    params: {page, page_size: pageSize},
+  });
+  return response.data;
+};
+
+/** Paginate until no more pages (aligned with zentro-web POS). */
+export const fetchAllItemLedgerEntries = async (
+  itemNo: string | number,
+  maxPages: number = 50,
+): Promise<ItemLedgerEntryRow[]> => {
+  let allEntries: ItemLedgerEntryRow[] = [];
+  let page = 1;
+  const pageSize = 500;
+  let totalCount = 0;
+
+  while (page <= maxPages) {
+    const data = await getItemLedgerEntries(itemNo, page, pageSize);
+    const pageEntries = data.results || data.ledger_entries || [];
+    allEntries = [...allEntries, ...pageEntries];
+
+    if (page === 1 && data.count !== undefined) {
+      totalCount = data.count;
+    }
+
+    const hasNextUrl = data.next !== null && data.next !== undefined;
+    const gotFullPage = pageEntries.length === pageSize;
+    const hasMoreEntries =
+      totalCount > 0 ? allEntries.length < totalCount : gotFullPage;
+
+    const hasMore = hasNextUrl || (gotFullPage && hasMoreEntries);
+    if (!hasMore) {
+      break;
+    }
+    page++;
+  }
+
+  return allEntries;
+};
+
 // New function to fetch purchase data
 export const fetchPurchasesData = async (filters?: {
   startDate?: string;
@@ -170,9 +234,8 @@ export const fetchVendors = async (search?: string): Promise<any[]> => {
   }
 };
 
-// New function to fetch sales data
-// Matches the web frontend implementation in SalesHistory.tsx
-export const fetchSalesData = async (filters?: {
+/** Query params aligned with zentro-web SalesHistory / SalesServices.getSales */
+export type SalesHistoryListFilters = {
   startDate?: string;
   endDate?: string;
   status?: string;
@@ -180,44 +243,121 @@ export const fetchSalesData = async (filters?: {
   page?: number;
   pageSize?: number;
   search?: string;
-}) => {
-  try {
-    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const axiosInstance = createAxiosInstance(tenant) || undefined;
+};
 
-    // Build query parameters matching web frontend structure
-    const params: any = {};
+function buildSalesHistoryQueryParams(
+  filters?: SalesHistoryListFilters,
+  options?: {omitPagination?: boolean},
+) {
+  const params: Record<string, string | number> = {};
 
-    // Status filter (web uses status: "Posted")
-    if (filters?.status) {
-      params.status = filters.status;
-    }
-
-    // Date range filters (web uses date_range_after and date_range_before)
-    if (filters?.startDate) {
-      params.date_range_after = filters.startDate;
-    }
-    if (filters?.endDate) {
-      params.date_range_before = filters.endDate;
-    }
-
-    // Payment method filter (optional)
-    if (filters?.paymentMethod) {
-      params.payment_method = filters.paymentMethod;
-    }
-
-    // Pagination (optional)
+  if (filters?.status) {
+    params.status = filters.status;
+  }
+  if (filters?.startDate) {
+    params.date_range_after = filters.startDate;
+  }
+  if (filters?.endDate) {
+    params.date_range_before = filters.endDate;
+  }
+  if (filters?.paymentMethod) {
+    params.payment_method = filters.paymentMethod;
+  }
+  if (filters?.search) {
+    params.search = filters.search;
+  }
+  if (!options?.omitPagination) {
     if (filters?.page) {
       params.page = filters.page;
     }
     if (filters?.pageSize) {
       params.page_size = filters.pageSize;
     }
+  }
 
-    // Search (optional)
-    if (filters?.search) {
-      params.search = filters.search;
+  return params;
+}
+
+export type SalesHistorySummary = {
+  total_sales: number;
+  total_products: number;
+  total_invoices: number;
+};
+
+export type SalesUserSummaryRow = {
+  user_id: number | null;
+  user_name: string;
+  total_sales: number;
+  total_products: number;
+  total_invoices: number;
+};
+
+/**
+ * GET /api/sales/summary/ — same filters as list (no pagination), matches web SalesServices.getSalesSummary.
+ * May 403 if user lacks Sales History summary permission (object 10004); returns null on any error.
+ */
+export const fetchSalesSummary = async (
+  filters?: Omit<SalesHistoryListFilters, 'page' | 'pageSize'>,
+): Promise<SalesHistorySummary | null> => {
+  try {
+    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+    const axiosInstance = createAxiosInstance(tenant) || undefined;
+    const params = buildSalesHistoryQueryParams(filters, {omitPagination: true});
+    const response = await axiosInstance.get('/api/sales/summary/', {params});
+    const d = response.data;
+    if (!d || typeof d !== 'object') {
+      return null;
     }
+    return {
+      total_sales: Number(d.total_sales ?? 0),
+      total_products: Number(d.total_products ?? 0),
+      total_invoices: Number(d.total_invoices ?? 0),
+    };
+  } catch (e) {
+    console.warn('fetchSalesSummary: summary endpoint unavailable or forbidden', e);
+    return null;
+  }
+};
+
+/**
+ * GET /api/sales/summary/?group_by=user — matches web SalesServices.getSalesUserSummary.
+ */
+export const fetchSalesUserSummary = async (
+  filters?: Omit<SalesHistoryListFilters, 'page' | 'pageSize'>,
+): Promise<SalesUserSummaryRow[]> => {
+  try {
+    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+    const axiosInstance = createAxiosInstance(tenant) || undefined;
+    const params = {
+      ...buildSalesHistoryQueryParams(filters, {omitPagination: true}),
+      group_by: 'user',
+    };
+    const response = await axiosInstance.get('/api/sales/summary/', {params});
+    const users = response.data?.users;
+    if (!Array.isArray(users)) {
+      return [];
+    }
+    return users.map((u: any) => ({
+      user_id: u.user_id ?? null,
+      user_name: String(u.user_name ?? ''),
+      total_sales: Number(u.total_sales ?? 0),
+      total_products: Number(u.total_products ?? 0),
+      total_invoices: Number(u.total_invoices ?? 0),
+    }));
+  } catch (e) {
+    console.warn('fetchSalesUserSummary: user summary unavailable', e);
+    return [];
+  }
+};
+
+// New function to fetch sales data
+// Matches the web frontend implementation in SalesHistory.tsx
+export const fetchSalesData = async (filters?: SalesHistoryListFilters) => {
+  try {
+    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+    const axiosInstance = createAxiosInstance(tenant) || undefined;
+
+    const params = buildSalesHistoryQueryParams(filters);
 
     console.log('fetchSalesData: Making API call with params:', params);
     const response = await axiosInstance.get('/api/sales/', {params});
@@ -654,6 +794,48 @@ export const fetchExpenseBreakdownReport = async (params?: {
   }
 };
 
+export const fetchProfitLossStatement = async (params?: {
+  startDate?: string;
+  endDate?: string;
+}) => {
+  try {
+    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+    const axiosInstance = createAxiosInstance(tenant) || undefined;
+    const response = await axiosInstance.get(
+      '/api/sales-dashboard/profit_loss_statement/',
+      {
+        params: {
+          start_date: params?.startDate,
+          end_date: params?.endDate,
+        },
+      },
+    );
+    return response?.data;
+  } catch (error) {
+    console.error('Error fetching profit & loss statement:', error);
+    throw error;
+  }
+};
+
+export const fetchBalanceSheetReport = async (asOfDate?: string) => {
+  try {
+    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+    const axiosInstance = createAxiosInstance(tenant) || undefined;
+    const response = await axiosInstance.get(
+      '/api/sales-dashboard/balance_sheet_report/',
+      {
+        params: {
+          as_of_date: asOfDate,
+        },
+      },
+    );
+    return response?.data;
+  } catch (error) {
+    console.error('Error fetching balance sheet report:', error);
+    throw error;
+  }
+};
+
 // Create a new item (uses upsert endpoint without system_id)
 export const createItem = async (itemData: Partial<Item>) => {
   try {
@@ -1064,7 +1246,18 @@ export const fetchKPIMetrics = async (): Promise<KPIMetrics | null> => {
       total_products: totalProducts,
     };
   } catch (error: any) {
-    console.error('Error fetching KPI metrics:', error);
+    // Subscription expiry (402) is expected on trial end; redirect handling happens in axios interceptor.
+    const errStr =
+      typeof error === 'string'
+        ? error
+        : error?.message || error?.toString?.() || '';
+    const looksLikeSubscriptionExpired =
+      errStr.includes('trial period has ended') ||
+      errStr.includes('proceed to the subscription page') ||
+      errStr.includes('subscription_expired');
+    if (!looksLikeSubscriptionExpired) {
+      console.error('Error fetching KPI metrics:', error);
+    }
     return null;
   }
 };

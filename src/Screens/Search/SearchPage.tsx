@@ -127,6 +127,24 @@ const SearchPage = () => {
     navigation.goBack();
   };
 
+  const openBarcodeScanner = () => {
+    if (!searchMode.barcodeScannerEnabled) {
+      Toast.show({
+        type: 'info',
+        text1: 'Scanner Disabled',
+        text2: 'Enable barcode scanner in Settings to use camera scan.',
+      });
+      return;
+    }
+
+    navigation.navigate('BarcodeScanner' as never, {
+      onScan: (scannedCode: string) => {
+        setSearchQuery(scannedCode);
+        handleSearch(scannedCode);
+      },
+    } as never);
+  };
+
   const renderSearchItem = ({item}: {item: CartItem}) => (
     <TouchableOpacity style={styles.searchItem} onPress={() => addToCart(item)}>
       <View style={styles.itemImageContainer}>
@@ -266,6 +284,15 @@ const SearchPage = () => {
               )}
             </TouchableOpacity>
           )}
+
+          {searchMode.barcodeScannerEnabled && (
+            <TouchableOpacity
+              style={styles.scanButton}
+              onPress={openBarcodeScanner}
+              disabled={isSearching}>
+              <Image source={icons.focus} style={styles.scanIcon} />
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Search Results */}
@@ -347,6 +374,21 @@ const styles = StyleSheet.create({
     minWidth: 80,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  scanButton: {
+    marginLeft: SIZES.base,
+    backgroundColor: COLORS.primary2,
+    paddingHorizontal: SIZES.base + 2,
+    paddingVertical: SIZES.base,
+    borderRadius: SIZES.radius,
+    minWidth: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scanIcon: {
+    width: 20,
+    height: 20,
+    tintColor: COLORS.white,
   },
   searchButtonText: {
     color: COLORS.white,

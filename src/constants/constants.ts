@@ -1,11 +1,13 @@
 const onboarding_screens = [
   {
     id: 1,
+    /** Full-bleed hero (reference: square screen style) — headline + bottom pill CTAs */
+    heroMode: true,
     backgroundImage: require('../assets/images/background_01.png'),
     bannerImage: require('../assets/images/onBoarding_First.jpg'),
-    title: 'Modern POS Solution',
+    title: 'Run your business from one place.',
     description:
-      'Streamline your daily transactions with our integrated point of sale system',
+      'Point of sale, inventory, and insights — built for how you work.',
   },
   {
     id: 2,
@@ -44,11 +46,14 @@ const onboarding_screens = [
 const screens = {
   main_layout: 'MainLayout',
   home: 'Home',
+  makeSale: 'Make Sale',
   sales: 'Sales',
   items: 'Items',
   itemCategories: 'Item Categories',
   customers: 'Customers',
   reports: 'Reports',
+  /** Bottom tab label — still mounts the Reports screen. */
+  more: 'More',
   my_wallet: 'My Wallet',
   settings: 'Settings',
   itemJournal: 'Item Journal',
@@ -76,19 +81,15 @@ const bottom_tabs = [
   },
   {
     id: 1,
-    label: screens.sales,
+    label: screens.makeSale,
   },
   {
     id: 2,
-    label: screens.items,
+    label: screens.sales,
   },
   {
     id: 3,
-    label: screens.customers,
-  },
-  {
-    id: 4,
-    label: screens.reports,
+    label: screens.more,
   },
 ];
 

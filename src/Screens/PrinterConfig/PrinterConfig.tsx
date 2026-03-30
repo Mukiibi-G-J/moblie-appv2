@@ -16,8 +16,11 @@ import PrintService, {PrinterType} from '../../services/PrintService';
 import BluetoothPrinterService, {
   BluetoothDevice,
 } from '../../services/BluetoothPrinterService';
+import Header from '../../Components/Header';
+import {useNavigation} from '@react-navigation/native';
 
 const PrinterConfig: React.FC = () => {
+  const navigation = useNavigation<any>();
   const [printerType, setPrinterType] = useState<PrinterType>('auto');
   const [isLoading, setIsLoading] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
@@ -209,11 +212,26 @@ const PrinterConfig: React.FC = () => {
     }
   };
 
+  const showHelpInfo = () => {
+    Alert.alert(
+      'Printer Setup Help',
+      '1. Choose your printer type.\n2. For Bluetooth printers, pair in Android Bluetooth Settings first.\n3. Tap "Scan for Printers" and select your device.\n4. Use "Test Printer" to verify everything works.',
+      [{text: 'OK'}],
+    );
+  };
+
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Printer Configuration</Text>
-      </View>
+      <Header
+        title="Printer Configuration"
+        showBack
+        onBackPress={() => navigation.goBack()}
+        rightComponent={
+          <TouchableOpacity style={styles.helpButton} onPress={showHelpInfo}>
+            <Text style={styles.helpButtonText}>?</Text>
+          </TouchableOpacity>
+        }
+      />
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         {/* Printer Type Selection */}
@@ -425,15 +443,20 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.white,
   },
-  header: {
-    padding: SIZES.padding,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray2,
+  helpButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.lightGray2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.white,
   },
-  title: {
-    ...FONTS.h2,
-    color: COLORS.black,
-    fontWeight: 'bold',
+  helpButtonText: {
+    ...FONTS.h3,
+    color: COLORS.primary,
+    lineHeight: 24,
   },
   content: {
     flex: 1,

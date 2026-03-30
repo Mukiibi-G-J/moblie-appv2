@@ -15,7 +15,10 @@ import {
   Modal,
   Button,
   Alert,
+  PermissionsAndroid,
+  Dimensions,
 } from 'react-native';
+import {Camera, CameraType} from 'react-native-camera-kit';
 import {SwipeListView} from 'react-native-swipe-list-view';
 import {
   createSales,
@@ -29,6 +32,7 @@ import {
   fetchPaymentMethods,
   Customer,
   PaymentMethod,
+  fetchAllItemLedgerEntries,
 } from '../../services/app.services';
 import Toast from 'react-native-toast-message';
 import ReactNativeModal from 'react-native-modal';
@@ -50,10 +54,23 @@ import {useCart} from '../../context/CartStore';
 import {useIsFocused} from '@react-navigation/native';
 import {handlePrint} from '../../Components/HandlePrint';
 import {SalesPostData, CartItem} from '../../@types/types.dto';
-import SearchBar from '../../Components/SearchBar';
 import SalesCompletionModal from '../../Components/SalesCompletionModal';
+import {useSearchMode} from '../../context/SearchModeStore';
+import TrackingSelectionModal from '../../Components/TrackingSelectionModal';
+import SalesItemBrowser from '../../Components/SalesItemBrowser';
+import {
+  buildFifoTrackingOptions,
+  shouldEnforceTrackingSelection,
+  trackingDetailsFromOption,
+  validateCartTracking,
+} from '../../utils/salesTracking';
+import type {TrackingLotOption} from '../../utils/salesTracking';
+import {playBarcodeBeep} from '../../utils/barcodeFeedback';
 // import {SaleResult} from '../../services/SalesService';
 // PrinterTestButton import removed - keeping test code in PrintService
+
+const SCANNER_VIEWPORT_HEIGHT = Math.round(SIZES.height * 0.18);
+const FULL_SWIPE_DELETE_THRESHOLD = Math.round(Dimensions.get('window').width * 0.68);
 
 const formatDate = (date: Date | string | undefined) => {
   if (!date) return '';
@@ -65,7 +82,24 @@ const formatDate = (date: Date | string | undefined) => {
   });
 };
 
-const Cart = ({navigation}: {navigation: any}) => {
+const formatMoney = (value: number | string | undefined | null) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return '0.00';
+  }
+  return parsed.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+};
+
+const Cart = ({
+  navigation,
+  isTabMode = false,
+}: {
+  navigation: any;
+  isTabMode?: boolean;
+}) => {
   const [myCartList, setMyCartList] = React.useState(dummyData.myCart);
   const [searchQuery, setSearchQuery] = useState('');
   const [modalItems, setModalItems] = useState<CartItem[]>([]);
@@ -90,15 +124,77 @@ const Cart = ({navigation}: {navigation: any}) => {
   const [showSalesModal, setShowSalesModal] = useState(false);
   const [globalSellingDate, setGlobalSellingDate] = useState(new Date());
   const [showGlobalDatePicker, setShowGlobalDatePicker] = useState(false);
+  const {state: searchModeState} = useSearchMode();
   
   // Drafts state
   const [drafts, setDrafts] = useState<any[]>([]);
   const [loadingDrafts, setLoadingDrafts] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
-  const [showDraftsSection, setShowDraftsSection] = useState(true);
+  const [draftsModalVisible, setDraftsModalVisible] = useState(false);
   const [loadingDraftIntoCart, setLoadingDraftIntoCart] = useState(false);
   const [currentDraftId, setCurrentDraftId] = useState<number | null>(null); // Track loaded draft
   const [currentDraftSystemId, setCurrentDraftSystemId] = useState<string | null>(null); // Track loaded draft system_id
+
+  const [trackingModalVisible, setTrackingModalVisible] = useState(false);
+  const [trackingModalItem, setTrackingModalItem] = useState<CartItem | null>(
+    null,
+  );
+  const [trackingOptions, setTrackingOptions] = useState<TrackingLotOption[]>(
+    [],
+  );
+  const [loadingTrackingOptions, setLoadingTrackingOptions] = useState(false);
+  const [saleCustomers, setSaleCustomers] = useState<Customer[]>([]);
+  const [loadingSaleCustomers, setLoadingSaleCustomers] = useState(false);
+  const [selectedSaleCustomer, setSelectedSaleCustomer] = useState<Customer | null>(
+    null,
+  );
+  const [customerPickerVisible, setCustomerPickerVisible] = useState(false);
+  const [customerPickerQuery, setCustomerPickerQuery] = useState('');
+  const [reviewSaleVisible, setReviewSaleVisible] = useState(false);
+  const [saleActionsVisible, setSaleActionsVisible] = useState(false);
+  const swipeDeletingIdsRef = useRef<Set<string>>(new Set());
+
+  /** Android embedded scanner */
+  const [cameraPermission, setCameraPermission] = useState<boolean | null>(
+    Platform.OS === 'android' ? null : false,
+  );
+  const [scannerTorchOn, setScannerTorchOn] = useState(false);
+  const lastEmbeddedScanRef = useRef<{value: string; at: number} | null>(null);
+
+  const requestCartCameraPermission = React.useCallback(async () => {
+    if (Platform.OS !== 'android') {
+      setCameraPermission(false);
+      return;
+    }
+    try {
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.CAMERA,
+        {
+          title: 'Camera permission',
+          message: 'Camera access is needed to scan barcodes on this screen.',
+          buttonPositive: 'Allow',
+          buttonNegative: 'Deny',
+        },
+      );
+      setCameraPermission(granted === PermissionsAndroid.RESULTS.GRANTED);
+    } catch {
+      setCameraPermission(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !searchModeState.barcodeScannerEnabled) {
+      setCameraPermission(Platform.OS === 'android' ? null : false);
+      return;
+    }
+    requestCartCameraPermission();
+  }, [searchModeState.barcodeScannerEnabled, requestCartCameraPermission]);
+
+  useEffect(() => {
+    if (!isFocused) {
+      setScannerTorchOn(false);
+    }
+  }, [isFocused]);
 
   useEffect(() => {
     const keyboardDidShowListener = Keyboard.addListener(
@@ -124,8 +220,41 @@ const Cart = ({navigation}: {navigation: any}) => {
   useEffect(() => {
     if (isFocused) {
       loadDrafts();
+      loadSaleCustomers();
     }
   }, [isFocused]);
+
+  useEffect(() => {
+    if (drafts.length === 0 && draftsModalVisible) {
+      setDraftsModalVisible(false);
+    }
+  }, [drafts.length, draftsModalVisible]);
+
+  const loadSaleCustomers = async () => {
+    try {
+      setLoadingSaleCustomers(true);
+      const customersData = await fetchCustomers();
+      setSaleCustomers(customersData);
+
+      const generalCustomer =
+        customersData.find(customer => {
+          const name = customer.name?.trim().toLowerCase() || '';
+          const no = customer.no?.trim().toLowerCase() || '';
+          return (
+            name === 'general' ||
+            name === 'general customer' ||
+            no.includes('gen')
+          );
+        }) || null;
+
+      setSelectedSaleCustomer(previous => previous ?? generalCustomer);
+    } catch (error) {
+      console.error('Failed to load sale customers:', error);
+      setSaleCustomers([]);
+    } finally {
+      setLoadingSaleCustomers(false);
+    }
+  };
 
   // Handle modal visibility with keyboard
   useEffect(() => {
@@ -285,6 +414,52 @@ const Cart = ({navigation}: {navigation: any}) => {
     }
   };
 
+  const openBarcodeScanner = () => {
+    if (!searchModeState.barcodeScannerEnabled) {
+      Toast.show({
+        type: 'info',
+        text1: 'Scanner Disabled',
+        text2: 'Enable barcode scanner in Settings to use camera scan.',
+        visibilityTime: 3000,
+        position: 'top',
+      });
+      return;
+    }
+
+    navigation.navigate('BarcodeScanner', {
+      onScan: (scannedCode: string) => handleSearch(scannedCode),
+    });
+  };
+
+  const handleEmbeddedBarcodeRead = (event: {
+    nativeEvent?: {codeStringValue?: string};
+  }) => {
+    const scannedCode = event?.nativeEvent?.codeStringValue?.trim();
+    if (!scannedCode) {
+      return;
+    }
+    const now = Date.now();
+    const last = lastEmbeddedScanRef.current;
+    if (last && last.value === scannedCode && now - last.at < 1500) {
+      return;
+    }
+    lastEmbeddedScanRef.current = {value: scannedCode, at: now};
+    if (searchModeState.barcodeBeepEnabled) {
+      playBarcodeBeep();
+    }
+    handleSearch(scannedCode);
+  };
+
+  const showEmbeddedScanner =
+    Platform.OS === 'android' &&
+    searchModeState.barcodeScannerEnabled &&
+    cameraPermission === true &&
+    isFocused;
+
+  const showScanShortcutButton =
+    searchModeState.barcodeScannerEnabled &&
+    (Platform.OS !== 'android' || cameraPermission === false);
+
   const updateQuantityHandler = (systemId: string, newQty: number) => {
     const existItem = cartItems.find(
       (x: {system_id: string}) => x.system_id === systemId,
@@ -332,8 +507,70 @@ const Cart = ({navigation}: {navigation: any}) => {
   const handlePlaceOrder = async (total: number) => {
     if (isPlacingOrder) return;
 
+    const trackingValidation = validateCartTracking(cartItems);
+    if (!trackingValidation.ok) {
+      Toast.show({
+        type: 'error',
+        text1: 'Tracking required',
+        text2: trackingValidation.message,
+        visibilityTime: 4500,
+        position: 'top',
+      });
+      return;
+    }
+
     // Show sales completion modal
     setShowSalesModal(true);
+  };
+
+  const openTrackingModal = async (item: CartItem) => {
+    setTrackingModalItem(item);
+    setTrackingModalVisible(true);
+    setTrackingOptions([]);
+    setLoadingTrackingOptions(true);
+    try {
+      const itemNo = item.no || item.system_id;
+      const raw = await fetchAllItemLedgerEntries(itemNo);
+      const fifo = buildFifoTrackingOptions(raw);
+      setTrackingOptions(fifo);
+      if (fifo.length === 0) {
+        Toast.show({
+          type: 'info',
+          text1: 'No lots available',
+          text2:
+            'No ledger lots with quantity for this item, or stock was received without lot numbers.',
+          visibilityTime: 4000,
+          position: 'top',
+        });
+      }
+    } catch (e) {
+      console.error('Failed to load item ledger entries:', e);
+      Toast.show({
+        type: 'error',
+        text1: 'Could not load lots',
+        text2: 'Check your connection and try again.',
+        visibilityTime: 3500,
+        position: 'top',
+      });
+      setTrackingOptions([]);
+    } finally {
+      setLoadingTrackingOptions(false);
+    }
+  };
+
+  const handleTrackingLotSelected = (option: TrackingLotOption) => {
+    const target = trackingModalItem;
+    if (!target) {
+      return;
+    }
+    const updated: CartItem = {
+      ...target,
+      selectedTrackingCode: option.lot_no,
+      trackingDetails: trackingDetailsFromOption(option),
+    };
+    dispatch({type: 'CART_UPDATE_ITEM', payload: updated});
+    setTrackingModalVisible(false);
+    setTrackingModalItem(null);
   };
 
   const handleSaleSuccess = (result: any) => {
@@ -368,6 +605,18 @@ const Cart = ({navigation}: {navigation: any}) => {
   // Save draft
   const handleSaveDraft = async () => {
     if (isSavingDraft || cartItems.length === 0) return;
+
+    const trackingValidation = validateCartTracking(cartItems);
+    if (!trackingValidation.ok) {
+      Toast.show({
+        type: 'error',
+        text1: 'Tracking required',
+        text2: trackingValidation.message,
+        visibilityTime: 4500,
+        position: 'top',
+      });
+      return;
+    }
 
     try {
       setIsSavingDraft(true);
@@ -556,8 +805,9 @@ const Cart = ({navigation}: {navigation: any}) => {
             inventory: inventory,
             unit_of_measure: line.unit_of_measure || 'PCS',
             quantity_per_unit: itemDetails?.quantity_per_unit || 1,
+            type: itemDetails?.type,
             selectedTrackingCode: line.tracking_code || '',
-            tracking_code: line.tracking_code || null,
+            tracking_code: itemDetails?.tracking_code ?? null,
             date_sold: fullDraft.document_date || new Date().toISOString(),
             item_images: itemDetails?.item_images || [],
           };
@@ -589,8 +839,7 @@ const Cart = ({navigation}: {navigation: any}) => {
         position: 'top',
       });
 
-      // Hide drafts section
-      setShowDraftsSection(false);
+      setDraftsModalVisible(false);
     } catch (error: any) {
       console.error('Failed to load draft:', error);
       Toast.show({
@@ -654,25 +903,48 @@ const Cart = ({navigation}: {navigation: any}) => {
     const total = subTotal;
     return (
       <View>
-        {/* Global Selling Date */}
-        <View style={styles.datePickerContainer}>
-          <Text style={styles.dateLabel}>Selling Date:</Text>
-          <TouchableOpacity
-            style={styles.globalDatePickerButton}
-            onPress={() => setShowGlobalDatePicker(true)}>
-            <Image source={icons.calender} style={styles.calendarIcon} />
-            <Text style={styles.datePickerText}>
-              {globalSellingDate.toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric',
-              })}
-            </Text>
-          </TouchableOpacity>
-        </View>
+        {!isTabMode ? (
+          <View style={styles.footerTopCombined}>
+            <View style={styles.footerDateBlock}>
+              <Text style={styles.dateLabel}>Selling date</Text>
+              <TouchableOpacity
+                style={styles.globalDatePickerButton}
+                onPress={() => setShowGlobalDatePicker(true)}>
+                <Image source={icons.calender} style={styles.calendarIcon} />
+                <Text style={styles.datePickerText} numberOfLines={1}>
+                  {globalSellingDate.toLocaleDateString('en-US', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                  })}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            {cartItems.length > 0 && (
+              <TouchableOpacity
+                style={[
+                  styles.saveDraftButtonInline,
+                  isSavingDraft && styles.saveDraftButtonDisabled,
+                  currentDraftId && styles.saveDraftButtonUpdating,
+                ]}
+                onPress={handleSaveDraft}
+                disabled={
+                  isSavingDraft || (!currentDraftId && drafts.length >= 3)
+                }>
+                {isSavingDraft ? (
+                  <ActivityIndicator size="small" color={COLORS.white} />
+                ) : (
+                  <Text style={styles.saveDraftButtonText} numberOfLines={1}>
+                    {currentDraftId ? 'Update Draft' : 'Save Draft'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+        ) : null}
 
         {/* Date Picker Modal */}
-        {showGlobalDatePicker && (
+        {showGlobalDatePicker && !isTabMode && (
           <DateTimePicker
             value={globalSellingDate}
             mode="date"
@@ -686,38 +958,319 @@ const Cart = ({navigation}: {navigation: any}) => {
           />
         )}
 
-        {/* Save Draft Button */}
-        {cartItems.length > 0 && (
-          <TouchableOpacity
-            style={[
-              styles.saveDraftButton,
-              isSavingDraft && styles.saveDraftButtonDisabled,
-              currentDraftId && styles.saveDraftButtonUpdating,
-            ]}
-            onPress={handleSaveDraft}
-            disabled={isSavingDraft || (!currentDraftId && drafts.length >= 3)}>
-            {isSavingDraft ? (
-              <ActivityIndicator size="small" color={COLORS.white} />
-            ) : (
-              <Text style={styles.saveDraftButtonText}>
-                {currentDraftId ? 'Update Draft' : 'Save Draft'}
-              </Text>
-            )}
-          </TouchableOpacity>
-        )}
-
         <FooterTotal
           subTotal={subTotal}
           totalQuantity={subQuantity}
           total={total}
           printReceipt={printReceipt}
           setPrintReceipt={setPrintReceipt}
-          onPress={() => handlePlaceOrder(total)}
+          onPress={() => setReviewSaleVisible(true)}
           isLoading={isPlacingOrder}
         />
       </View>
     );
   }
+
+  const filteredSaleCustomers = saleCustomers.filter(customer => {
+    const query = customerPickerQuery.trim().toLowerCase();
+    if (!query) {
+      return true;
+    }
+
+    return (
+      customer.name?.toLowerCase().includes(query) ||
+      customer.no?.toLowerCase().includes(query)
+    );
+  });
+
+  const isGeneralSaleCustomer = (() => {
+    const normalizedName = selectedSaleCustomer?.name?.trim().toLowerCase() || '';
+    return normalizedName === 'general' || normalizedName === 'general customer';
+  })();
+
+  const renderCustomerPicker = () => (
+    <ReactNativeModal
+      isVisible={customerPickerVisible}
+      animationIn="slideInUp"
+      animationOut="slideOutDown"
+      onBackdropPress={() => setCustomerPickerVisible(false)}
+      style={styles.modal}
+      backdropOpacity={0.3}
+      useNativeDriver={true}
+      onBackButtonPress={() => {
+        setCustomerPickerVisible(false);
+        return true;
+      }}>
+      <View style={styles.modalView}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Select customer</Text>
+          <TouchableOpacity
+            onPress={() => setCustomerPickerVisible(false)}
+            style={styles.closeButton}>
+            <Image source={icons.cross} style={styles.closeIcon} />
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.saleCustomerSearchWrap}>
+          <Image source={icons.search} style={styles.saleCustomerSearchIcon} />
+          <TextInput
+            value={customerPickerQuery}
+            onChangeText={setCustomerPickerQuery}
+            placeholder="Search customers..."
+            placeholderTextColor={COLORS.gray}
+            style={styles.saleCustomerSearchInput}
+          />
+        </View>
+
+        {loadingSaleCustomers ? (
+          <View style={styles.saleCustomerStateWrap}>
+            <ActivityIndicator size="small" color={COLORS.primary2} />
+            <Text style={styles.saleCustomerStateText}>Loading customers...</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={filteredSaleCustomers}
+            keyExtractor={item => String(item.id)}
+            renderItem={({item}) => {
+              const isSelected = selectedSaleCustomer?.id === item.id;
+
+              return (
+                <TouchableOpacity
+                  style={[
+                    styles.saleCustomerRow,
+                    isSelected && styles.saleCustomerRowSelected,
+                  ]}
+                  onPress={() => {
+                    setSelectedSaleCustomer(item);
+                    setCustomerPickerVisible(false);
+                    setCustomerPickerQuery('');
+                  }}
+                  activeOpacity={0.75}>
+                  <View style={styles.saleCustomerAvatar}>
+                    <Text style={styles.saleCustomerAvatarText}>
+                      {(item.name || 'C')
+                        .trim()
+                        .split(' ')
+                        .filter(Boolean)
+                        .slice(0, 2)
+                        .map(part => part[0])
+                        .join('')
+                        .toUpperCase() || 'C'}
+                    </Text>
+                  </View>
+                  <View style={styles.saleCustomerTextWrap}>
+                    <Text style={styles.saleCustomerName}>{item.name}</Text>
+                    <Text style={styles.saleCustomerMeta}>{item.no}</Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            }}
+            contentContainerStyle={styles.saleCustomerListContent}
+            ListEmptyComponent={
+              <View style={styles.saleCustomerStateWrap}>
+                <Text style={styles.saleCustomerStateText}>
+                  No customers match that search.
+                </Text>
+              </View>
+            }
+          />
+        )}
+      </View>
+    </ReactNativeModal>
+  );
+
+  const renderReviewSaleSheet = () => {
+    const total = cartItems.reduce(
+      (sum, item) => sum + (Number(item.quantity) || 0) * (Number(item.unit_price) || 0),
+      0,
+    );
+    const quantity = cartItems.reduce(
+      (sum, item) => sum + (Number(item.quantity) || 0),
+      0,
+    );
+
+    return (
+      <ReactNativeModal
+        isVisible={reviewSaleVisible}
+        animationIn="slideInUp"
+        animationOut="slideOutDown"
+        onBackdropPress={() => setReviewSaleVisible(false)}
+        style={styles.reviewSaleModal}
+        backdropOpacity={0.28}
+        useNativeDriver={true}
+        onBackButtonPress={() => {
+          setReviewSaleVisible(false);
+          return true;
+        }}>
+        <View style={styles.currentSalePanel}>
+          <View style={styles.currentSaleHandle} />
+
+          <View style={styles.currentSaleHeader}>
+            <TouchableOpacity
+              style={styles.currentSaleCloseButton}
+              onPress={() => setReviewSaleVisible(false)}
+              activeOpacity={0.75}>
+              <Image source={icons.cross} style={styles.currentSaleCloseIcon} />
+            </TouchableOpacity>
+            <Text style={styles.currentSaleTitle}>Current sale ({cartItems.length})</Text>
+            <TouchableOpacity
+              style={styles.currentSaleMoreButton}
+              onPress={() => setSaleActionsVisible(true)}
+              activeOpacity={0.75}>
+              <Text style={styles.currentSaleMoreText}>...</Text>
+            </TouchableOpacity>
+          </View>
+
+          <TouchableOpacity
+            style={styles.customerRow}
+            onPress={() => setCustomerPickerVisible(true)}
+            activeOpacity={0.78}>
+            <View style={styles.customerRowIconWrap}>
+              <Image source={icons.profile} style={styles.customerRowIcon} />
+              <Image source={icons.plus} style={styles.customerRowPlusIcon} />
+            </View>
+            <View style={styles.customerRowTextWrap}>
+              <Text style={styles.customerRowTitle}>
+                {selectedSaleCustomer && !isGeneralSaleCustomer
+                  ? selectedSaleCustomer.name
+                  : 'Add customer'}
+              </Text>
+              <Text style={styles.customerRowSubtitle}>
+                {selectedSaleCustomer
+                  ? selectedSaleCustomer.no
+                  : loadingSaleCustomers
+                    ? 'Loading customers...'
+                    : 'Choose a customer for this sale'}
+              </Text>
+            </View>
+            <Image source={icons.down_arrow} style={styles.customerRowChevron} />
+          </TouchableOpacity>
+
+          <SwipeListView
+            data={cartItems}
+            extraData={cartItems}
+            keyExtractor={(item: any) => `${item.system_id}`}
+            renderItem={({item}: {item: any}) => (
+              <View style={styles.squareCartItemWrapper}>
+                <View style={styles.squareCartItem}>
+                  <View style={styles.squareCartTextWrap}>
+                    <Text style={styles.squareCartItemName} numberOfLines={1}>
+                      {item.item_name}
+                      {(Number(item.quantity) || 1) > 1
+                        ? ` x ${Number(item.quantity)}`
+                        : ''}
+                    </Text>
+                    {item.tracking_code ? (
+                      <TouchableOpacity
+                        onPress={() => openTrackingModal(item)}
+                        activeOpacity={0.7}
+                        style={[
+                          styles.trackingChip,
+                          shouldEnforceTrackingSelection(item) &&
+                            !(item.selectedTrackingCode || '').trim() &&
+                            styles.trackingChipWarning,
+                        ]}>
+                        <Text style={styles.trackingChipText} numberOfLines={1}>
+                          Lot:{' '}
+                          {(item.selectedTrackingCode || '').trim() ||
+                            'Tap to select'}
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
+                  </View>
+
+                  <View style={styles.squareCartRight}>
+                    <TouchableOpacity
+                      style={styles.squarePriceButton}
+                      onPress={() => openPriceModal(item)}>
+                      <Text style={styles.squareCartAmount}>
+                        USh{(
+                          (Number(item.unit_price) || 0) *
+                          (Number(item.quantity) || 1)
+                        ).toLocaleString('en-US', {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </Text>
+                    </TouchableOpacity>
+                    <StepperInput
+                      containerStyle={styles.squareStepper}
+                      value={Number(item.quantity) || 1}
+                      onAdd={() =>
+                        updateQuantityHandler(
+                          item.system_id,
+                          (Number(item.quantity) || 1) + 1,
+                        )
+                      }
+                      onMinus={() => {
+                        const currentQty = Number(item.quantity) || 1;
+                        if (currentQty > 1) {
+                          updateQuantityHandler(item.system_id, currentQty - 1);
+                        }
+                      }}
+                    />
+                  </View>
+                </View>
+              </View>
+            )}
+            renderHiddenItem={() => (
+              <View style={styles.hiddenItemContainer}>
+                <View style={styles.deleteSwipeIndicator}>
+                  <Image
+                    source={icons.delete_icon}
+                    style={styles.deleteSwipeIcon}
+                  />
+                </View>
+              </View>
+            )}
+            rightOpenValue={-75}
+            stopRightSwipe={-Dimensions.get('window').width}
+            disableRightSwipe
+            swipeToOpenPercent={30}
+            onSwipeValueChange={({key, value}: {key: string; value: number}) => {
+              if (
+                value <= -FULL_SWIPE_DELETE_THRESHOLD &&
+                !swipeDeletingIdsRef.current.has(String(key))
+              ) {
+                swipeDeletingIdsRef.current.add(String(key));
+                dispatch({
+                  type: 'REMOVE_FROM_CART',
+                  payload: {system_id: String(key)},
+                });
+                setTimeout(() => {
+                  swipeDeletingIdsRef.current.delete(String(key));
+                }, 350);
+              }
+            }}
+            contentContainerStyle={styles.squareCartListContent}
+            ListEmptyComponent={
+              <View style={styles.emptyCartContainer}>
+                <Image source={icons.emptycart} style={styles.emptyCartImage} />
+                <Text style={styles.emptyCartText}>
+                  No items in sale. Start adding items to make a sale.
+                </Text>
+              </View>
+            }
+          />
+
+          <View style={styles.reviewSaleFooter}>
+            <FooterTotal
+              subTotal={total}
+              totalQuantity={quantity}
+              total={total}
+              printReceipt={printReceipt}
+              setPrintReceipt={setPrintReceipt}
+              onPress={() => {
+                setReviewSaleVisible(false);
+                handlePlaceOrder(total);
+              }}
+              isLoading={isPlacingOrder}
+            />
+          </View>
+        </View>
+      </ReactNativeModal>
+    );
+  };
 
   const ModalPopup = () => (
     <ReactNativeModal
@@ -810,7 +1363,7 @@ const Cart = ({navigation}: {navigation: any}) => {
                       Stock: {item.inventory}
                     </Text>
                     <Text style={styles.modalPriceText}>
-                      UGX {item.unit_price?.toLocaleString()}
+                      UGX {formatMoney(item.unit_price)}
                     </Text>
                   </View>
                 </View>
@@ -835,6 +1388,51 @@ const Cart = ({navigation}: {navigation: any}) => {
           />
         </ScrollView>
       </KeyboardAvoidingView>
+    </ReactNativeModal>
+  );
+
+  const renderSaleActionsSheet = () => (
+    <ReactNativeModal
+      isVisible={saleActionsVisible}
+      animationIn="slideInUp"
+      animationOut="slideOutDown"
+      onBackdropPress={() => setSaleActionsVisible(false)}
+      style={styles.saleActionsModal}
+      backdropOpacity={0.28}
+      useNativeDriver={true}
+      onBackButtonPress={() => {
+        setSaleActionsVisible(false);
+        return true;
+      }}>
+      <View style={styles.saleActionsSheet}>
+        <View style={styles.saleActionsHandle} />
+        <TouchableOpacity
+          style={[
+            styles.saleActionsPrimaryButton,
+            cartItems.length === 0 && styles.saleActionsPrimaryButtonDisabled,
+          ]}
+          disabled={cartItems.length === 0}
+          activeOpacity={0.85}
+          onPress={async () => {
+            await dispatch({type: 'CLEAR_CART'});
+            setSaleActionsVisible(false);
+          }}>
+          <Text
+            style={[
+              styles.saleActionsPrimaryText,
+              cartItems.length === 0 && styles.saleActionsPrimaryTextDisabled,
+            ]}>
+            Clear items
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.saleActionsDismissButton}
+          activeOpacity={0.75}
+          onPress={() => setSaleActionsVisible(false)}>
+          <Text style={styles.saleActionsDismissText}>Dismiss</Text>
+        </TouchableOpacity>
+      </View>
     </ReactNativeModal>
   );
 
@@ -884,6 +1482,85 @@ const Cart = ({navigation}: {navigation: any}) => {
     </Modal>
   );
 
+  const closeDraftsModal = () => setDraftsModalVisible(false);
+
+  const renderDraftsModal = () => (
+    <ReactNativeModal
+      isVisible={draftsModalVisible && drafts.length > 0}
+      animationIn="slideInUp"
+      animationOut="slideOutDown"
+      onBackdropPress={closeDraftsModal}
+      style={styles.modal}
+      avoidKeyboard={true}
+      backdropOpacity={0.3}
+      useNativeDriver={true}
+      onBackButtonPress={() => {
+        closeDraftsModal();
+        return true;
+      }}>
+      <View style={styles.modalView}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Recent drafts</Text>
+          <TouchableOpacity onPress={closeDraftsModal} style={styles.closeButton}>
+            <Image source={icons.cross} style={styles.closeIcon} />
+          </TouchableOpacity>
+        </View>
+        <ScrollView
+          style={{flex: 1}}
+          contentContainerStyle={styles.draftsModalList}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}>
+          {drafts.map((draft: any) => (
+            <View
+              key={draft.id}
+              style={[styles.draftCard, styles.draftCardInModal]}>
+              <TouchableOpacity
+                style={styles.draftCardContent}
+                onPress={() => handleSelectDraft(draft)}
+                disabled={loadingDraftIntoCart}>
+                <View style={styles.draftCardHeader}>
+                  <Text style={styles.draftInvoiceNo}>
+                    {draft.invoice_no || 'Draft'}
+                  </Text>
+                  <TouchableOpacity
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      Alert.alert(
+                        'Delete Draft',
+                        'Are you sure you want to delete this draft?',
+                        [
+                          {text: 'Cancel', style: 'cancel'},
+                          {
+                            text: 'Delete',
+                            style: 'destructive',
+                            onPress: () => handleDeleteDraft(draft),
+                          },
+                        ],
+                      );
+                    }}>
+                    <Image
+                      source={icons.delete_icon}
+                      style={styles.draftDeleteIcon}
+                    />
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.draftCustomer}>
+                  {draft.customer_name || 'Unknown'}
+                </Text>
+                <Text style={styles.draftDate}>
+                  {new Date(draft.created_at).toLocaleDateString()}
+                </Text>
+                <Text style={styles.draftAmount}>
+                  UGX {draft.total_amount?.toLocaleString() || '0'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </ScrollView>
+      </View>
+    </ReactNativeModal>
+  );
+
   return (
     <SafeAreaView style={{flex: 1}} edges={['top', 'left', 'right']}>
       <KeyboardAvoidingView
@@ -891,97 +1568,112 @@ const Cart = ({navigation}: {navigation: any}) => {
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
         <View style={{flex: 1}}>
-          <Header
-            title="Make Sale"
-            showBack={true}
-            onBackPress={() => navigation.goBack()}
-            rightComponent={
-              <CartQuantityButton
-                quantity={cartItems.reduce(
-                  (a: number, c: any) => a + (Number(c.quantity) || 0),
-                  0,
-                )}
-                onPress={() => {}}
-              />
-            }
-            containerStyle={{
-              zIndex: -1,
+          {!isTabMode ? (
+            <Header
+              title="Make Sale"
+              showBack={!isTabMode}
+              onBackPress={() => navigation.goBack()}
+              rightComponent={
+                <CartQuantityButton
+                  quantity={cartItems.reduce(
+                    (a: number, c: any) => a + (Number(c.quantity) || 0),
+                    0,
+                  )}
+                  onPress={() => {}}
+                />
+              }
+              containerStyle={{
+                zIndex: -1,
+              }}
+            />
+          ) : null}
+
+          {Platform.OS === 'android' && searchModeState.barcodeScannerEnabled && (
+            <View style={styles.embeddedScannerSection}>
+              {cameraPermission === null && (
+                <View
+                  style={[
+                    styles.scannerPlaceholder,
+                    {minHeight: SCANNER_VIEWPORT_HEIGHT},
+                  ]}>
+                  <ActivityIndicator color={COLORS.primary2} />
+                  <Text style={styles.scannerPlaceholderText}>
+                    Preparing camera…
+                  </Text>
+                </View>
+              )}
+              {cameraPermission === false && (
+                <View
+                  style={[
+                    styles.scannerPlaceholder,
+                    {minHeight: SCANNER_VIEWPORT_HEIGHT},
+                  ]}>
+                  <Text style={styles.scannerPlaceholderText}>
+                    Allow camera access to scan barcodes on this screen.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.scannerPermissionButton}
+                    onPress={requestCartCameraPermission}
+                    activeOpacity={0.8}>
+                    <Text style={styles.scannerPermissionButtonText}>
+                      Grant access
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              {showEmbeddedScanner && (
+                <View
+                  style={[
+                    styles.scannerViewport,
+                    {height: SCANNER_VIEWPORT_HEIGHT},
+                  ]}>
+                  <Camera
+                    style={StyleSheet.absoluteFill}
+                    cameraType={CameraType.Back}
+                    scanBarcode
+                    showFrame
+                    laserColor={COLORS.primary2}
+                    frameColor={COLORS.white}
+                    onReadCode={handleEmbeddedBarcodeRead}
+                    torchMode={scannerTorchOn ? 'on' : 'off'}
+                  />
+                  <View style={styles.scannerOverlay} pointerEvents="box-none">
+                    <Text style={styles.scannerHintText}>
+                      Scan Product Code
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.scannerTorchButton}
+                      onPress={() => setScannerTorchOn(v => !v)}
+                      activeOpacity={0.85}
+                      accessibilityLabel="Toggle flashlight">
+                      <Text style={styles.scannerTorchGlyph}>🔦</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+            </View>
+          )}
+
+          <SalesItemBrowser
+            onAddItem={item => {
+              addToCart(item);
             }}
-          />
-          <SearchBar
-            searchQuery={searchQuery}
-            onChangeText={setSearchQuery}
-            onSubmit={() => handleSearch(searchQuery)}
-            isLoading={isLoading}
-            inputRef={searchInputRef}
-            onFocus={() => navigation.navigate('SearchPage' as never)}
-            onPress={() => navigation.navigate('SearchPage' as never)}
+            onScanPress={openBarcodeScanner}
+            showScanButton={showScanShortcutButton}
           />
 
-          {/* Drafts Section */}
-          {drafts.length > 0 && (
-            <View style={styles.draftsSection}>
-              <View style={styles.draftsHeader}>
-                <Text style={styles.draftsTitle}>
-                  Recent Drafts ({drafts.length}/3)
+          {drafts.length > 0 && !isTabMode && (
+            <View style={styles.salesBrowserMetaRow}>
+              <TouchableOpacity
+                style={styles.draftsOpenButton}
+                onPress={() => setDraftsModalVisible(true)}
+                activeOpacity={0.7}>
+                <Text
+                  style={styles.draftsOpenButtonText}
+                  numberOfLines={1}>
+                  Drafts ({drafts.length}/3)
                 </Text>
-                <TouchableOpacity
-                  onPress={() => setShowDraftsSection(!showDraftsSection)}>
-                  <Text style={styles.draftsToggle}>
-                    {showDraftsSection ? 'Hide' : 'Show'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-              {showDraftsSection && (
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  style={styles.draftsList}>
-                  {drafts.map((draft) => (
-                    <View key={draft.id} style={styles.draftCard}>
-                      <TouchableOpacity
-                        style={styles.draftCardContent}
-                        onPress={() => handleSelectDraft(draft)}>
-                        <View style={styles.draftCardHeader}>
-                          <Text style={styles.draftInvoiceNo}>
-                            {draft.invoice_no || 'Draft'}
-                          </Text>
-                          <TouchableOpacity
-                            onPress={(e) => {
-                              e.stopPropagation();
-                              Alert.alert(
-                                'Delete Draft',
-                                'Are you sure you want to delete this draft?',
-                                [
-                                  {text: 'Cancel', style: 'cancel'},
-                                  {
-                                    text: 'Delete',
-                                    style: 'destructive',
-                                    onPress: () => handleDeleteDraft(draft),
-                                  },
-                                ],
-                              );
-                            }}>
-                            <Image
-                              source={icons.delete_icon}
-                              style={styles.draftDeleteIcon}
-                            />
-                          </TouchableOpacity>
-                        </View>
-                        <Text style={styles.draftCustomer}>
-                          {draft.customer_name || 'Unknown'}
-                        </Text>
-                        <Text style={styles.draftDate}>
-                          {new Date(draft.created_at).toLocaleDateString()}
-                        </Text>
-                        <Text style={styles.draftAmount}>
-                          UGX {draft.total_amount?.toLocaleString() || '0'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-                  ))}
-                </ScrollView>
-              )}
+              </TouchableOpacity>
             </View>
           )}
 
@@ -1001,106 +1693,6 @@ const Cart = ({navigation}: {navigation: any}) => {
             </View>
           )}
 
-          <SwipeListView
-            data={cartItems}
-            extraData={cartItems}
-            keyExtractor={(item: any) => `${item.system_id}`}
-            renderItem={({item}: {item: any}) => (
-              <View style={styles.cartItemWrapper}>
-                <View style={styles.cartItem}>
-                  <View style={styles.imageContainer}>
-                    <Image
-                      source={
-                        item.item_images && item.item_images[0]?.url
-                          ? {uri: item.item_images[0].url}
-                          : icons.product2
-                      }
-                      resizeMode="cover"
-                      style={styles.productImage}
-                    />
-                  </View>
-
-                  <View style={styles.contentContainer}>
-                    <View>
-                      <Text style={styles.productName} numberOfLines={1}>
-                        {item.item_name}
-                      </Text>
-                    </View>
-
-                    <View style={styles.priceAndQuantityRow}>
-                      <TouchableOpacity
-                        style={styles.priceButton}
-                        onPress={() => openPriceModal(item)}>
-                        <Text style={styles.priceText}>
-                          UGX {item.unit_price?.toLocaleString()}
-                        </Text>
-                      </TouchableOpacity>
-                      <Text style={styles.quantityText}>
-                        Qty: {Number(item.quantity) || 1}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.quantityContainer}>
-                    <StepperInput
-                      containerStyle={{
-                        height: 38,
-                        width: 100,
-                        backgroundColor: COLORS.lightGray2,
-                        borderRadius: 8,
-                      }}
-                      value={Number(item.quantity) || 1}
-                      onAdd={() =>
-                        updateQuantityHandler(
-                          item.system_id,
-                          (Number(item.quantity) || 1) + 1,
-                        )
-                      }
-                      onMinus={() => {
-                        const currentQty = Number(item.quantity) || 1;
-                        if (currentQty > 1) {
-                          updateQuantityHandler(item.system_id, currentQty - 1);
-                        }
-                      }}
-                    />
-                  </View>
-                </View>
-              </View>
-            )}
-            renderHiddenItem={(data: any, rowMap: any) => (
-              <View style={styles.hiddenItemContainer}>
-                <TouchableOpacity
-                  style={styles.deleteButton}
-                  onPress={() =>
-                    dispatch({type: 'REMOVE_FROM_CART', payload: data.item})
-                  }>
-                  <Image
-                    source={icons.delete_icon}
-                    style={{
-                      width: 24,
-                      height: 24,
-                      tintColor: COLORS.white,
-                    }}
-                  />
-                </TouchableOpacity>
-              </View>
-            )}
-            rightOpenValue={-75}
-            disableRightSwipe
-            swipeToOpenPercent={30}
-            contentContainerStyle={{
-              flexGrow: 1,
-              paddingVertical: 8,
-              paddingHorizontal: 4,
-            }}
-            ListEmptyComponent={
-              <View style={styles.emptyCartContainer}>
-                <Image source={icons.emptycart} style={styles.emptyCartImage} />
-                <Text style={styles.emptyCartText}>No items in sale. Start adding items to make a sale.</Text>
-              </View>
-            }
-          />
-
           {/* Footer */}
           {cartItems.length > 0 && !isKeyboardVisible && (
             <View style={styles.footerContainer}>{renderFooter()}</View>
@@ -1116,6 +1708,7 @@ const Cart = ({navigation}: {navigation: any}) => {
 
           <ModalPopup />
           {renderPriceModal()}
+          {renderDraftsModal()}
 
           <SalesCompletionModal
             isVisible={showSalesModal}
@@ -1129,9 +1722,29 @@ const Cart = ({navigation}: {navigation: any}) => {
             username={auth?.username || 'Unknown'}
             userId={Number(auth?.user_id) || 0}
             documentDate={globalSellingDate.toISOString().split('T')[0]}
+            initialSelectedCustomer={selectedSaleCustomer}
+          />
+
+          <TrackingSelectionModal
+            visible={trackingModalVisible}
+            title={
+              trackingModalItem
+                ? `Select lot — ${trackingModalItem.item_name}`
+                : 'Select lot'
+            }
+            loading={loadingTrackingOptions}
+            options={trackingOptions}
+            onClose={() => {
+              setTrackingModalVisible(false);
+              setTrackingModalItem(null);
+            }}
+            onSelect={handleTrackingLotSelected}
           />
 
           <Toast />
+          {renderCustomerPicker()}
+          {renderReviewSaleSheet()}
+          {renderSaleActionsSheet()}
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -1139,6 +1752,312 @@ const Cart = ({navigation}: {navigation: any}) => {
 };
 
 const styles = StyleSheet.create({
+  embeddedScannerSection: {
+    marginHorizontal: SIZES.padding,
+    marginBottom: SIZES.base,
+  },
+  scannerViewport: {
+    width: '100%',
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: COLORS.black,
+  },
+  scannerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    pointerEvents: 'box-none',
+  },
+  scannerHintText: {
+    ...FONTS.body4,
+    color: COLORS.white,
+    marginBottom: 14,
+    textAlign: 'center',
+    textShadowColor: 'rgba(0,0,0,0.85)',
+    textShadowOffset: {width: 0, height: 1},
+    textShadowRadius: 4,
+  },
+  scannerTorchButton: {
+    position: 'absolute',
+    right: 12,
+    bottom: 10,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scannerTorchGlyph: {
+    fontSize: 18,
+  },
+  scannerPlaceholder: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.lightGray2,
+    backgroundColor: COLORS.lightGray2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: SIZES.padding,
+  },
+  scannerPlaceholderText: {
+    ...FONTS.body4,
+    color: COLORS.gray,
+    textAlign: 'center',
+    marginTop: SIZES.base,
+  },
+  scannerPermissionButton: {
+    marginTop: SIZES.padding,
+    backgroundColor: COLORS.primary2,
+    paddingHorizontal: SIZES.padding,
+    paddingVertical: SIZES.base,
+    borderRadius: SIZES.radius,
+  },
+  scannerPermissionButtonText: {
+    color: COLORS.white,
+    ...FONTS.h4,
+  },
+  orderItemsHeader: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    paddingHorizontal: SIZES.padding,
+    paddingTop: SIZES.base,
+    paddingBottom: 4,
+  },
+  orderItemsTitle: {
+    ...FONTS.h4,
+    color: COLORS.darkGray,
+    fontWeight: '600',
+  },
+  orderItemsCount: {
+    ...FONTS.body4,
+    color: COLORS.gray,
+    marginLeft: 6,
+  },
+  currentSalePanel: {
+    height: '82%',
+    marginHorizontal: 12,
+    marginTop: 0,
+    backgroundColor: COLORS.white,
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    borderBottomLeftRadius: 22,
+    borderBottomRightRadius: 22,
+    paddingTop: 10,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: -4},
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  currentSaleHandle: {
+    width: 46,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: COLORS.primary2,
+    alignSelf: 'center',
+    marginBottom: 10,
+    opacity: 0.22,
+  },
+  currentSaleHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingTop: 4,
+    paddingBottom: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.transparentPrimary2,
+  },
+  currentSaleCloseButton: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  currentSaleCloseIcon: {
+    width: 13,
+    height: 13,
+    tintColor: COLORS.primary2,
+  },
+  currentSaleTitle: {
+    ...FONTS.h3,
+    flex: 1,
+    textAlign: 'center',
+    color: COLORS.primary2,
+    fontWeight: '700',
+  },
+  currentSaleMoreButton: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  currentSaleMoreText: {
+    ...FONTS.h2,
+    color: COLORS.primary2,
+    lineHeight: 22,
+  },
+  customerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.transparentPrimary2,
+    marginHorizontal: 18,
+    marginTop: 14,
+    marginBottom: 10,
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+  },
+  customerRowIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: COLORS.white,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+    position: 'relative',
+  },
+  customerRowIcon: {
+    width: 18,
+    height: 18,
+    tintColor: COLORS.primary2,
+  },
+  customerRowPlusIcon: {
+    width: 10,
+    height: 10,
+    tintColor: COLORS.primary2,
+    position: 'absolute',
+    right: 5,
+    bottom: 6,
+  },
+  customerRowTextWrap: {
+    flex: 1,
+  },
+  customerRowTitle: {
+    ...FONTS.h3,
+    color: COLORS.primary2,
+    fontWeight: '700',
+  },
+  customerRowSubtitle: {
+    ...FONTS.body5,
+    color: COLORS.gray,
+    marginTop: 3,
+  },
+  customerRowChevron: {
+    width: 16,
+    height: 16,
+    tintColor: COLORS.primary2,
+    transform: [{rotate: '-90deg'}],
+  },
+  reviewSaleModal: {
+    justifyContent: 'flex-end',
+    margin: 0,
+  },
+  saleActionsModal: {
+    justifyContent: 'flex-end',
+    margin: 0,
+  },
+  reviewSaleFooter: {
+    borderTopWidth: 1,
+    borderTopColor: COLORS.transparentPrimary2,
+    backgroundColor: COLORS.white,
+  },
+  saleActionsSheet: {
+    backgroundColor: COLORS.white,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingTop: 10,
+    paddingHorizontal: 20,
+    paddingBottom: 28,
+  },
+  saleActionsHandle: {
+    width: 46,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: COLORS.primary2,
+    alignSelf: 'center',
+    opacity: 0.2,
+    marginBottom: 16,
+  },
+  saleActionsPrimaryButton: {
+    minHeight: 56,
+    borderRadius: 18,
+    backgroundColor: COLORS.transparentPrimary2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  saleActionsPrimaryButtonDisabled: {
+    opacity: 0.55,
+  },
+  saleActionsPrimaryText: {
+    ...FONTS.h3,
+    color: COLORS.primary2,
+    fontWeight: '700',
+  },
+  saleActionsPrimaryTextDisabled: {
+    color: COLORS.gray,
+  },
+  saleActionsDismissButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 18,
+    paddingBottom: 6,
+  },
+  saleActionsDismissText: {
+    ...FONTS.body3,
+    color: COLORS.darkGray,
+    textDecorationLine: 'underline',
+    fontWeight: '600',
+  },
+  squareCartListContent: {
+    flexGrow: 1,
+    paddingTop: 4,
+    paddingBottom: 16,
+  },
+  squareCartItemWrapper: {
+    backgroundColor: COLORS.white,
+  },
+  squareCartItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.lightGray1,
+  },
+  squareCartTextWrap: {
+    flex: 1,
+    paddingRight: 12,
+  },
+  squareCartItemName: {
+    ...FONTS.body3,
+    color: COLORS.darkGray,
+    fontWeight: '600',
+  },
+  squareCartRight: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    minWidth: 118,
+  },
+  squarePriceButton: {
+    marginBottom: 10,
+  },
+  squareCartAmount: {
+    ...FONTS.body3,
+    color: COLORS.darkGray,
+    fontWeight: '500',
+  },
+  squareStepper: {
+    height: 38,
+    width: 96,
+    backgroundColor: '#F4F8FF',
+    borderRadius: 12,
+  },
   cartItemWrapper: {
     marginHorizontal: 12,
     marginVertical: 6,
@@ -1146,7 +2065,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   cartItem: {
-    height: 110,
+    minHeight: 124,
     backgroundColor: COLORS.white,
     flexDirection: 'row',
     alignItems: 'center',
@@ -1176,13 +2095,36 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 12,
     marginRight: 8,
-    justifyContent: 'space-between',
-    height: 75,
+    justifyContent: 'center',
+    paddingVertical: 8,
+  },
+  productInfoTop: {
+    marginBottom: 8,
   },
   productName: {
     ...FONTS.h4,
     color: COLORS.darkGray,
     fontSize: 12,
+  },
+  trackingChip: {
+    marginTop: 4,
+    alignSelf: 'flex-start',
+    backgroundColor: COLORS.white,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#F16D5B',
+    maxWidth: '100%',
+  },
+  trackingChipWarning: {
+    borderWidth: 1,
+    borderColor: '#E53935',
+  },
+  trackingChipText: {
+    ...FONTS.body5,
+    fontSize: 11,
+    color: COLORS.darkGray,
   },
   dateText: {
     ...FONTS.body5,
@@ -1195,6 +2137,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 8,
     alignSelf: 'flex-start',
+    marginRight: 8,
   },
   priceText: {
     ...FONTS.h4,
@@ -1204,12 +2147,16 @@ const styles = StyleSheet.create({
   quantityContainer: {
     marginLeft: 8,
   },
-  deleteButton: {
+  deleteSwipeIndicator: {
     width: 75,
     height: '100%',
-    backgroundColor: COLORS.primary,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  deleteSwipeIcon: {
+    width: 24,
+    height: 24,
+    tintColor: COLORS.white,
   },
   emptyCartContainer: {
     flex: 1,
@@ -1231,7 +2178,8 @@ const styles = StyleSheet.create({
   },
   footerContainer: {
     backgroundColor: COLORS.white,
-    paddingBottom: Platform.OS === 'ios' ? 20 : 0,
+    paddingTop: 0,
+    paddingBottom: 0,
   },
   modalContainer: {
     flex: 1,
@@ -1268,6 +2216,83 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginTop: 20,
   },
+  saleCustomerSearchWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 46,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    backgroundColor: COLORS.lightGray2,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+  },
+  saleCustomerSearchIcon: {
+    width: 16,
+    height: 16,
+    tintColor: COLORS.gray,
+  },
+  saleCustomerSearchInput: {
+    flex: 1,
+    marginLeft: 10,
+    ...FONTS.body4,
+    color: COLORS.black,
+  },
+  saleCustomerListContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 20,
+  },
+  saleCustomerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.lightGray2,
+    marginBottom: 10,
+  },
+  saleCustomerRowSelected: {
+    borderColor: COLORS.primary2,
+    backgroundColor: COLORS.transparentPrimary2,
+  },
+  saleCustomerAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.primary2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  saleCustomerAvatarText: {
+    ...FONTS.body3,
+    color: COLORS.white,
+    fontWeight: '700',
+  },
+  saleCustomerTextWrap: {
+    flex: 1,
+  },
+  saleCustomerName: {
+    ...FONTS.h4,
+    color: COLORS.darkGray,
+    fontWeight: '600',
+  },
+  saleCustomerMeta: {
+    ...FONTS.body5,
+    color: COLORS.gray,
+    marginTop: 3,
+  },
+  saleCustomerStateWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 28,
+  },
+  saleCustomerStateText: {
+    ...FONTS.body4,
+    color: COLORS.gray,
+    marginTop: 8,
+  },
   hiddenItemContainer: {
     marginHorizontal: 12,
     marginVertical: 6,
@@ -1281,14 +2306,16 @@ const styles = StyleSheet.create({
   priceAndQuantityRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
     width: '100%',
+    flexWrap: 'wrap',
   },
   quantityText: {
     ...FONTS.body4,
     color: COLORS.gray,
     fontSize: 12,
     marginRight: 8,
+    marginTop: 2,
   },
   modal: {
     margin: 0,
@@ -1398,66 +2425,97 @@ const styles = StyleSheet.create({
     color: COLORS.gray,
     marginTop: 12,
   },
-  datePickerContainer: {
+  footerTopCombined: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     backgroundColor: COLORS.white,
     borderTopWidth: 1,
     borderTopColor: COLORS.lightGray2,
+    gap: 8,
+  },
+  footerDateBlock: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   dateLabel: {
-    ...FONTS.body4,
+    ...FONTS.body5,
     color: COLORS.darkGray,
     fontWeight: '600',
+    flexShrink: 0,
   },
   globalDatePickerButton: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: COLORS.lightGray2,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    gap: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    borderRadius: 6,
+    gap: 6,
+    minWidth: 0,
   },
   calendarIcon: {
-    width: 16,
-    height: 16,
+    width: 14,
+    height: 14,
     tintColor: COLORS.primary,
   },
   datePickerText: {
-    ...FONTS.body4,
+    ...FONTS.body5,
     color: COLORS.darkGray,
+    flexShrink: 1,
   },
-  // Drafts Section Styles
-  draftsSection: {
+  // Search + drafts (same row)
+  searchAndDraftsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: SIZES.padding,
+    marginVertical: SIZES.base,
     backgroundColor: COLORS.white,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: COLORS.lightGray2,
+    gap: 8,
   },
-  draftsHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  searchBarRowWrapper: {
+    flex: 1,
+    minWidth: 0,
+  },
+  searchBarInRow: {
+    marginHorizontal: 0,
+    marginVertical: 0,
+    flex: 1,
+  },
+  draftsOpenButton: {
+    borderWidth: 1,
+    borderColor: COLORS.primary2,
+    backgroundColor: COLORS.lightGray2,
+    borderRadius: 8,
+    height: 50,
     alignItems: 'center',
-    marginBottom: 8,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    flexShrink: 0,
+    maxWidth: 120,
   },
-  draftsTitle: {
+  draftsOpenButtonText: {
     ...FONTS.h4,
-    color: COLORS.darkGray,
-    fontWeight: '600',
+    color: COLORS.primary2,
     fontSize: 14,
+    fontWeight: '600',
   },
-  draftsToggle: {
-    ...FONTS.body4,
-    color: COLORS.primary,
-    fontSize: 12,
+  salesBrowserMetaRow: {
+    paddingHorizontal: SIZES.padding,
+    paddingBottom: 6,
+    alignItems: 'flex-end',
   },
-  draftsList: {
-    marginTop: 8,
+  draftsModalList: {
+    paddingHorizontal: 16,
+    paddingBottom: 24,
   },
   draftCard: {
     width: 200,
@@ -1467,6 +2525,11 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderWidth: 1,
     borderColor: COLORS.lightGray2,
+  },
+  draftCardInModal: {
+    width: '100%',
+    marginRight: 0,
+    marginBottom: 12,
   },
   draftCardContent: {
     padding: 12,
@@ -1520,16 +2583,16 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     fontSize: 12,
   },
-  // Save Draft Button Styles
-  saveDraftButton: {
+  saveDraftButtonInline: {
     backgroundColor: COLORS.primary2,
-    marginHorizontal: 16,
-    marginVertical: 8,
-    paddingVertical: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 44,
+    minHeight: 36,
+    maxWidth: '42%',
+    flexShrink: 0,
   },
   saveDraftButtonDisabled: {
     opacity: 0.6,
@@ -1540,7 +2603,7 @@ const styles = StyleSheet.create({
   saveDraftButtonText: {
     ...FONTS.h4,
     color: COLORS.white,
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '600',
   },
 });

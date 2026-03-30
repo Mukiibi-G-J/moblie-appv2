@@ -5,13 +5,14 @@ import axios, {
   AxiosResponse,
 } from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {navigate} from '../hooks/NavigationService';
+import {navigate, navigationRef} from '../hooks/NavigationService';
 import {
   USE_TEST_ENV,
   TEST_API_BASE_URL,
   TEST_TENANT_SCHEMA,
   PROD_BASE_URL,
 } from '../config/api.config';
+import {forceLogout} from '../utils/authEvents';
 
 interface ApiConfig {
   baseURL: string;
@@ -21,6 +22,27 @@ interface ApiConfig {
 interface CustomError extends AxiosError {
   customMessage?: string;
 }
+
+/**
+ * Public-schema API paths (company onboarding, etc.). In test mode we must not
+ * send X-Tenant so the backend resolves these on the public tenant.
+ */
+const PUBLIC_SCHEMA_PATH_MARKERS = [
+  '/api/company/create-company-account',
+  '/api/company/task-status',
+  '/api/company/validate-company-name',
+  '/api/company/check-company-exists',
+  '/api/home/on-boarding',
+];
+
+function shouldSendTestTenantHeader(url: string | undefined): boolean {
+  if (!url) {
+    return true;
+  }
+  return !PUBLIC_SCHEMA_PATH_MARKERS.some(marker => url.includes(marker));
+}
+
+let lastSubscriptionRedirectAt = 0;
 
 const createAxiosInstance = (tenant?: string) => {
   // Use test environment if enabled, otherwise use production
@@ -43,8 +65,11 @@ const createAxiosInstance = (tenant?: string) => {
         config.headers['Authorization'] = `Bearer ${accessToken}`;
       }
 
-      // Add X-Tenant header for test environment
-      if (USE_TEST_ENV && TEST_TENANT_SCHEMA) {
+      if (
+        USE_TEST_ENV &&
+        TEST_TENANT_SCHEMA &&
+        shouldSendTestTenantHeader(config.url)
+      ) {
         config.headers['X-Tenant'] = TEST_TENANT_SCHEMA;
       }
 
@@ -54,6 +79,68 @@ const createAxiosInstance = (tenant?: string) => {
   );
 
   // Add response interceptor
+  const isSubscriptionExpiredPayload = (data: any, status?: number) => {
+    const code = data?.code;
+    return status === 402 || code === 'subscription_expired';
+  };
+
+  const maybeHandleSubscriptionExpired = async (error: AxiosError) => {
+    const status = error.response?.status;
+    const data = error.response?.data as any;
+
+    if (!isSubscriptionExpiredPayload(data, status)) {
+      return false;
+    }
+
+    const now = Date.now();
+    if (now - lastSubscriptionRedirectAt < 2000) {
+      return true; // debounced
+    }
+    lastSubscriptionRedirectAt = now;
+
+    const currentRouteName = navigationRef.current?.getCurrentRoute()?.name;
+    const isAlreadyOnSubscription =
+      currentRouteName === 'Subscription' ||
+      currentRouteName === 'SubscriptionMobileMoney';
+    if (isAlreadyOnSubscription) {
+      return true;
+    }
+
+    try {
+      // Fetch subscription instructions directly to avoid circular imports.
+      // If this call fails with 401, we let the 401 handler run (logout).
+      const instructionsResp = await instance.get<{
+        has_pending_verification?: boolean;
+        pending_payment_reference?: string;
+      }>(
+        '/api/company/subscription/mobile-money-instructions/',
+      );
+      const instructions = instructionsResp.data;
+
+      if (
+        instructions?.has_pending_verification &&
+        instructions.pending_payment_reference
+      ) {
+        navigate('SubscriptionMobileMoney', {
+          fromExpired: 1,
+          submitted: true,
+          reference: instructions.pending_payment_reference,
+        });
+      } else {
+        navigate('Subscription', {
+          fromExpiredModal: true,
+        });
+      }
+
+      return true;
+    } catch (e: any) {
+      // If token is invalid, the 401 interceptor should handle logout/navigation.
+      const subStatus = e?.response?.status;
+      if (subStatus === 401) return false;
+      return false;
+    }
+  };
+
   instance.interceptors.response.use(
     response => response,
     async error => {
@@ -65,16 +152,27 @@ const createAxiosInstance = (tenant?: string) => {
         method: error.config?.method,
         data: error.response?.data,
       });
-      if (error.response?.data.detail) {
-        return Promise.reject(error.response?.data.detail);
+
+      // Handle 402 subscription expiry *before* rejecting `data.detail`.
+      // Otherwise callers only see the detail string and no redirect happens.
+      try {
+        const handled = await maybeHandleSubscriptionExpired(error);
+        if (handled) {
+          return Promise.reject(error);
+        }
+      } catch (e) {
+        // Non-fatal; fall back to other error handlers below.
+        console.warn('Failed to handle subscription expiry:', e);
       }
 
       // Handle 401 (Unauthorized) - Authentication error
       if (error.response && error.response.status === 401) {
         console.log('Token expired or invalid - logging out user');
-        await AsyncStorage.multiRemove(['accessToken', 'cartItems']);
-        // Navigate to SignIn screen - AuthGuard will handle the rest
-        navigate('Auth', {screen: 'SignIn'});
+        // Clear auth state through Store provider.
+        forceLogout();
+
+        // Preserve caller error context; do not convert to string too early.
+        return Promise.reject(error);
       }
 
       // Handle 403 (Forbidden) - Permission error (don't log out)
@@ -112,6 +210,12 @@ const createAxiosInstance = (tenant?: string) => {
             : 'Please check your internet connection and try again.',
         });
       }
+
+      // Finally, if backend returned `{detail: ...}`, surface it to callers.
+      if (error.response?.data?.detail) {
+        return Promise.reject(error.response.data.detail);
+      }
+
       return Promise.reject(error);
     },
   );
@@ -189,8 +293,12 @@ class ApiService {
           config.headers.Authorization = `Bearer ${token}`;
         }
 
-        // Add X-Tenant header for test environment
-        if (USE_TEST_ENV && TEST_TENANT_SCHEMA && config.headers) {
+        if (
+          USE_TEST_ENV &&
+          TEST_TENANT_SCHEMA &&
+          config.headers &&
+          shouldSendTestTenantHeader(config.url)
+        ) {
           config.headers['X-Tenant'] = TEST_TENANT_SCHEMA;
         }
 
@@ -226,17 +334,58 @@ class ApiService {
       data: error.response?.data,
     };
 
-    if (
-      error.response?.data &&
-      typeof error.response.data === 'object' &&
-      'detail' in error.response.data
-    ) {
-      return Promise.reject((error.response.data as any).detail);
+    // Handle 402 subscription expiry before extracting `detail`.
+    try {
+      const status = error.response?.status;
+      const data = error.response?.data as any;
+      const isSubExpired = status === 402 || data?.code === 'subscription_expired';
+
+      if (isSubExpired) {
+        const currentRouteName = navigationRef.current?.getCurrentRoute()?.name;
+        const isAlreadyOnSubscription =
+          currentRouteName === 'Subscription' ||
+          currentRouteName === 'SubscriptionMobileMoney';
+
+        if (!isAlreadyOnSubscription) {
+          const now = Date.now();
+          if (now - lastSubscriptionRedirectAt < 2000) {
+            return Promise.reject(error);
+          }
+          lastSubscriptionRedirectAt = now;
+
+          const instructionsResp = await this.axiosInstance.get<{
+            has_pending_verification?: boolean;
+            pending_payment_reference?: string;
+          }>(
+            '/api/company/subscription/mobile-money-instructions/',
+          );
+          const instructions = instructionsResp.data;
+          if (
+            instructions?.has_pending_verification &&
+            instructions.pending_payment_reference
+          ) {
+            navigate('SubscriptionMobileMoney', {
+              fromExpired: 1,
+              submitted: true,
+              reference: instructions.pending_payment_reference,
+            });
+          } else {
+            navigate('Subscription', {fromExpiredModal: true});
+          }
+        }
+
+        return Promise.reject(error);
+      }
+    } catch (e) {
+      console.warn('Failed to handle subscription expiry (ApiService):', e);
     }
 
     // Handle 401 (Unauthorized) - Authentication error
     if (error.response?.status === 401) {
       await this.handleAuthenticationError();
+
+      // Preserve error context after logout.
+      return Promise.reject(error);
     }
 
     // Handle 403 (Forbidden) - Permission error (don't log out)
@@ -268,13 +417,21 @@ class ApiService {
       });
     }
 
+    // Finally, if backend returned `{detail: ...}`, surface it to callers.
+    if (
+      error.response?.data &&
+      typeof error.response.data === 'object' &&
+      'detail' in error.response.data
+    ) {
+      return Promise.reject((error.response.data as any).detail);
+    }
+
     return Promise.reject(error);
   }
 
   private async handleAuthenticationError(): Promise<void> {
     try {
-      await AsyncStorage.multiRemove(['accessToken', 'cartItems']);
-      navigate('Auth', {screen: 'SignIn'});
+      forceLogout();
     } catch (error) {
       console.error('Error handling authentication:', error);
     }

@@ -54,6 +54,7 @@ export const PAGE_NAMES = {
   CHART_OF_ACCOUNTS: 'Chart of Accounts',
   FINANCIAL_REPORTS: 'Financial Reports',
   PROFIT_AND_LOSS: 'Profit & Loss',
+  BALANCE_SHEET: 'Balance Sheet',
 
   // ============================================
   // EXPENSES MODULE PAGES (10601-10699)

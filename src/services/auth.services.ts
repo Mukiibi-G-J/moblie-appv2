@@ -1,5 +1,5 @@
 import {jwtDecode} from 'jwt-decode';
-import {ApiService, axiosInstance, createAxiosInstance} from '../axios/axios'; // Import the Axios instance
+import {ApiService, createAxiosInstance} from '../axios/axios';
 import AsyncStorage from '@react-native-async-storage/async-storage'; // Import AsyncStorage
 import Toast from 'react-native-toast-message';
 interface LoginResponse {
@@ -11,27 +11,6 @@ interface AuthError {
   code?: string;
   status?: number;
 }
-export const signUpUser = async (data: {
-  email: string;
-  username: string;
-  password: string;
-  full_name: string;
-  company_name: string;
-  address: string;
-  phone_number: string;
-}) => {
-  try {
-    // Get tenant from storage
-    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const axiosInstance = createAxiosInstance(tenant);
-    const response = await axiosInstance.post('/api/auth/sign-up/', data);
-    return response;
-  } catch (error) {
-    console.log(error);
-    throw error;
-  }
-};
-
 export const loginUser = async (credentials: {
   email: string;
   password: string;

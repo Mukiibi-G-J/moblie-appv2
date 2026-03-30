@@ -1,17 +1,15 @@
-import React, {useState} from 'react';
+import React, {useState, useCallback} from 'react';
 import {
   View,
   Text,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
-  Dimensions,
   Image,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
-import {NativeStackNavigationProp} from '@react-navigation/native-stack';
-import {icons, images} from '../../constants';
+import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
+import {icons} from '../../constants';
 import AuthLayout from '../../Components/layouts/AuthLayout';
 import FormInput from '../../Components/FormInput2';
 import {COLORS} from '../../constants';
@@ -19,39 +17,52 @@ import {authService} from '../../services/auth.services';
 import Toast from 'react-native-toast-message';
 import {RootStackParamList} from '../../@types/types.dto';
 import {useAppContext, AppContextType} from '../../context/Store';
+import {radii} from '../../design-system/theme';
+import {authOnboarding} from '../../design-system/authOnboardingTokens';
+import {useTheme} from '../../context/ThemeContext';
 
-const {width} = Dimensions.get('window');
+const ao = authOnboarding;
 
-type LoginScreenNavigationProp = NativeStackNavigationProp<
-  RootStackParamList,
-  'Login'
->;
+/** Continue CTA solid fill */
+const CONTINUE_BRAND = '#0b5cff';
+
+type LoginNav = NativeStackNavigationProp<RootStackParamList, 'SignIn'>;
+
+const emailLooksValid = (value: string) => /\S+@\S+\.\S+/.test(value.trim());
 
 const Login = () => {
-  const navigation = useNavigation<LoginScreenNavigationProp>();
+  const {colors} = useTheme();
+  const navigation = useNavigation<LoginNav>();
   const context = useAppContext();
+  const [step, setStep] = useState<1 | 2>(1);
   const [tenant, setTenant] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [tenantError, setTenantError] = useState('');
   const [isCheckingTenant, setIsCheckingTenant] = useState(false);
+  const [continuing, setContinuing] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [passwordError, setPasswordError] = useState('');
+
+  const goBackToCredentials = useCallback(() => {
+    setPassword('');
+    setPasswordError('');
+    setShowPassword(false);
+    setStep(1);
+  }, []);
+
   const handleLogin = async () => {
     if (!tenant || !email || !password) {
       Toast.show({
         type: 'error',
-        text1: `Please ${!tenant ? 'enter company name' : ''} ${
-          !email ? 'enter email' : ''
-        } ${!password ? 'enter password' : ''}`,
+        text1: 'Please enter your password',
       });
       return;
     }
 
     setLoading(true);
     try {
-      // Add your login logic here
       const response = await authService.login({tenant, email, password});
       if (response) {
         Toast.show({
@@ -60,15 +71,11 @@ const Login = () => {
           text2: 'Redirecting to dashboard...',
         });
 
-        // Keep loading state active during context update and navigation
-        // Update the context to trigger navigation change
-        // This will make the 'Home' screen available in the navigation stack
         await context?.login({email, password, tenant});
 
-        // Add a timeout to ensure loading state is cleared if navigation takes too long
         setTimeout(() => {
           setLoading(false);
-        }, 5000); // 5 second timeout as fallback
+        }, 5000);
       } else {
         setLoading(false);
         Toast.show({
@@ -76,12 +83,12 @@ const Login = () => {
           text1: 'Login failed',
           text2: 'Please check your credentials and try again',
         });
+        goBackToCredentials();
       }
     } catch (error: any) {
       console.log(error);
       setLoading(false);
 
-      // Handle specific error types
       let errorMessage = 'An error occurred. Please try again.';
       if (error.message) {
         errorMessage = error.message;
@@ -97,14 +104,14 @@ const Login = () => {
         text1: 'Login failed',
         text2: errorMessage,
       });
+      goBackToCredentials();
     }
   };
 
-  const validateTenant = async (value: string) => {
+  const validateTenantLive = async (value: string) => {
     if (value.length >= 3) {
       setIsCheckingTenant(true);
       try {
-        // Make your API call here to verify tenant
         const response = await authService.isCompanyExists(value);
         if (response) {
           setTenantError('');
@@ -119,168 +126,296 @@ const Login = () => {
     }
   };
 
-  return (
-    <AuthLayout title="Welcome Back" subtitle="Sign in to continue">
-      <FormInput
-        label="Company Name"
-        value={tenant}
-        onChangeText={text => {
-          setTenant(text);
-          validateTenant(text);
-        }}
-        placeholder="Enter Company Name"
-        required
-        error={tenantError}
-        isLoading={isCheckingTenant}
-        helpText="Enter your registered company name"
-        startIcon={
-          <Image
-            source={icons.company}
-            style={{width: 20, height: 20, tintColor: COLORS.grey}}
-          />
-        }
-        autoCapitalize="none"
-      />
+  const continueToPassword = async () => {
+    const t = tenant.trim();
+    const e = email.trim();
 
-      <FormInput
-        label="Email Address"
-        value={email}
-        onChangeText={setEmail}
-        placeholder="Enter email"
-        required
-        helpText="We'll never share your email"
-        startIcon={
-          <Image
-            source={icons.email}
-            style={{width: 20, height: 20, tintColor: COLORS.grey}}
-          />
-        }
-        keyboardType="email-address"
-        autoCapitalize="none"
-      />
+    if (!t || !e) {
+      Toast.show({
+        type: 'error',
+        text1: 'Missing information',
+        text2: 'Enter company name and email',
+      });
+      return;
+    }
 
-      <FormInput
-        label="Password"
-        value={password}
-        onChangeText={setPassword}
-        placeholder="Enter password"
-        required
-        error={passwordError}
-        helpText="Minimum 8 characters"
-        secureTextEntry={!showPassword}
-        endIcon={
-          <TouchableOpacity
-            onPress={() => setShowPassword(!showPassword)}
-            style={styles.iconButton}>
-            <Image
-              source={showPassword ? icons.eye : icons.eye_close}
-              style={{
-                width: 20,
-                height: 20,
-                tintColor: COLORS.grey,
-              }}
-            />
-          </TouchableOpacity>
-        }
-      />
+    if (t.length < 3) {
+      Toast.show({
+        type: 'error',
+        text1: 'Company name',
+        text2: 'Use at least 3 characters',
+      });
+      return;
+    }
 
-      {/* <TouchableOpacity
-        onPress={() => navigation.navigate('ForgotPassword')}
-        style={styles.forgotPassword}>
-        <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-      </TouchableOpacity> */}
+    if (!emailLooksValid(e)) {
+      Toast.show({
+        type: 'error',
+        text1: 'Invalid email',
+        text2: 'Enter a valid email address',
+      });
+      return;
+    }
 
+    setContinuing(true);
+    try {
+      const exists = await authService.isCompanyExists(t);
+      if (!exists) {
+        setTenantError('Company not found');
+        Toast.show({
+          type: 'error',
+          text1: 'Company not found',
+          text2: 'Check the name or sign up',
+        });
+        return;
+      }
+      setTenantError('');
+    } catch {
+      Toast.show({
+        type: 'error',
+        text1: 'Could not verify company',
+        text2: 'Check your connection and try again',
+      });
+      return;
+    } finally {
+      setContinuing(false);
+    }
+
+    setStep(2);
+  };
+
+  const canExit = navigation.canGoBack();
+  const showBack = step === 2 || canExit;
+  const onBack =
+    step === 2
+      ? goBackToCredentials
+      : canExit
+        ? () => navigation.goBack()
+        : undefined;
+
+  const identitySubtitle = (
+    <View style={styles.identityRow}>
+      <Text
+        style={[styles.identityEmail, {color: colors.textPrimary}]}
+        numberOfLines={1}>
+        {email.trim()}
+      </Text>
       <TouchableOpacity
-        style={[styles.loginButton, loading && styles.loginButtonDisabled]}
-        onPress={handleLogin}
-        disabled={loading}>
-        {loading ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.loginButtonText}>Sign In</Text>
-        )}
+        onPress={goBackToCredentials}
+        hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
+        <Text style={[styles.changeLink, {color: colors.textPrimary}]}>
+          Change
+        </Text>
       </TouchableOpacity>
+    </View>
+  );
 
-      {/* <View style={styles.signupContainer}>
-        <Text style={styles.signupText}>Don't have an account? </Text>
-        <TouchableOpacity
-          onPress={() => navigation.navigate('SignUp')}
-          hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
-          <Text style={styles.signupLink}>Sign Up</Text>
-        </TouchableOpacity>
-      </View> */}
+  return (
+    <AuthLayout
+      title={step === 1 ? 'Sign in' : 'Welcome back'}
+      subtitle={step === 2 ? identitySubtitle : undefined}
+      showBackButton={showBack && !!onBack}
+      onBackPress={onBack}>
+      {step === 1 ? (
+        <>
+          <FormInput
+            label="Company Name"
+            value={tenant}
+            onChangeText={text => {
+              setTenant(text);
+              validateTenantLive(text);
+            }}
+            placeholder="Enter Company Name"
+            required
+            error={tenantError}
+            isLoading={isCheckingTenant}
+            helpText="Enter your registered company name"
+            startIcon={
+              <Image
+                source={icons.company}
+                style={{width: 20, height: 20, tintColor: colors.iconMuted}}
+              />
+            }
+            autoCapitalize="none"
+          />
+
+          <FormInput
+            label="Email Address"
+            value={email}
+            onChangeText={setEmail}
+            placeholder="Enter email"
+            required
+            helpText="We'll never share your email"
+            startIcon={
+              <Image
+                source={icons.email}
+                style={{width: 20, height: 20, tintColor: colors.iconMuted}}
+              />
+            }
+            keyboardType="email-address"
+            autoCapitalize="none"
+          />
+
+          <TouchableOpacity
+            style={[
+              styles.continueButton,
+              continuing && styles.loginButtonDisabled,
+            ]}
+            onPress={continueToPassword}
+            disabled={continuing}
+            activeOpacity={0.88}>
+            {continuing ? (
+              <ActivityIndicator color={COLORS.white} />
+            ) : (
+              <Text style={styles.continueButtonText}>Continue</Text>
+            )}
+          </TouchableOpacity>
+
+          <View style={styles.signupContainer}>
+            <Text style={[styles.signupText, {color: colors.textSecondary}]}>
+              Don&apos;t have an account?{' '}
+            </Text>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('SignUp')}
+              hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
+              <Text style={[styles.signupLink, {color: colors.textPrimary}]}>
+                Sign Up
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      ) : (
+        <>
+          <FormInput
+            label="Password"
+            value={password}
+            onChangeText={setPassword}
+            placeholder="Enter password"
+            required
+            error={passwordError}
+            helpText="Minimum 8 characters"
+            secureTextEntry={!showPassword}
+            endIcon={
+              <TouchableOpacity
+                onPress={() => setShowPassword(!showPassword)}
+                style={styles.iconButton}>
+                <Image
+                  source={showPassword ? icons.eye : icons.eye_close}
+                  style={{
+                    width: 20,
+                    height: 20,
+                    tintColor: colors.iconMuted,
+                  }}
+                />
+              </TouchableOpacity>
+            }
+          />
+
+          <TouchableOpacity
+            onPress={() =>
+              Toast.show({
+                type: 'info',
+                text1: 'Forgot password',
+                text2: 'Contact your administrator to reset your password.',
+              })
+            }
+            style={styles.forgotPassword}
+            hitSlop={{top: 8, bottom: 8, left: 4, right: 4}}>
+            <Text
+              style={[styles.forgotPasswordText, {color: colors.textPrimary}]}>
+              Forgot password?
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.loginButton, loading && styles.loginButtonDisabled]}
+            onPress={handleLogin}
+            disabled={loading}
+            activeOpacity={0.88}>
+            {loading ? (
+              <ActivityIndicator color={COLORS.white} />
+            ) : (
+              <Text style={styles.loginButtonText}>Sign in</Text>
+            )}
+          </TouchableOpacity>
+        </>
+      )}
     </AuthLayout>
   );
 };
 
 const styles = StyleSheet.create({
-  inputContainer: {
-    marginBottom: 20,
+  identityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: ao.spacing.sm,
   },
-  label: {
-    fontSize: 15,
+  identityEmail: {
+    flex: 1,
+    fontSize: ao.typo.body,
+  },
+  changeLink: {
+    fontSize: ao.typo.body,
     fontWeight: '600',
-    color: '#1a1a1a',
-    marginBottom: 8,
-  },
-  input: {
-    height: 52,
-    backgroundColor: '#f8f9fa',
-    borderWidth: 1,
-    borderColor: '#e9ecef',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    fontSize: 16,
-    color: '#1a1a1a',
+    textDecorationLine: 'underline',
   },
   forgotPassword: {
-    alignSelf: 'flex-end',
-    marginBottom: 24,
+    alignSelf: 'flex-start',
+    marginBottom: ao.spacing.md,
     paddingVertical: 4,
   },
   forgotPasswordText: {
-    color: '#007AFF',
-    fontSize: 14,
+    fontSize: ao.typo.caption,
     fontWeight: '500',
+    textDecorationLine: 'underline',
   },
-  loginButton: {
-    backgroundColor: '#007AFF',
-    height: 52,
-    borderRadius: 12,
+  continueButton: {
+    marginTop: ao.sectionSpacing.beforePrimaryAction,
+    minHeight: 56,
+    borderRadius: radii.full,
+    backgroundColor: CONTINUE_BRAND,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#007AFF',
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
+    paddingHorizontal: ao.spacing.lg,
+  },
+  continueButtonText: {
+    color: COLORS.white,
+    fontSize: ao.typo.body,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
+  loginButton: {
+    marginTop: ao.sectionSpacing.beforePrimaryAction,
+    minHeight: 56,
+    borderRadius: radii.full,
+    backgroundColor: CONTINUE_BRAND,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: ao.spacing.lg,
   },
   loginButtonDisabled: {
-    backgroundColor: '#80bdff',
+    opacity: 0.55,
   },
   loginButtonText: {
-    color: '#fff',
-    fontSize: 16,
+    color: COLORS.white,
+    fontSize: ao.typo.body,
     fontWeight: '600',
-    letterSpacing: 0.5,
+    letterSpacing: 0.3,
   },
   signupContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 24,
+    marginTop: ao.spacing.lg,
   },
   signupText: {
-    color: '#666',
-    fontSize: 14,
+    fontSize: ao.typo.caption,
   },
   signupLink: {
-    color: '#007AFF',
-    fontSize: 14,
+    fontSize: ao.typo.caption,
     fontWeight: '600',
+    textDecorationLine: 'underline',
   },
   iconButton: {
     padding: 8,

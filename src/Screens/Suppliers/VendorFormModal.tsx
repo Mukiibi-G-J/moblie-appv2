@@ -9,11 +9,12 @@ import {
   StyleSheet,
   Alert,
   ActivityIndicator,
-  KeyboardAvoidingView,
+  Image,
   Platform,
 } from 'react-native';
 import {Picker} from '@react-native-picker/picker';
-import {COLORS, FONTS, SIZES} from '../../constants';
+import {COLORS, FONTS} from '../../constants';
+import icons from '../../constants/icons';
 import {
   Vendor,
   PaymentMethod,
@@ -25,13 +26,15 @@ import Toast from 'react-native-toast-message';
 interface VendorFormModalProps {
   visible: boolean;
   onClose: () => void;
-  vendor: Vendor | null; // null for create, Vendor for edit
+  vendor: Vendor | null;
   onSave: () => void;
   paymentMethods: PaymentMethod[];
   canCreate: boolean;
   canEdit: boolean;
-  canDelete: boolean;
 }
+
+const isProtectedGeneralVendor = (vendor?: Vendor | null) =>
+  vendor?.no === 'VENDOR-000001';
 
 const VendorFormModal: React.FC<VendorFormModalProps> = ({
   visible,
@@ -41,12 +44,10 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
   paymentMethods,
   canCreate,
   canEdit,
-  canDelete,
 }) => {
   const isEditMode = !!vendor;
-  const isGeneralVendor = vendor?.no === 'VENDOR-000001';
+  const isGeneralVendor = isProtectedGeneralVendor(vendor);
 
-  // Form state
   const [formData, setFormData] = useState<VendorFormValues>({
     name: '',
     blocked: false,
@@ -63,7 +64,6 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Initialize form when vendor changes
   useEffect(() => {
     if (vendor) {
       setFormData({
@@ -79,7 +79,6 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
         business_posting_group: vendor.business_posting_group || null,
       });
     } else {
-      // Reset form for new vendor
       setFormData({
         name: '',
         blocked: false,
@@ -100,10 +99,9 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
     const newErrors: Record<string, string> = {};
 
     if (!formData.name || !formData.name.trim()) {
-      newErrors.name = 'Vendor name is required';
+      newErrors.name = 'Supplier name is required';
     }
 
-    // Email validation (optional but if provided, should be valid format)
     if (formData.email && formData.email.trim()) {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(formData.email.trim())) {
@@ -111,7 +109,6 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
       }
     }
 
-    // Website validation (optional but if provided, should be valid URL)
     if (formData.website && formData.website.trim()) {
       try {
         new URL(formData.website.trim());
@@ -120,12 +117,10 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
       }
     }
 
-    // Phone validation (optional but if provided, should be valid format)
     if (formData.phone && !/^\+?[\d\s\-()]+$/.test(formData.phone)) {
       newErrors.phone =
         'Phone number can only contain numbers, +, -, (), and spaces';
     }
-
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -136,7 +131,6 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
       return;
     }
 
-    // Check permissions
     if (isEditMode && !canEdit) {
       Alert.alert(
         'Permission Denied',
@@ -153,11 +147,10 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
       return;
     }
 
-    // Prevent editing general vendor
     if (isEditMode && isGeneralVendor) {
       Alert.alert(
-        'Warning',
-        'The general vendor (VENDOR-000001) cannot be edited.',
+        'Protected supplier',
+        'The General Vendor cannot be edited.',
       );
       return;
     }
@@ -169,7 +162,6 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
         blocked: formData.blocked,
       };
 
-      // Only include optional fields if they have values
       if (formData.address && formData.address.trim()) {
         vendorData.address = formData.address.trim();
       }
@@ -200,14 +192,14 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
         Toast.show({
           type: 'success',
           text1: 'Success',
-          text2: 'Vendor updated successfully',
+          text2: 'Supplier updated successfully',
         });
       } else {
         await VendorServices.createVendor(vendorData);
         Toast.show({
           type: 'success',
           text1: 'Success',
-          text2: 'Vendor created successfully',
+          text2: 'Supplier created successfully',
         });
       }
 
@@ -218,7 +210,7 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
         error?.response?.data?.detail ||
         error?.response?.data?.error ||
         error?.response?.data?.name?.[0] ||
-        'Failed to save vendor';
+        'Failed to save supplier';
       Toast.show({
         type: 'error',
         text1: 'Error',
@@ -229,441 +221,474 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
     }
   };
 
+  const previewName = (formData.name || 'My Supplier').trim();
+  const previewInitials =
+    previewName
+      .split(' ')
+      .filter(Boolean)
+      .slice(0, 2)
+      .map(part => part[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase() || 'SU';
+
   return (
     <Modal
       visible={visible}
       animationType="slide"
-      transparent={true}
+      transparent={false}
       onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        style={styles.modalOverlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <View style={styles.modalContent}>
-          {/* Header */}
-          <View style={styles.header}>
-            <Text style={styles.title}>
-              {isEditMode ? 'Edit Supplier' : 'Create Supplier'}
-            </Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <Text style={styles.closeButtonText}>✕</Text>
-            </TouchableOpacity>
-          </View>
+      <View style={styles.pageRoot}>
+        <View style={styles.pageHeader}>
+          <TouchableOpacity
+            onPress={onClose}
+            style={styles.headerIconButton}
+            hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
+            <Image
+              source={icons.cross}
+              style={styles.headerIcon}
+              resizeMode="contain"
+            />
+          </TouchableOpacity>
 
-          <ScrollView
-            style={styles.scrollView}
-            showsVerticalScrollIndicator={false}>
-            <View style={styles.formCard}>
-              {/* Basic Information Section */}
-              <Text style={styles.sectionTitle}>Basic Information</Text>
-
-              {/* Vendor No (Read-only) */}
-              {isEditMode && vendor?.no && (
-                <View style={styles.fieldContainer}>
-                  <Text style={styles.label}>Supplier No</Text>
-                  <TextInput
-                    style={[styles.input, styles.disabledInput]}
-                    value={vendor.no}
-                    editable={false}
-                  />
-                </View>
-              )}
-
-              {/* Name */}
-              <View style={styles.fieldContainer}>
-                <Text style={styles.label}>Name *</Text>
-                <TextInput
-                  style={[styles.input, errors.name && styles.inputError]}
-                  value={formData.name}
-                  onChangeText={text =>
-                    setFormData({...formData, name: text})
-                  }
-                  placeholder="Enter supplier name"
-                  placeholderTextColor={COLORS.gray}
-                  editable={!isGeneralVendor}
-                />
-                {errors.name && (
-                  <Text style={styles.errorText}>{errors.name}</Text>
-                )}
-              </View>
-
-              {/* Blocked */}
-              <View style={styles.fieldContainer}>
-                <View style={styles.checkboxContainer}>
-                  <TouchableOpacity
-                    style={[
-                      styles.checkbox,
-                      formData.blocked && styles.checkboxChecked,
-                    ]}
-                    onPress={() =>
-                      setFormData({...formData, blocked: !formData.blocked})
-                    }>
-                    {formData.blocked && (
-                      <Text style={styles.checkboxText}>✓</Text>
-                    )}
-                  </TouchableOpacity>
-                  <Text style={styles.checkboxLabel}>Blocked</Text>
-                </View>
-              </View>
-
-              {/* Email */}
-              <View style={styles.fieldContainer}>
-                <Text style={styles.label}>Email</Text>
-                <TextInput
-                  style={[styles.input, errors.email && styles.inputError]}
-                  value={formData.email}
-                  onChangeText={text =>
-                    setFormData({...formData, email: text})
-                  }
-                  placeholder="vendor@example.com"
-                  placeholderTextColor={COLORS.gray}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                />
-                {errors.email && (
-                  <Text style={styles.errorText}>{errors.email}</Text>
-                )}
-              </View>
-
-              {/* Phone */}
-              <View style={styles.fieldContainer}>
-                <Text style={styles.label}>Phone</Text>
-                <TextInput
-                  style={[styles.input, errors.phone && styles.inputError]}
-                  value={formData.phone}
-                  onChangeText={text =>
-                    setFormData({...formData, phone: text})
-                  }
-                  placeholder="+256700000000"
-                  placeholderTextColor={COLORS.gray}
-                  keyboardType="phone-pad"
-                />
-                {errors.phone && (
-                  <Text style={styles.errorText}>{errors.phone}</Text>
-                )}
-              </View>
-
-              {/* Website */}
-              <View style={styles.fieldContainer}>
-                <Text style={styles.label}>Website</Text>
-                <TextInput
-                  style={[styles.input, errors.website && styles.inputError]}
-                  value={formData.website}
-                  onChangeText={text =>
-                    setFormData({...formData, website: text})
-                  }
-                  placeholder="https://vendor.com"
-                  placeholderTextColor={COLORS.gray}
-                  keyboardType="url"
-                  autoCapitalize="none"
-                />
-                {errors.website && (
-                  <Text style={styles.errorText}>{errors.website}</Text>
-                )}
-              </View>
-
-              {/* Address Information Section */}
-              <Text style={[styles.sectionTitle, styles.sectionTitleMargin]}>
-                Address Information
-              </Text>
-
-              {/* Address */}
-              <View style={styles.fieldContainer}>
-                <Text style={styles.label}>Address</Text>
-                <TextInput
-                  style={[styles.input, styles.textArea]}
-                  value={formData.address}
-                  onChangeText={text =>
-                    setFormData({...formData, address: text})
-                  }
-                  placeholder="Enter street address"
-                  placeholderTextColor={COLORS.gray}
-                  multiline
-                  numberOfLines={2}
-                />
-              </View>
-
-              {/* City */}
-              <View style={styles.fieldContainer}>
-                <Text style={styles.label}>City</Text>
-                <TextInput
-                  style={styles.input}
-                  value={formData.city}
-                  onChangeText={text => setFormData({...formData, city: text})}
-                  placeholder="Enter city name"
-                  placeholderTextColor={COLORS.gray}
-                />
-              </View>
-
-              {/* Payment Information Section */}
-              <Text style={[styles.sectionTitle, styles.sectionTitleMargin]}>
-                Payment Information
-              </Text>
-
-              {/* Payment Method */}
-              <View style={styles.fieldContainer}>
-                <Text style={styles.label}>Payment Method (Optional)</Text>
-                {paymentMethods.length === 0 ? (
-                  <View style={styles.loadingContainer}>
-                    <ActivityIndicator size="small" color={COLORS.primary} />
-                    <Text style={styles.loadingText}>
-                      Loading payment methods...
-                    </Text>
-                  </View>
-                ) : (
-                  <>
-                    <View style={styles.pickerContainer}>
-                      <Picker
-                        selectedValue={formData.payment_method || 0}
-                        onValueChange={value => {
-                          if (value === 0) {
-                            setFormData({
-                              ...formData,
-                              payment_method: null,
-                            });
-                          } else {
-                            setFormData({...formData, payment_method: value});
-                          }
-                        }}
-                        style={styles.picker}
-                        itemStyle={{color: COLORS.black}}>
-                        <Picker.Item label="Select payment method" value={0} />
-                        {paymentMethods.map(method => (
-                          <Picker.Item
-                            key={method.id}
-                            label={method.description || method.code}
-                            value={method.id}
-                          />
-                        ))}
-                      </Picker>
-                    </View>
-                    {formData.payment_method && (
-                      <Text style={styles.selectedValueText}>
-                        Selected:{' '}
-                        {paymentMethods.find(
-                          m => m.id === formData.payment_method,
-                        )?.description ||
-                          paymentMethods.find(
-                            m => m.id === formData.payment_method,
-                          )?.code ||
-                          ''}
-                      </Text>
-                    )}
-                  </>
-                )}
-              </View>
-            </View>
-          </ScrollView>
-
-          {/* Footer Buttons */}
-          <View style={styles.footer}>
+          {((isEditMode && canEdit && !isGeneralVendor) ||
+            (!isEditMode && canCreate)) && (
             <TouchableOpacity
-              style={[styles.button, styles.cancelButton]}
-              onPress={onClose}
-              disabled={loading}>
-              <Text style={styles.cancelButtonText}>Cancel</Text>
+              style={[styles.headerSaveButton, loading && styles.buttonDisabled]}
+              onPress={handleSave}
+              disabled={loading}
+              activeOpacity={0.85}>
+              {loading ? (
+                <ActivityIndicator size="small" color={COLORS.white} />
+              ) : (
+                <Text style={styles.headerSaveText}>Save</Text>
+              )}
             </TouchableOpacity>
-            {((isEditMode && canEdit && !isGeneralVendor) ||
-              (!isEditMode && canCreate)) && (
-              <TouchableOpacity
-                style={[styles.button, styles.saveButton]}
-                onPress={handleSave}
-                disabled={loading}>
-                {loading ? (
-                  <ActivityIndicator size="small" color={COLORS.white} />
-                ) : (
-                  <Text style={styles.buttonText}>
-                    {isEditMode ? 'Update' : 'Create'}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            )}
-          </View>
+          )}
         </View>
-      </KeyboardAvoidingView>
+
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}>
+          <Text style={styles.pageTitle}>
+            {isEditMode ? 'Edit supplier' : 'Add supplier'}
+          </Text>
+
+          <View style={styles.previewSection}>
+            <View style={styles.previewAvatar}>
+              <Text style={styles.previewInitials}>{previewInitials}</Text>
+            </View>
+            <View style={styles.previewMeta}>
+              <Text style={styles.previewName} numberOfLines={1}>
+                {previewName}
+              </Text>
+              <Text style={styles.previewSubtext}>
+                {formData.phone?.trim() || formData.email?.trim() || 'Supplier contact'}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Details</Text>
+
+            {isEditMode && vendor?.no ? (
+              <View style={styles.fieldGroup}>
+                <Text style={styles.label}>Supplier number</Text>
+                <TextInput
+                  style={[styles.input, styles.disabledInput]}
+                  value={vendor.no}
+                  editable={false}
+                />
+              </View>
+            ) : null}
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Supplier name</Text>
+              <TextInput
+                style={[styles.input, errors.name && styles.inputError]}
+                value={formData.name}
+                onChangeText={text => setFormData({...formData, name: text})}
+                placeholder="Supplier name"
+                placeholderTextColor={COLORS.gray2}
+                editable={!isGeneralVendor}
+              />
+              {errors.name ? <Text style={styles.errorText}>{errors.name}</Text> : null}
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Phone number</Text>
+              <TextInput
+                style={[styles.input, errors.phone && styles.inputError]}
+                value={formData.phone}
+                onChangeText={text => setFormData({...formData, phone: text})}
+                placeholder="+256700000000"
+                placeholderTextColor={COLORS.gray2}
+                keyboardType="phone-pad"
+                editable={!isGeneralVendor}
+              />
+              {errors.phone ? <Text style={styles.errorText}>{errors.phone}</Text> : null}
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Email</Text>
+              <TextInput
+                style={[styles.input, errors.email && styles.inputError]}
+                value={formData.email}
+                onChangeText={text => setFormData({...formData, email: text})}
+                placeholder="supplier@example.com"
+                placeholderTextColor={COLORS.gray2}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                editable={!isGeneralVendor}
+              />
+              {errors.email ? <Text style={styles.errorText}>{errors.email}</Text> : null}
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Website</Text>
+              <TextInput
+                style={[styles.input, errors.website && styles.inputError]}
+                value={formData.website}
+                onChangeText={text => setFormData({...formData, website: text})}
+                placeholder="https://supplier.com"
+                placeholderTextColor={COLORS.gray2}
+                keyboardType="url"
+                autoCapitalize="none"
+                editable={!isGeneralVendor}
+              />
+              {errors.website ? (
+                <Text style={styles.errorText}>{errors.website}</Text>
+              ) : null}
+            </View>
+
+            <TouchableOpacity
+              style={[styles.blockedRow, isGeneralVendor && styles.disabledInput]}
+              activeOpacity={0.8}
+              disabled={isGeneralVendor}
+              onPress={() =>
+                setFormData(prev => ({...prev, blocked: !prev.blocked}))
+              }>
+              <View
+                style={[
+                  styles.blockedToggle,
+                  formData.blocked && styles.blockedToggleActive,
+                ]}>
+                {formData.blocked ? <Text style={styles.blockedToggleTick}>✓</Text> : null}
+              </View>
+              <View style={styles.blockedTextWrap}>
+                <Text style={styles.blockedTitle}>Blocked</Text>
+                <Text style={styles.blockedSubtext}>
+                  Prevent this supplier from being used in future transactions.
+                </Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.sectionDivider} />
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Address</Text>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Street address</Text>
+              <TextInput
+                style={[styles.input, styles.textArea]}
+                value={formData.address}
+                onChangeText={text => setFormData({...formData, address: text})}
+                placeholder="Street address"
+                placeholderTextColor={COLORS.gray2}
+                multiline
+                numberOfLines={3}
+                editable={!isGeneralVendor}
+              />
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>City</Text>
+              <TextInput
+                style={styles.input}
+                value={formData.city}
+                onChangeText={text => setFormData({...formData, city: text})}
+                placeholder="City"
+                placeholderTextColor={COLORS.gray2}
+                editable={!isGeneralVendor}
+              />
+            </View>
+          </View>
+
+          <View style={styles.sectionDivider} />
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Payment</Text>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Payment method</Text>
+              {paymentMethods.length === 0 ? (
+                <View style={styles.loadingRow}>
+                  <ActivityIndicator size="small" color={COLORS.primary2} />
+                  <Text style={styles.loadingText}>Loading payment methods...</Text>
+                </View>
+              ) : (
+                <>
+                  <View style={styles.pickerContainer}>
+                    <Picker
+                      selectedValue={formData.payment_method || 0}
+                      onValueChange={value => {
+                        if (value === 0) {
+                          setFormData({...formData, payment_method: null});
+                        } else {
+                          setFormData({...formData, payment_method: value});
+                        }
+                      }}
+                      style={styles.picker}
+                      enabled={!isGeneralVendor}>
+                      <Picker.Item label="Select payment method" value={0} />
+                      {paymentMethods.map(method => (
+                        <Picker.Item
+                          key={method.id}
+                          label={method.description || method.code}
+                          value={method.id}
+                        />
+                      ))}
+                    </Picker>
+                  </View>
+                  {formData.payment_method ? (
+                    <Text style={styles.selectedValueText}>
+                      {paymentMethods.find(m => m.id === formData.payment_method)
+                        ?.description ||
+                        paymentMethods.find(m => m.id === formData.payment_method)?.code ||
+                        ''}
+                    </Text>
+                  ) : null}
+                </>
+              )}
+            </View>
+          </View>
+        </ScrollView>
+      </View>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
-  modalOverlay: {
+  pageRoot: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
     backgroundColor: COLORS.white,
-    borderTopLeftRadius: SIZES.radius * 2,
-    borderTopRightRadius: SIZES.radius * 2,
-    maxHeight: '90%',
   },
-  header: {
+  pageHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: SIZES.padding,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray2,
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'ios' ? 12 : 16,
+    paddingBottom: 8,
   },
-  title: {
-    ...FONTS.h2,
-    color: COLORS.black,
-  },
-  closeButton: {
-    width: 32,
-    height: 32,
+  headerIconButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.transparentPrimary,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  closeButtonText: {
-    fontSize: 24,
-    color: COLORS.gray,
+  headerIcon: {
+    width: 16,
+    height: 16,
+    tintColor: COLORS.primary3,
+  },
+  headerSaveButton: {
+    minWidth: 108,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.primary2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    shadowColor: COLORS.primary3,
+    shadowOffset: {width: 0, height: 8},
+    shadowOpacity: 0.18,
+    shadowRadius: 16,
+    elevation: 6,
+  },
+  headerSaveText: {
+    color: COLORS.white,
+    fontSize: 18,
+    fontWeight: '700',
   },
   scrollView: {
-    maxHeight: '70%',
+    flex: 1,
   },
-  formCard: {
-    marginHorizontal: SIZES.padding,
-    marginVertical: SIZES.base,
-    backgroundColor: COLORS.white,
-    borderRadius: SIZES.radius * 1.5,
+  scrollContent: {
+    paddingHorizontal: 20,
+    paddingBottom: Platform.OS === 'ios' ? 40 : 28,
+  },
+  pageTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: COLORS.black,
+    marginTop: 22,
+    marginBottom: 24,
+  },
+  previewSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 18,
+    borderRadius: 18,
+    backgroundColor: COLORS.transparentPrimary,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    paddingBottom: SIZES.padding,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
+    borderColor: COLORS.transparentPrimary2,
+    marginBottom: 28,
+  },
+  previewAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: COLORS.primary3,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  previewInitials: {
+    color: COLORS.white,
+    fontSize: 22,
+    fontWeight: '700',
+  },
+  previewMeta: {
+    flex: 1,
+    marginLeft: 14,
+  },
+  previewName: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.primary3,
+    marginBottom: 4,
+  },
+  previewSubtext: {
+    ...FONTS.body4,
+    color: COLORS.secondary2,
+  },
+  section: {
+    marginBottom: 26,
   },
   sectionTitle: {
-    ...FONTS.h4,
-    color: COLORS.black,
-    fontWeight: '600',
-    paddingHorizontal: SIZES.padding,
-    paddingTop: SIZES.base * 1.5,
-    paddingBottom: SIZES.base,
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.primary3,
+    marginBottom: 14,
   },
-  sectionTitleMargin: {
-    marginTop: SIZES.base,
+  sectionDivider: {
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: COLORS.transparentPrimary,
+    marginTop: 6,
+    marginBottom: 26,
   },
-  fieldContainer: {
-    paddingHorizontal: SIZES.padding,
-    paddingVertical: SIZES.base,
+  fieldGroup: {
+    marginBottom: 16,
   },
   label: {
-    ...FONTS.body3,
+    ...FONTS.body4,
     color: COLORS.black,
-    marginBottom: SIZES.base / 2,
+    marginBottom: 8,
+    fontWeight: '600',
   },
   input: {
-    height: 44,
+    minHeight: 58,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: SIZES.radius,
-    paddingHorizontal: SIZES.base,
+    borderColor: COLORS.transparentPrimary2,
+    borderRadius: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
     ...FONTS.body3,
     color: COLORS.black,
-    backgroundColor: '#F7F9FD',
+    backgroundColor: COLORS.white,
   },
   textArea: {
-    height: 60,
+    minHeight: 88,
     textAlignVertical: 'top',
-    paddingTop: SIZES.base,
+    paddingTop: 16,
   },
   disabledInput: {
-    backgroundColor: '#EFF2F7',
-    color: COLORS.gray,
+    backgroundColor: COLORS.lightGray2,
+    color: COLORS.gray2,
   },
   inputError: {
     borderColor: COLORS.error,
   },
   errorText: {
-    ...FONTS.body5,
+    fontSize: 13,
     color: COLORS.error,
-    marginTop: SIZES.base / 2,
+    marginTop: 8,
   },
-  checkboxContainer: {
+  blockedRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    padding: 16,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: COLORS.transparentPrimary2,
+    backgroundColor: COLORS.white,
   },
-  checkbox: {
-    width: 24,
-    height: 24,
+  blockedToggle: {
+    width: 26,
+    height: 26,
+    borderRadius: 8,
     borderWidth: 2,
-    borderColor: COLORS.primary,
-    borderRadius: 4,
-    justifyContent: 'center',
+    borderColor: COLORS.primary2,
     alignItems: 'center',
-    marginRight: SIZES.base,
+    justifyContent: 'center',
+    marginRight: 14,
   },
-  checkboxChecked: {
-    backgroundColor: COLORS.primary,
+  blockedToggleActive: {
+    backgroundColor: COLORS.primary2,
   },
-  checkboxText: {
+  blockedToggleTick: {
     color: COLORS.white,
     fontSize: 14,
-    fontWeight: 'bold',
+    fontWeight: '700',
   },
-  checkboxLabel: {
+  blockedTextWrap: {
+    flex: 1,
+  },
+  blockedTitle: {
     ...FONTS.body3,
+    color: COLORS.black,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  blockedSubtext: {
+    ...FONTS.body4,
+    color: COLORS.gray2,
+  },
+  loadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  loadingText: {
+    ...FONTS.body4,
+    color: COLORS.gray2,
+    marginLeft: 8,
+  },
+  pickerContainer: {
+    borderWidth: 1,
+    borderColor: COLORS.transparentPrimary2,
+    borderRadius: 14,
+    backgroundColor: COLORS.white,
+    overflow: 'hidden',
+  },
+  picker: {
+    width: '100%',
+    backgroundColor: COLORS.white,
     color: COLORS.black,
   },
   selectedValueText: {
     ...FONTS.body4,
-    color: COLORS.primary,
-    marginTop: SIZES.base / 2,
-    fontStyle: 'italic',
+    color: COLORS.primary2,
+    marginTop: 8,
   },
-  loadingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: SIZES.base,
-  },
-  loadingText: {
-    ...FONTS.body4,
-    color: COLORS.gray,
-    marginLeft: SIZES.base,
-  },
-  pickerContainer: {
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: SIZES.radius,
-    backgroundColor: '#F7F9FD',
-  },
-  picker: {
-    width: '100%',
-    backgroundColor: '#F7F9FD',
-    color: COLORS.black,
-  },
-  footer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    padding: SIZES.padding,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.lightGray2,
-  },
-  button: {
-    flex: 1,
-    height: 44,
-    borderRadius: SIZES.radius,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginHorizontal: SIZES.base / 2,
-  },
-  cancelButton: {
-    backgroundColor: COLORS.lightGray1,
-  },
-  cancelButtonText: {
-    ...FONTS.body3,
-    color: COLORS.black,
-  },
-  saveButton: {
-    backgroundColor: COLORS.primary,
-  },
-  buttonText: {
-    ...FONTS.body3,
-    color: COLORS.white,
-    fontWeight: '600',
+  buttonDisabled: {
+    opacity: 0.6,
   },
 });
 

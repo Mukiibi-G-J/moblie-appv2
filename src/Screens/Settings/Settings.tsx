@@ -2,24 +2,36 @@ import {View, Text, TouchableOpacity, StyleSheet, Switch} from 'react-native';
 import React from 'react';
 import {useNavigation} from '@react-navigation/native';
 import {COLORS, FONTS, SIZES, icons} from '../../constants';
+import {useTheme} from '../../context/ThemeContext';
+import type {ThemePreference} from '../../context/ThemeContext';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {useSearchMode} from '../../context/SearchModeStore';
 import {Image} from 'react-native';
 import {TenantSettings} from '../../Components/TenantSettings';
 import {usePermissions} from '../../hooks/usePermissions';
 import {PAGE_NAMES} from '../../constants/pageNames';
+import Header from '../../Components/Header';
 
 const Settings = () => {
   const {canRead} = usePermissions();
   const PAGE_NAME = PAGE_NAMES.PROFILE_SETTINGS;
+  const {colors, preference, setPreference} = useTheme();
 
   // Early return if no read permission
   if (!canRead(PAGE_NAME)) {
     return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.accessDeniedContainer}>
-          <Text style={styles.accessDeniedTitle}>Access Denied</Text>
-          <Text style={styles.accessDeniedMessage}>
+      <SafeAreaView
+        style={[styles.container, {backgroundColor: colors.screenMuted}]}>
+        <View
+          style={[
+            styles.accessDeniedContainer,
+            {backgroundColor: colors.card},
+          ]}>
+          <Text style={[styles.accessDeniedTitle, {color: COLORS.error}]}>
+            Access Denied
+          </Text>
+          <Text
+            style={[styles.accessDeniedMessage, {color: colors.textSecondary}]}>
             You don't have permission to view settings.
           </Text>
         </View>
@@ -27,7 +39,7 @@ const Settings = () => {
     );
   }
 
-  const navigation = useNavigation();
+  const navigation = useNavigation<any>();
   const {state, dispatch} = useSearchMode();
 
   const toggleSearchMode = () => {
@@ -35,21 +47,72 @@ const Settings = () => {
     dispatch({type: 'SET_SEARCH_MODE', payload: newMode});
   };
 
+  const themeOptions: {key: ThemePreference; label: string}[] = [
+    {key: 'system', label: 'System'},
+    {key: 'light', label: 'Light'},
+    {key: 'dark', label: 'Dark'},
+  ];
+
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Settings</Text>
-      </View>
+    <SafeAreaView
+      style={[styles.container, {backgroundColor: colors.screenMuted}]}>
+      <Header title="Settings" showBack onBackPress={() => navigation.goBack()} />
 
       <View style={styles.content}>
+        <View style={[styles.menuItem, {backgroundColor: colors.card}]}>
+          <View style={styles.menuItemContent}>
+            <View style={styles.settingHeader}>
+              <Text style={[styles.menuItemTitle, {color: colors.textPrimary}]}>
+                Appearance
+              </Text>
+            </View>
+            <Text
+              style={[styles.menuItemSubtitle, {color: colors.textSecondary}]}>
+              Match system or choose light or dark
+            </Text>
+            <View style={styles.themeChips}>
+              {themeOptions.map(opt => {
+                const active = preference === opt.key;
+                return (
+                  <TouchableOpacity
+                    key={opt.key}
+                    onPress={() => setPreference(opt.key)}
+                    style={[
+                      styles.themeChip,
+                      {
+                        backgroundColor: active
+                          ? COLORS.primary
+                          : colors.screenMuted,
+                        borderColor: colors.border,
+                      },
+                    ]}>
+                    <Text
+                      style={[
+                        styles.themeChipText,
+                        {
+                          color: active ? COLORS.white : colors.textPrimary,
+                        },
+                      ]}>
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </View>
+
         {/* Search Mode Setting */}
-        <View style={styles.menuItem}>
+        <View style={[styles.menuItem, {backgroundColor: colors.card}]}>
           <View style={styles.menuItemContent}>
             <View style={styles.settingHeader}>
               <Image source={icons.search} style={styles.settingIcon} />
-              <Text style={styles.menuItemTitle}>Search Mode</Text>
+              <Text style={[styles.menuItemTitle, {color: colors.textPrimary}]}>
+                Search Mode
+              </Text>
             </View>
-            <Text style={styles.menuItemSubtitle}>
+            <Text
+              style={[styles.menuItemSubtitle, {color: colors.textSecondary}]}>
               {state.searchMode === 'barcode'
                 ? 'Manual barcode entry with submit button'
                 : 'Real-time search as you type'}
@@ -64,32 +127,87 @@ const Settings = () => {
           />
         </View>
 
+        <View style={[styles.menuItem, {backgroundColor: colors.card}]}>
+          <View style={styles.menuItemContent}>
+            <View style={styles.settingHeader}>
+              <Image source={icons.focus} style={styles.settingIcon} />
+              <Text style={[styles.menuItemTitle, {color: colors.textPrimary}]}>
+                Enable Barcode Scanner
+              </Text>
+            </View>
+            <Text
+              style={[styles.menuItemSubtitle, {color: colors.textSecondary}]}>
+              Allow camera scanning in sales and item search screens
+            </Text>
+          </View>
+          <Switch
+            value={state.barcodeScannerEnabled}
+            onValueChange={value =>
+              dispatch({type: 'SET_BARCODE_SCANNER_ENABLED', payload: value})
+            }
+            trackColor={{false: COLORS.lightGray2, true: COLORS.primary}}
+            thumbColor={COLORS.white}
+            ios_backgroundColor={COLORS.lightGray2}
+          />
+        </View>
+
+        <View style={[styles.menuItem, {backgroundColor: colors.card}]}>
+          <View style={styles.menuItemContent}>
+            <View style={styles.settingHeader}>
+              <Image source={icons.notification} style={styles.settingIcon} />
+              <Text style={[styles.menuItemTitle, {color: colors.textPrimary}]}>
+                Barcode Beep Sound
+              </Text>
+            </View>
+            <Text
+              style={[styles.menuItemSubtitle, {color: colors.textSecondary}]}>
+              Play a bip sound when a barcode is detected
+            </Text>
+          </View>
+          <Switch
+            value={state.barcodeBeepEnabled}
+            onValueChange={value =>
+              dispatch({type: 'SET_BARCODE_BEEP_ENABLED', payload: value})
+            }
+            trackColor={{false: COLORS.lightGray2, true: COLORS.primary}}
+            thumbColor={COLORS.white}
+            ios_backgroundColor={COLORS.lightGray2}
+          />
+        </View>
+
         <TouchableOpacity
-          style={styles.menuItem}
+          style={[styles.menuItem, {backgroundColor: colors.card}]}
           onPress={() => navigation.navigate('PrinterConfig' as never)}>
           <View style={styles.menuItemContent}>
             <View style={styles.settingHeader}>
               <Image source={icons.printer} style={styles.settingIcon} />
-              <Text style={styles.menuItemTitle}>Printer Configuration</Text>
+              <Text style={[styles.menuItemTitle, {color: colors.textPrimary}]}>
+                Printer Configuration
+              </Text>
             </View>
-            <Text style={styles.menuItemSubtitle}>
+            <Text
+              style={[styles.menuItemSubtitle, {color: colors.textSecondary}]}>
               Configure and test printer settings (Sunmi & Bluetooth)
             </Text>
           </View>
-          <Text style={styles.arrow}>›</Text>
+          <Text style={[styles.arrow, {color: colors.textSecondary}]}>›</Text>
         </TouchableOpacity>
 
         {/* Tenant Settings */}
         <TenantSettings />
 
         {/* App Version */}
-        <TouchableOpacity style={styles.menuItem}>
+        <TouchableOpacity style={[styles.menuItem, {backgroundColor: colors.card}]}>
           <View style={styles.menuItemContent}>
             <View style={styles.settingHeader}>
               <Image source={icons.info} style={styles.settingIcon} />
-              <Text style={styles.menuItemTitle}>App Version</Text>
+              <Text style={[styles.menuItemTitle, {color: colors.textPrimary}]}>
+                App Version
+              </Text>
             </View>
-            <Text style={styles.menuItemSubtitle}>Version 1.0.0</Text>
+            <Text style={[styles.menuItemSubtitle, {color: colors.textSecondary}]}>
+              Version 1.0.0
+            </Text>
           </View>
         </TouchableOpacity>
       </View>
@@ -100,16 +218,22 @@ const Settings = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.white,
   },
-  header: {
-    padding: SIZES.padding,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray2,
+  themeChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 12,
   },
-  title: {
-    ...FONTS.h2,
-    color: COLORS.darkGray,
+  themeChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  themeChipText: {
+    ...FONTS.body4,
+    fontWeight: '600',
   },
   content: {
     padding: SIZES.padding,
@@ -120,7 +244,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: SIZES.padding,
     paddingHorizontal: SIZES.radius,
-    backgroundColor: COLORS.white,
     borderRadius: SIZES.radius,
     marginBottom: SIZES.base,
     shadowColor: '#000',
@@ -134,16 +257,13 @@ const styles = StyleSheet.create({
   },
   menuItemTitle: {
     ...FONTS.h4,
-    color: COLORS.darkGray,
     marginBottom: 4,
   },
   menuItemSubtitle: {
     ...FONTS.body4,
-    color: COLORS.gray,
   },
   arrow: {
     ...FONTS.h3,
-    color: COLORS.gray,
   },
   settingHeader: {
     flexDirection: 'row',
@@ -161,7 +281,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
-    backgroundColor: COLORS.white,
     margin: 16,
     borderRadius: SIZES.radius,
   },

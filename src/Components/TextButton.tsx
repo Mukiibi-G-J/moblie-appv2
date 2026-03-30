@@ -28,7 +28,7 @@ const TextButton: React.FC<TextButtonProps> = ({
             style={{
                 alignItems: 'center',
                 justifyContent: 'center',
-                backgroundColor: COLORS.primary2,
+                backgroundColor: COLORS.primary,
                 opacity: disabled ? 0.5 : 1,
                 ...buttonContainerStyle
             }}
