@@ -13,6 +13,7 @@ import {usePermissions} from '../../hooks/usePermissions';
 import {REPORT_PAGE_MAPPING} from '../../constants/permissions';
 import Toast from 'react-native-toast-message';
 import {
+  exportReportPdfFromApi,
   fetchDailyProfitReport,
   fetchExpenseBreakdownReport,
   fetchMonthlySummaryReport,
@@ -20,6 +21,7 @@ import {
   fetchSalesData,
   fetchWeeklySummaryReport,
 } from '../../services/app.services';
+import {savePdfBufferAndShare} from '../../utils/reportPdfDownload';
 
 type DateFilter = 'today' | 'last7days' | 'last30days';
 
@@ -232,6 +234,7 @@ const Reports = () => {
       error: null,
       data: null,
     });
+  const [exportingAnalyticsPdf, setExportingAnalyticsPdf] = useState(false);
 
   const {startDate, endDate} = useMemo(() => {
     const today = new Date();
@@ -412,6 +415,79 @@ const Reports = () => {
     },
     [endDate, startDate],
   );
+
+  const handleExportAnalyticsPdf = useCallback(async () => {
+    if (!activeReport || activeReport === 'overview') {
+      Toast.show({
+        type: 'info',
+        text1: 'Select a report',
+        text2: 'Expand a report below to export PDF.',
+      });
+      return;
+    }
+    if (exportingAnalyticsPdf) {
+      return;
+    }
+
+    const monthValue = endDate?.slice(0, 7);
+    let reportTypeApi: string;
+    let filters: Record<string, unknown>;
+
+    switch (activeReport) {
+      case 'daily-profit':
+        reportTypeApi = 'daily_profit';
+        filters = {date: endDate};
+        break;
+      case 'weekly-summary':
+        reportTypeApi = 'weekly_summary';
+        filters = {start_date: startDate, end_date: endDate};
+        break;
+      case 'monthly-summary':
+        reportTypeApi = 'monthly_summary';
+        filters = {month: monthValue};
+        break;
+      case 'product-profitability':
+        reportTypeApi = 'product_profitability';
+        filters = {start_date: startDate, end_date: endDate};
+        break;
+      case 'expense-breakdown':
+        reportTypeApi = 'expense_breakdown';
+        filters = {start_date: startDate, end_date: endDate};
+        break;
+      default:
+        return;
+    }
+
+    setExportingAnalyticsPdf(true);
+    try {
+      const buf = await exportReportPdfFromApi(reportTypeApi, filters);
+      const baseName = `zentro_${reportTypeApi}_${endDate}`;
+      const {sharedOnIos} = await savePdfBufferAndShare(buf, baseName);
+      if (sharedOnIos) {
+        Toast.show({
+          type: 'success',
+          text1: 'PDF ready',
+          text2: 'Use the share sheet to save or send.',
+        });
+      } else {
+        Toast.show({
+          type: 'success',
+          text1: 'PDF saved',
+          text2:
+            'File path copied. Paste in a file manager to open or share the PDF.',
+        });
+      }
+    } catch (e: unknown) {
+      const err = e as {message?: string};
+      Toast.show({
+        type: 'error',
+        text1: 'PDF export failed',
+        text2: err?.message || 'Could not export PDF.',
+      });
+    } finally {
+      setExportingAnalyticsPdf(false);
+    }
+  }, [activeReport, endDate, exportingAnalyticsPdf, startDate]);
 
   const renderFilterRow = () => (
     <View style={styles.filterRow}>
@@ -1150,6 +1226,22 @@ const Reports = () => {
       {renderState()}
       {renderReportList()}
       {renderReportDetails()}
+      {activeReport && activeReport !== 'overview' ? (
+        <TouchableOpacity
+          style={[
+            styles.pdfExportButton,
+            exportingAnalyticsPdf && styles.pdfExportButtonDisabled,
+          ]}
+          onPress={handleExportAnalyticsPdf}
+          disabled={exportingAnalyticsPdf}
+          activeOpacity={0.85}>
+          {exportingAnalyticsPdf ? (
+            <ActivityIndicator color={COLORS.white} />
+          ) : (
+            <Text style={styles.pdfExportButtonText}>Download PDF</Text>
+          )}
+        </TouchableOpacity>
+      ) : null}
     </ScrollView>
   );
 };
@@ -1557,5 +1649,23 @@ const styles = StyleSheet.create({
     color: COLORS.gray,
     marginTop: 2,
     fontSize: 12,
+  },
+  pdfExportButton: {
+    marginTop: SIZES.padding,
+    marginBottom: SIZES.base,
+    backgroundColor: COLORS.primary2,
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 48,
+  },
+  pdfExportButtonDisabled: {
+    opacity: 0.7,
+  },
+  pdfExportButtonText: {
+    ...FONTS.body3,
+    color: COLORS.white,
+    fontWeight: '700',
   },
 });

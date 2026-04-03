@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useMemo} from 'react';
 import {
   View,
   Text,
@@ -11,10 +11,13 @@ import {
   ActivityIndicator,
   Image,
   ImageSourcePropType,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
+import {SafeAreaView} from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import {Picker} from '@react-native-picker/picker';
-import {COLORS, FONTS, SIZES, icons} from '../../constants';
+import {COLORS, FONTS, icons} from '../../constants';
 import {
   Expense,
   ExpenseType,
@@ -23,6 +26,7 @@ import {
 } from '../../@types/expense';
 import {ExpenseServices} from '../../services/ExpenseServices';
 import Toast from 'react-native-toast-message';
+import {useTheme} from '../../context/ThemeContext';
 
 interface ExpenseFormModalProps {
   visible: boolean;
@@ -51,6 +55,58 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
 }) => {
   const isEditMode = !!expense;
   const isPosted = expense?.status === 'Posted';
+
+  const {colors} = useTheme();
+  const expTheme = useMemo(
+    () => ({
+      pageRoot: {backgroundColor: colors.background},
+      safeArea: {backgroundColor: colors.background},
+      page: {backgroundColor: colors.background},
+      pageHeader: {
+        borderBottomColor: colors.border,
+      },
+      headerIcon: {tintColor: colors.textPrimary},
+      pageTitle: {color: colors.textPrimary},
+      sectionTitle: {color: colors.textPrimary},
+      fieldLabel: {color: colors.textPrimary},
+      input: {
+        borderColor: colors.border,
+        color: colors.textPrimary,
+        backgroundColor: colors.inputBackground,
+      },
+      inputDisabled: {
+        backgroundColor: colors.screenMuted,
+        color: colors.textSecondary,
+      },
+      disabledText: {color: colors.textSecondary},
+      selectRow: {
+        borderColor: colors.border,
+        backgroundColor: colors.inputBackground,
+      },
+      selectRowDisabled: {backgroundColor: colors.screenMuted},
+      selectRowText: {color: colors.textPrimary},
+      selectRowPlaceholder: {color: colors.textSecondary},
+      selectRowChevron: {color: colors.textSecondary},
+      pickerShell: {
+        borderColor: colors.border,
+        backgroundColor: colors.inputBackground,
+      },
+      picker: {
+        backgroundColor: colors.inputBackground,
+        color: colors.textPrimary,
+      },
+      pickerItemStyle: {color: colors.textPrimary},
+      inlineLoadingText: {color: colors.textSecondary},
+      sectionDivider: {backgroundColor: colors.border},
+      infoCard: {
+        borderColor: colors.border,
+        backgroundColor: colors.surface,
+      },
+      infoCardTitle: {color: colors.textPrimary},
+      infoCardBody: {color: colors.textSecondary},
+    }),
+    [colors],
+  );
 
   // Form state
   const [formData, setFormData] = useState<ExpenseFormValues>({
@@ -134,6 +190,22 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     const numValue = parseFloat(value.replace(/,/g, '')) || 0;
     return numValue.toLocaleString();
   };
+
+  const expenseTypeName = useMemo(() => {
+    if (!formData.expense_type) {
+      return null;
+    }
+    return expenseTypes.find(t => t.id === formData.expense_type)?.name ?? null;
+  }, [formData.expense_type, expenseTypes]);
+
+  const previewAmountLabel = useMemo(() => {
+    const raw = formData.amount?.replace(/,/g, '') ?? '';
+    if (!raw || parseFloat(raw) <= 0) {
+      return 'UGX —';
+    }
+    const n = parseFloat(raw) || 0;
+    return `UGX ${n.toLocaleString('en-US', {maximumFractionDigits: 0})}`;
+  }, [formData.amount]);
 
   const handleSave = async () => {
     if (!validateForm()) {
@@ -260,92 +332,159 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     <Modal
       visible={visible}
       animationType="slide"
-      transparent={true}
+      transparent={false}
       onRequestClose={onClose}>
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          {/* Header */}
-          <View style={styles.header}>
-            <Text style={styles.title}>
-              {isEditMode ? 'Edit Expense' : 'Create Expense'}
-            </Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <Text style={styles.closeButtonText}>✕</Text>
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView
-            style={styles.scrollView}
-            showsVerticalScrollIndicator={false}>
-            <View style={styles.formCard}>
-              {/* Document No (Read-only) */}
-              {isEditMode && expense?.document_no && (
-                <View style={styles.fieldContainer}>
-                  <Text style={styles.label}>Document No</Text>
-                  <TextInput
-                    style={[styles.input, styles.disabledInput]}
-                    value={expense.document_no}
-                    editable={false}
-                  />
-                </View>
-              )}
-
-            {/* Posting Date */}
-            <View style={styles.fieldContainer}>
-              <Text style={styles.label}>Posting Date *</Text>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={[styles.pageRoot, expTheme.pageRoot]}>
+        <SafeAreaView
+          style={[styles.safeArea, expTheme.safeArea]}
+          edges={['top', 'left', 'right']}>
+          <View style={[styles.page, expTheme.page]}>
+            <View style={[styles.pageHeader, expTheme.pageHeader]}>
               <TouchableOpacity
-                style={styles.dateButton}
-                onPress={() => setShowDatePicker(true)}
-                disabled={isPosted}>
-                <View style={styles.dateButtonContent}>
-                  <Image
-                    source={icons.calender as ImageSourcePropType}
-                    style={styles.dateIcon}
-                  />
-                  <Text
-                    style={[
-                      styles.dateButtonText,
-                      isPosted && styles.disabledText,
-                    ]}>
-                    {formData.posting_date || 'dd----yyyy'}
-                  </Text>
-                  <Image
-                    source={icons.calender as ImageSourcePropType}
-                    style={[styles.dateIcon, styles.dateIconTrailing]}
-                  />
-                </View>
-              </TouchableOpacity>
-              {errors.posting_date && (
-                <Text style={styles.errorText}>{errors.posting_date}</Text>
-              )}
-              {showDatePicker && (
-                <DateTimePicker
-                  value={new Date(formData.posting_date)}
-                  mode="date"
-                  display="default"
-                  onChange={handleDateChange}
-                  maximumDate={new Date()}
+                onPress={onClose}
+                style={styles.headerIconButton}
+                hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
+                activeOpacity={0.7}>
+                <Image
+                  source={icons.cross as ImageSourcePropType}
+                  style={[styles.headerIcon, expTheme.headerIcon]}
+                  resizeMode="contain"
                 />
-              )}
+              </TouchableOpacity>
+
+              <View style={styles.headerRightActions}>
+                {canPost && isEditMode && expense?.status === 'Open' ? (
+                  <TouchableOpacity
+                    style={[styles.headerPostButton, loading && styles.buttonDisabled]}
+                    onPress={handlePost}
+                    disabled={loading}
+                    activeOpacity={0.85}>
+                    <Text style={styles.headerPostText}>Post</Text>
+                  </TouchableOpacity>
+                ) : null}
+                {(isEditMode && canEdit) || (!isEditMode && canCreate) ? (
+                  <TouchableOpacity
+                    style={[
+                      styles.headerSaveButton,
+                      (loading || isPosted) && styles.buttonDisabled,
+                    ]}
+                    onPress={handleSave}
+                    disabled={loading || isPosted}
+                    activeOpacity={0.85}>
+                    {loading ? (
+                      <ActivityIndicator size="small" color={COLORS.white} />
+                    ) : (
+                      <Text style={styles.headerSaveText}>Save</Text>
+                    )}
+                  </TouchableOpacity>
+                ) : null}
+              </View>
             </View>
 
-            {/* Expense Type */}
-            <View style={styles.fieldContainer}>
-              <Text style={styles.label}>Expense Type *</Text>
-              {expenseTypes.length === 0 ? (
-                <View style={styles.loadingContainer}>
-                  <ActivityIndicator size="small" color={COLORS.primary} />
-                  <Text style={styles.loadingText}>
-                    Loading expense types...
+            <ScrollView
+              style={styles.formContainer}
+              contentContainerStyle={styles.formContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled">
+              <Text style={[styles.pageTitle, expTheme.pageTitle]}>
+                {isEditMode ? 'Edit expense' : 'Add expense'}
+              </Text>
+
+              <View style={styles.previewSection}>
+                <View style={styles.expensePreviewCard}>
+                  <View style={styles.expensePreviewTop}>
+                    <Image
+                      source={icons.coupon as ImageSourcePropType}
+                      style={styles.expensePreviewCoupon}
+                      resizeMode="contain"
+                    />
+                    <Text style={styles.expensePreviewType} numberOfLines={1}>
+                      {expenseTypeName || 'Expense type'}
+                    </Text>
+                  </View>
+                  <Text style={styles.expensePreviewAmount} numberOfLines={1}>
+                    {previewAmountLabel}
+                  </Text>
+                  <Text style={styles.expensePreviewDate} numberOfLines={1}>
+                    {formData.posting_date || 'Posting date'}
                   </Text>
                 </View>
-              ) : (
-                <>
-                  <View style={styles.pickerContainer}>
+              </View>
+
+              <View style={styles.section}>
+                <Text style={[styles.sectionTitle, expTheme.sectionTitle]}>Details</Text>
+
+                {isEditMode && expense?.document_no ? (
+                  <>
+                    <Text style={[styles.fieldLabel, expTheme.fieldLabel]}>Document no.</Text>
+                    <TextInput
+                      style={[
+                        styles.input,
+                        expTheme.input,
+                        styles.inputDisabled,
+                        expTheme.inputDisabled,
+                      ]}
+                      value={expense.document_no}
+                      editable={false}
+                    />
+                  </>
+                ) : null}
+
+                <Text style={[styles.fieldLabel, expTheme.fieldLabel]}>Posting date *</Text>
+                <TouchableOpacity
+                  style={[
+                    styles.selectRow,
+                    expTheme.selectRow,
+                    isPosted && [styles.selectRowDisabled, expTheme.selectRowDisabled],
+                  ]}
+                  onPress={() => !isPosted && setShowDatePicker(true)}
+                  activeOpacity={0.7}
+                  disabled={isPosted}>
+                  <Text
+                    style={[
+                      styles.selectRowText,
+                      expTheme.selectRowText,
+                      !formData.posting_date && [
+                        styles.selectRowPlaceholder,
+                        expTheme.selectRowPlaceholder,
+                      ],
+                      isPosted && [styles.disabledText, expTheme.disabledText],
+                    ]}>
+                    {formData.posting_date || 'Select date'}
+                  </Text>
+                  <Text style={[styles.selectRowChevron, expTheme.selectRowChevron]}>›</Text>
+                </TouchableOpacity>
+                {errors.posting_date ? (
+                  <Text style={styles.errorText}>{errors.posting_date}</Text>
+                ) : null}
+                {showDatePicker ? (
+                  <DateTimePicker
+                    value={new Date(formData.posting_date)}
+                    mode="date"
+                    display="default"
+                    onChange={handleDateChange}
+                    maximumDate={new Date()}
+                  />
+                ) : null}
+
+                <Text
+                  style={[styles.fieldLabel, expTheme.fieldLabel, styles.fieldLabelSpaced]}>
+                  Expense type *
+                </Text>
+                {expenseTypes.length === 0 ? (
+                  <View style={styles.inlineLoadingRow}>
+                    <ActivityIndicator size="small" color={COLORS.primary2} />
+                    <Text style={styles.inlineLoadingText}>
+                      Loading expense types…
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.pickerShell}>
                     <Picker
                       selectedValue={formData.expense_type || 0}
                       onValueChange={value => {
-                        // Handle the placeholder value (0)
                         if (value === 0) {
                           setFormData({...formData, expense_type: null});
                         } else {
@@ -365,231 +504,298 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                       ))}
                     </Picker>
                   </View>
-                  {formData.expense_type && (
-                    <Text style={styles.selectedValueText}>
-                      Selected:{' '}
-                      {expenseTypes.find(t => t.id === formData.expense_type)
-                        ?.name || ''}
-                    </Text>
-                  )}
-                </>
-              )}
-              {errors.expense_type && (
-                <Text style={styles.errorText}>{errors.expense_type}</Text>
-              )}
-            </View>
+                )}
+                {errors.expense_type ? (
+                  <Text style={styles.errorText}>{errors.expense_type}</Text>
+                ) : null}
 
-            {/* Description */}
-            <View style={styles.fieldContainer}>
-              <Text style={styles.label}>Description</Text>
-              <TextInput
-                style={[styles.input, styles.textArea]}
-                value={formData.description}
-                onChangeText={text =>
-                  setFormData({...formData, description: text})
-                }
-                placeholder="Enter expense description"
-                placeholderTextColor={COLORS.gray}
-                multiline
-                numberOfLines={3}
-                editable={!isPosted}
-              />
-            </View>
-
-            {/* Amount */}
-            <View style={styles.fieldContainer}>
-              <Text style={styles.label}>Amount (UGX) *</Text>
-              <TextInput
-                style={[styles.input, errors.amount && styles.inputError]}
-                value={formatAmount(formData.amount)}
-                onChangeText={handleAmountChange}
-                placeholder="0"
-                placeholderTextColor={COLORS.gray}
-                keyboardType="numeric"
-                editable={!isPosted}
-              />
-              {errors.amount && (
-                <Text style={styles.errorText}>{errors.amount}</Text>
-              )}
-            </View>
-
-            {/* Payment Method */}
-            <View style={styles.fieldContainer}>
-              <Text style={styles.label}>
-                Payment Method {isPosted ? '' : '(Optional)'}
-              </Text>
-              <View style={styles.pickerContainer}>
-                <Picker
-                  selectedValue={formData.payment_method || 0}
-                  onValueChange={value => {
-                    // Handle the placeholder value (0)
-                    if (value === 0) {
-                      setFormData({...formData, payment_method: null});
-                    } else {
-                      setFormData({...formData, payment_method: value});
-                    }
-                  }}
-                  enabled={!isPosted}
-                  style={styles.picker}
-                  itemStyle={{color: COLORS.black}}>
-                  <Picker.Item label="Select payment method" value={0} />
-                  {paymentMethods.map(method => (
-                    <Picker.Item
-                      key={method.id}
-                      label={method.description || method.code}
-                      value={method.id}
-                    />
-                  ))}
-                </Picker>
-              </View>
-              {formData.payment_method && (
-                <Text style={styles.selectedValueText}>
-                  Selected:{' '}
-                  {paymentMethods.find(m => m.id === formData.payment_method)
-                    ?.description ||
-                    paymentMethods.find(m => m.id === formData.payment_method)
-                      ?.code ||
-                    ''}
+                <Text
+                  style={[styles.fieldLabel, expTheme.fieldLabel, styles.fieldLabelSpaced]}>
+                  Description
                 </Text>
-              )}
-            </View>
+                <TextInput
+                  style={[styles.input, expTheme.input, styles.textArea]}
+                  value={formData.description}
+                  onChangeText={text =>
+                    setFormData({...formData, description: text})
+                  }
+                  placeholder="What was this expense for?"
+                  placeholderTextColor={colors.placeholder}
+                  multiline
+                  numberOfLines={4}
+                  editable={!isPosted}
+                />
 
-            {/* Status (Read-only for existing) */}
-              {isEditMode && (
-                <View style={styles.fieldContainer}>
-                  <Text style={styles.label}>Status</Text>
+                <Text
+                  style={[styles.fieldLabel, expTheme.fieldLabel, styles.fieldLabelSpaced]}>
+                  Amount (UGX) *
+                </Text>
+                <TextInput
+                  style={[
+                    styles.input,
+                    expTheme.input,
+                    errors.amount && styles.inputError,
+                  ]}
+                  value={formatAmount(formData.amount)}
+                  onChangeText={handleAmountChange}
+                  placeholder="0"
+                  placeholderTextColor={colors.placeholder}
+                  keyboardType="numeric"
+                  editable={!isPosted}
+                />
+                {errors.amount ? (
+                  <Text style={styles.errorText}>{errors.amount}</Text>
+                ) : null}
+
+                <Text
+                  style={[styles.fieldLabel, expTheme.fieldLabel, styles.fieldLabelSpaced]}>
+                  Payment method
+                  {isPosted ? '' : ' (optional)'}
+                </Text>
+                <View style={[styles.pickerShell, expTheme.pickerShell]}>
+                  <Picker
+                    selectedValue={formData.payment_method || 0}
+                    onValueChange={value => {
+                      if (value === 0) {
+                        setFormData({...formData, payment_method: null});
+                      } else {
+                        setFormData({...formData, payment_method: value});
+                      }
+                    }}
+                    enabled={!isPosted}
+                    style={[styles.picker, expTheme.picker]}
+                    itemStyle={expTheme.pickerItemStyle}>
+                    <Picker.Item label="Select payment method" value={0} />
+                    {paymentMethods.map(method => (
+                      <Picker.Item
+                        key={method.id}
+                        label={method.description || method.code}
+                        value={method.id}
+                      />
+                    ))}
+                  </Picker>
+                </View>
+              </View>
+
+              {isEditMode ? (
+                <View style={styles.section}>
+                  <Text style={[styles.sectionTitle, expTheme.sectionTitle]}>Status</Text>
                   <TextInput
-                    style={[styles.input, styles.disabledInput]}
+                    style={[
+                      styles.input,
+                      expTheme.input,
+                      styles.inputDisabled,
+                      expTheme.inputDisabled,
+                    ]}
                     value={expense?.status || 'Open'}
                     editable={false}
                   />
                 </View>
-              )}
-            </View>
-          </ScrollView>
+              ) : null}
 
-          {/* Footer Buttons */}
-          <View style={styles.footer}>
-            <TouchableOpacity
-              style={[styles.button, styles.cancelButton]}
-              onPress={onClose}
-              disabled={loading}>
-              <Text style={styles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
-            {canPost && isEditMode && expense?.status === 'Open' && (
-              <TouchableOpacity
-                style={[styles.button, styles.postButton]}
-                onPress={handlePost}
-                disabled={loading}>
-                {loading ? (
-                  <ActivityIndicator size="small" color={COLORS.white} />
-                ) : (
-                  <Text style={styles.buttonText}>Post</Text>
-                )}
-              </TouchableOpacity>
-            )}
-            {((isEditMode && canEdit) || (!isEditMode && canCreate)) && (
-              <TouchableOpacity
-                style={[styles.button, styles.saveButton]}
-                onPress={handleSave}
-                disabled={loading || isPosted}>
-                {loading ? (
-                  <ActivityIndicator size="small" color={COLORS.white} />
-                ) : (
-                  <Text style={styles.buttonText}>
-                    {isEditMode ? 'Update' : 'Create'}
+              <View style={[styles.sectionDivider, expTheme.sectionDivider]} />
+
+              <View style={styles.section}>
+                <Text style={[styles.sectionTitle, expTheme.sectionTitle]}>Posting</Text>
+                <View style={[styles.infoCard, expTheme.infoCard]}>
+                  <Text style={[styles.infoCardTitle, expTheme.infoCardTitle]}>
+                    {isPosted ? 'This expense is posted' : 'Before you post'}
                   </Text>
-                )}
-              </TouchableOpacity>
-            )}
+                  <Text style={[styles.infoCardBody, expTheme.infoCardBody]}>
+                    {isPosted
+                      ? 'Posted expenses are read-only. Create a reversal from the list if you need to adjust.'
+                      : 'Save as Open first, then use Post when you are ready to create G/L entries. A payment method is required to post.'}
+                  </Text>
+                </View>
+              </View>
+            </ScrollView>
           </View>
-        </View>
-      </View>
+        </SafeAreaView>
+      </KeyboardAvoidingView>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
-  modalOverlay: {
+  pageRoot: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
     backgroundColor: COLORS.white,
-    borderTopLeftRadius: SIZES.radius * 2,
-    borderTopRightRadius: SIZES.radius * 2,
-    maxHeight: '90%',
   },
-  header: {
+  safeArea: {
+    flex: 1,
+    backgroundColor: COLORS.white,
+  },
+  page: {
+    flex: 1,
+    backgroundColor: COLORS.white,
+  },
+  pageHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: SIZES.padding,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray2,
+    paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'ios' ? 4 : 8,
+    paddingBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.lightGray1,
   },
-  title: {
-    ...FONTS.h2,
-    color: COLORS.black,
-  },
-  closeButton: {
-    width: 32,
-    height: 32,
-    justifyContent: 'center',
+  headerIconButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.transparentPrimary,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  closeButtonText: {
+  headerIcon: {
+    width: 20,
+    height: 20,
+    tintColor: COLORS.primary3,
+  },
+  headerRightActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  headerPostButton: {
+    minWidth: 88,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.success,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+  },
+  headerPostText: {
+    color: COLORS.white,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  headerSaveButton: {
+    minWidth: 108,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.primary2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    shadowColor: COLORS.primary3,
+    shadowOffset: {width: 0, height: 8},
+    shadowOpacity: 0.2,
+    shadowRadius: 16,
+    elevation: 6,
+  },
+  headerSaveText: {
+    color: COLORS.white,
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  buttonDisabled: {
+    opacity: 0.55,
+  },
+  formContainer: {
+    flex: 1,
+  },
+  formContent: {
+    paddingHorizontal: 20,
+    paddingBottom: Platform.OS === 'ios' ? 40 : 28,
+  },
+  pageTitle: {
     fontSize: 24,
-    color: COLORS.gray,
-  },
-  scrollView: {
-    maxHeight: '70%',
-  },
-  formCard: {
-    marginHorizontal: SIZES.padding,
-    marginVertical: SIZES.base,
-    backgroundColor: COLORS.white,
-    borderRadius: SIZES.radius * 1.5,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    paddingBottom: SIZES.padding,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
-  },
-  fieldContainer: {
-    paddingHorizontal: SIZES.padding,
-    paddingVertical: SIZES.base,
-  },
-  label: {
-    ...FONTS.body3,
+    fontWeight: '700',
     color: COLORS.black,
-    marginBottom: SIZES.base / 2,
+    marginTop: 20,
+    marginBottom: 24,
+    letterSpacing: -0.3,
+  },
+  previewSection: {
+    alignItems: 'center',
+    marginBottom: 28,
+  },
+  expensePreviewCard: {
+    width: '100%',
+    maxWidth: 320,
+    minHeight: 132,
+    borderRadius: 12,
+    backgroundColor: COLORS.primary3,
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    justifyContent: 'space-between',
+    shadowColor: COLORS.primary3,
+    shadowOffset: {width: 0, height: 10},
+    shadowOpacity: 0.22,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  expensePreviewTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  expensePreviewCoupon: {
+    width: 22,
+    height: 22,
+    tintColor: COLORS.accent2,
+  },
+  expensePreviewType: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.88)',
+  },
+  expensePreviewAmount: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: COLORS.white,
+    marginTop: 12,
+    letterSpacing: -0.5,
+  },
+  expensePreviewDate: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: 'rgba(255,255,255,0.75)',
+    marginTop: 6,
+  },
+  section: {
+    marginBottom: 26,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.primary3,
+    marginBottom: 14,
+  },
+  fieldLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.black,
+    marginBottom: 8,
+  },
+  fieldLabelSpaced: {
+    marginTop: 16,
   },
   input: {
-    height: 44,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: SIZES.radius,
-    paddingHorizontal: SIZES.base,
-    ...FONTS.body3,
+    borderColor: COLORS.transparentPrimary2,
+    borderRadius: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    fontSize: 17,
     color: COLORS.black,
-    backgroundColor: '#F7F9FD',
+    backgroundColor: COLORS.white,
+    minHeight: 56,
   },
   textArea: {
-    height: 80,
+    minHeight: 110,
     textAlignVertical: 'top',
-    paddingTop: SIZES.base,
+    paddingTop: 16,
   },
-  disabledInput: {
-    backgroundColor: '#EFF2F7',
-    color: COLORS.gray,
+  inputDisabled: {
+    backgroundColor: COLORS.lightGray2,
+    color: COLORS.gray2,
   },
   disabledText: {
-    color: COLORS.gray,
+    color: COLORS.gray2,
   },
   inputError: {
     borderColor: COLORS.error,
@@ -597,93 +803,83 @@ const styles = StyleSheet.create({
   errorText: {
     ...FONTS.body5,
     color: COLORS.error,
-    marginTop: SIZES.base / 2,
+    marginTop: 8,
+    fontSize: 13,
   },
-  selectedValueText: {
-    ...FONTS.body4,
-    color: COLORS.primary,
-    marginTop: SIZES.base / 2,
-    fontStyle: 'italic',
-  },
-  loadingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: SIZES.base,
-  },
-  loadingText: {
-    ...FONTS.body4,
-    color: COLORS.gray,
-    marginLeft: SIZES.base,
-  },
-  dateButton: {
-    height: 44,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: SIZES.radius,
-    paddingHorizontal: SIZES.base,
-    justifyContent: 'center',
-    backgroundColor: '#F7F9FD',
-  },
-  dateButtonContent: {
+  selectRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    minHeight: 56,
+    paddingHorizontal: 18,
+    borderWidth: 1,
+    borderColor: COLORS.transparentPrimary2,
+    borderRadius: 14,
+    backgroundColor: COLORS.white,
   },
-  dateIcon: {
-    width: 18,
-    height: 18,
-    tintColor: COLORS.gray,
+  selectRowDisabled: {
+    backgroundColor: COLORS.lightGray2,
   },
-  dateIconTrailing: {
-    tintColor: COLORS.primary,
-  },
-  dateButtonText: {
-    ...FONTS.body3,
+  selectRowText: {
+    flex: 1,
+    fontSize: 17,
     color: COLORS.black,
   },
-  pickerContainer: {
+  selectRowPlaceholder: {
+    color: COLORS.gray2,
+  },
+  selectRowChevron: {
+    fontSize: 22,
+    color: COLORS.gray2,
+    fontWeight: '300',
+    marginLeft: 8,
+  },
+  pickerShell: {
     borderWidth: 1,
-    borderColor: '#E2E8F0',
-    borderRadius: SIZES.radius,
-    backgroundColor: '#F7F9FD',
+    borderColor: COLORS.transparentPrimary2,
+    borderRadius: 14,
+    backgroundColor: COLORS.white,
+    overflow: 'hidden',
   },
   picker: {
     width: '100%',
-    backgroundColor: '#F7F9FD',
+    backgroundColor: COLORS.white,
     color: COLORS.black,
   },
-  footer: {
+  inlineLoadingRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    padding: SIZES.padding,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.lightGray2,
-  },
-  button: {
-    flex: 1,
-    height: 44,
-    borderRadius: SIZES.radius,
-    justifyContent: 'center',
     alignItems: 'center',
-    marginHorizontal: SIZES.base / 2,
+    paddingVertical: 14,
   },
-  cancelButton: {
-    backgroundColor: COLORS.lightGray1,
+  inlineLoadingText: {
+    ...FONTS.body4,
+    color: COLORS.gray2,
+    marginLeft: 12,
+    fontSize: 15,
   },
-  cancelButtonText: {
-    ...FONTS.body3,
-    color: COLORS.black,
+  sectionDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: COLORS.transparentPrimary,
+    marginBottom: 26,
   },
-  saveButton: {
-    backgroundColor: COLORS.primary,
+  infoCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: COLORS.transparentPrimary2,
+    backgroundColor: COLORS.transparentPrimary,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
   },
-  postButton: {
-    backgroundColor: COLORS.success,
+  infoCardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.primary3,
+    marginBottom: 8,
   },
-  buttonText: {
-    ...FONTS.body3,
-    color: COLORS.white,
-    fontWeight: '600',
+  infoCardBody: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: COLORS.gray,
   },
 });
 

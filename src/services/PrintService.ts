@@ -38,6 +38,14 @@ export interface PrintReceiptData {
   companyInfo?: CompanyInfo;
 }
 
+/** Single item shelf / barcode label (Bluetooth thermal or Sunmi). */
+export interface ItemLabelPrintData {
+  item_name: string;
+  no?: string | null;
+  bar_code_no?: string | null;
+  copies?: number;
+}
+
 export type PrinterType = 'sunmi' | 'bluetooth' | 'auto';
 
 class PrintService {
@@ -93,25 +101,36 @@ class PrintService {
   }
 
   /**
-   * Detect printer type automatically
+   * Load saved printer mode into memory (Printer Config screen uses this).
    */
-  private async detectPrinterType(): Promise<PrinterType> {
-    // First try Sunmi
-    try {
-      const isSunmi = await this.isSunmiDevice();
-      if (isSunmi) {
-        return 'sunmi';
-      }
-    } catch (error) {
-      console.log('Sunmi detection failed:', error);
-    }
+  public async syncPrinterTypeFromStorage(): Promise<PrinterType> {
+    const t = await this.getSavedPrinterType();
+    this.printerType = t;
+    return t;
+  }
 
-    // Check if Bluetooth printer is connected
-    if (this.bluetoothService.isPrinterConnected()) {
-      return 'bluetooth';
+  /**
+   * Resolve logical printer: explicit Sunmi/Bluetooth, or Auto (Sunmi if available).
+   */
+  private async resolvePrinterType(savedType: PrinterType): Promise<PrinterType> {
+    if (savedType === 'sunmi' || savedType === 'bluetooth') {
+      return savedType;
     }
+    const sunmiOk = await this.isSunmiDevice();
+    return sunmiOk ? 'sunmi' : 'bluetooth';
+  }
 
-    return 'bluetooth'; // Default to Bluetooth if Sunmi not available
+  /**
+   * Restore saved BT printer and, on Auto, try paired built-in POS printers.
+   */
+  private async ensureBluetoothSession(savedType: PrinterType): Promise<void> {
+    if (Platform.OS !== 'android') {
+      return;
+    }
+    await this.bluetoothService.ensureConnectedFromStorage();
+    if (!this.bluetoothService.isPrinterConnected() && savedType === 'auto') {
+      await this.bluetoothService.tryAutoConnectPosBuiltin();
+    }
   }
 
   /**
@@ -124,22 +143,28 @@ class PrintService {
     }
 
     try {
-      // Get saved printer type or detect
       const savedType = await this.getSavedPrinterType();
-      this.printerType = savedType === 'auto' ? await this.detectPrinterType() : savedType;
+      const resolved = await this.resolvePrinterType(savedType);
+      this.printerType = resolved;
 
-      if (this.printerType === 'sunmi') {
-        return await this.initializeSunmiPrinter();
-      } else {
-        // For Bluetooth, check if already connected
-        if (this.bluetoothService.isPrinterConnected()) {
-          this.isInitialized = true;
-          this.isConnected = true;
+      if (resolved === 'sunmi') {
+        const sunmiOk = await this.initializeSunmiPrinter();
+        if (sunmiOk) {
           return true;
         }
-        // Bluetooth printer needs to be connected manually via UI
-        return false;
+        if (savedType !== 'auto') {
+          return false;
+        }
+        this.printerType = 'bluetooth';
       }
+
+      await this.ensureBluetoothSession(savedType);
+      if (this.bluetoothService.isPrinterConnected()) {
+        this.isInitialized = true;
+        this.isConnected = true;
+        return true;
+      }
+      return false;
     } catch (error) {
       console.error('Failed to initialize printer:', error);
       this.isConnected = false;
@@ -193,42 +218,36 @@ class PrintService {
    */
   public async checkConnection(): Promise<boolean> {
     try {
-      // Get saved printer type or detect
       const savedType = await this.getSavedPrinterType();
-      const currentType = savedType === 'auto' ? await this.detectPrinterType() : savedType;
-      this.printerType = currentType;
+      let resolved = await this.resolvePrinterType(savedType);
+      this.printerType = resolved;
 
-      if (this.printerType === 'sunmi') {
+      if (resolved === 'sunmi') {
         try {
           const isConnected = await PrinterSunmi.connect();
-          this.isConnected = isConnected;
-          return this.isConnected;
-        } catch (error) {
-          // Sunmi not available, check Bluetooth as fallback
-          this.isConnected = this.bluetoothService.isPrinterConnected();
-          if (this.isConnected) {
+          this.isConnected = !!isConnected;
+          if (!this.isConnected && savedType === 'auto') {
             this.printerType = 'bluetooth';
+            await this.ensureBluetoothSession(savedType);
+            this.isConnected = this.bluetoothService.isPrinterConnected();
           }
           return this.isConnected;
-        }
-      } else {
-        // Check Bluetooth printer
-        this.isConnected = this.bluetoothService.isPrinterConnected();
-        if (!this.isConnected && savedType === 'auto') {
-          // If auto and Bluetooth not connected, try Sunmi
-          try {
-            const isSunmiConnected = await PrinterSunmi.connect();
-            if (isSunmiConnected) {
-              this.isConnected = true;
-              this.printerType = 'sunmi';
-              return true;
-            }
-          } catch (error) {
-            // Sunmi not available
+        } catch {
+          if (savedType === 'auto') {
+            this.printerType = 'bluetooth';
+            await this.ensureBluetoothSession(savedType);
+            this.isConnected = this.bluetoothService.isPrinterConnected();
+            return this.isConnected;
           }
+          this.isConnected = false;
+          return false;
         }
-        return this.isConnected;
       }
+
+      this.printerType = 'bluetooth';
+      await this.ensureBluetoothSession(savedType);
+      this.isConnected = this.bluetoothService.isPrinterConnected();
+      return this.isConnected;
     } catch (error) {
       console.error('Failed to check printer connection:', error);
       this.isConnected = false;
@@ -257,15 +276,28 @@ class PrintService {
    */
   public async printReceipt(data: PrintReceiptData): Promise<boolean> {
     try {
-      // Determine printer type
       const savedType = await this.getSavedPrinterType();
-      this.printerType = savedType === 'auto' ? await this.detectPrinterType() : savedType;
+      const resolved = await this.resolvePrinterType(savedType);
+      this.printerType = resolved;
 
-      if (this.printerType === 'sunmi') {
-        return await this.printReceiptSunmi(data);
-      } else {
+      if (resolved === 'sunmi') {
+        const sunmiOk = await this.printReceiptSunmi(data);
+        if (sunmiOk || savedType !== 'auto') {
+          return sunmiOk;
+        }
+        this.printerType = 'bluetooth';
+        await this.ensureBluetoothSession(savedType);
+        if (!this.bluetoothService.isPrinterConnected()) {
+          return false;
+        }
         return await this.printReceiptBluetooth(data);
       }
+
+      await this.ensureBluetoothSession(savedType);
+      if (!this.bluetoothService.isPrinterConnected()) {
+        return false;
+      }
+      return await this.printReceiptBluetooth(data);
     } catch (error) {
       console.error('Failed to print receipt:', error);
       return false;
@@ -324,6 +356,118 @@ class PrintService {
       console.error('Failed to print receipt on Bluetooth:', error);
       return false;
     }
+  }
+
+  /**
+   * Print item label(s) with barcode when encodable (CODE128); otherwise text-only code line.
+   */
+  public async printItemLabel(data: ItemLabelPrintData): Promise<boolean> {
+    try {
+      if (Platform.OS !== 'android') {
+        Toast.show({
+          type: 'info',
+          text1: 'Printing',
+          text2: 'Label printing is only supported on Android.',
+        });
+        return false;
+      }
+
+      const savedType = await this.getSavedPrinterType();
+      const resolved = await this.resolvePrinterType(savedType);
+      this.printerType = resolved;
+
+      if (resolved === 'sunmi') {
+        const sunmiOk = await this.printItemLabelSunmi(data);
+        if (sunmiOk || savedType !== 'auto') {
+          return sunmiOk;
+        }
+        this.printerType = 'bluetooth';
+        await this.ensureBluetoothSession(savedType);
+        if (!this.bluetoothService.isPrinterConnected()) {
+          return false;
+        }
+        return await this.printItemLabelBluetooth(data);
+      }
+
+      await this.ensureBluetoothSession(savedType);
+      if (!this.bluetoothService.isPrinterConnected()) {
+        Toast.show({
+          type: 'info',
+          text1: 'Bluetooth Printer Not Connected',
+          text2: 'Please connect to a Bluetooth printer in settings.',
+        });
+        return false;
+      }
+      return await this.printItemLabelBluetooth(data);
+    } catch (error) {
+      console.error('Failed to print item label:', error);
+      return false;
+    }
+  }
+
+  private async printItemLabelSunmi(data: ItemLabelPrintData): Promise<boolean> {
+    try {
+      const isConnected = await this.initializeSunmiPrinter();
+      if (!isConnected) {
+        return false;
+      }
+
+      const copies = Math.min(10, Math.max(1, Math.floor(Number(data.copies) || 1)));
+      const displayName = BluetoothPrinterService.formatLabelItemName(data.item_name);
+      const barcode = BluetoothPrinterService.resolveLabelBarcodeValue(
+        data.bar_code_no,
+        data.no,
+      );
+      const humanCode =
+        [data.bar_code_no, data.no].find(s => s != null && String(s).trim()) ?? '';
+      const humanLine = String(humanCode).trim();
+
+      for (let i = 0; i < copies; i++) {
+        PrinterSunmi.initLine({align: 'CENTER'});
+        PrinterSunmi.printText('ITEM LABEL', {textSize: 22, bold: true});
+        PrinterSunmi.printDividingLine('EMPTY', 6);
+        PrinterSunmi.printText(displayName, {textSize: 20, bold: true});
+        if (data.no) {
+          PrinterSunmi.printText(`No: ${data.no}`, {textSize: 18});
+        }
+        if (barcode) {
+          PrinterSunmi.printBarCode(barcode, {
+            symbology: 'CODE128',
+            align: 'CENTER',
+            readable: 'POS_TWO',
+            barHeight: 120,
+          });
+        } else if (humanLine) {
+          PrinterSunmi.printText(`Code: ${humanLine}`, {textSize: 18});
+        }
+        PrinterSunmi.addText('\n\n');
+        await PrinterSunmi.printTrans();
+      }
+
+      Toast.show({
+        type: 'success',
+        text1: 'Label printed',
+        text2: copies > 1 ? `${copies} copies` : undefined,
+      });
+      return true;
+    } catch (error: any) {
+      console.error('Failed to print item label on Sunmi:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Print failed',
+        text2:
+          typeof error?.message === 'string'
+            ? error.message
+            : 'Could not print on Sunmi printer.',
+      });
+      return false;
+    }
+  }
+
+  private async printItemLabelBluetooth(
+    data: ItemLabelPrintData,
+  ): Promise<boolean> {
+    return this.bluetoothService.printItemLabel(data);
   }
 
   /**
@@ -691,10 +835,19 @@ class PrintService {
   public async testPrinter(): Promise<boolean> {
     try {
       const savedType = await this.getSavedPrinterType();
-      this.printerType = savedType === 'auto' ? await this.detectPrinterType() : savedType;
+      const resolved = await this.resolvePrinterType(savedType);
+      this.printerType = resolved;
 
-      if (this.printerType === 'sunmi') {
-        const isConnected = await this.initializeSunmiPrinter();
+      if (resolved === 'sunmi') {
+        let isConnected = await this.initializeSunmiPrinter();
+        if (!isConnected && savedType === 'auto') {
+          this.printerType = 'bluetooth';
+          await this.ensureBluetoothSession(savedType);
+          if (!this.bluetoothService.isPrinterConnected()) {
+            return false;
+          }
+          return await this.bluetoothService.testPrinter();
+        }
         if (!isConnected) {
           return false;
         }
@@ -707,11 +860,15 @@ class PrintService {
         PrinterSunmi.printText(`Date: ${new Date().toLocaleString()}`, { textSize: 16 });
         PrinterSunmi.addText('\n\n\n\n');
         PrinterSunmi.printTrans();
-        
+
         return true;
-      } else {
-        return await this.bluetoothService.testPrinter();
       }
+
+      await this.ensureBluetoothSession(savedType);
+      if (!this.bluetoothService.isPrinterConnected()) {
+        return false;
+      }
+      return await this.bluetoothService.testPrinter();
     } catch (error) {
       console.error('Printer test failed:', error);
       return false;

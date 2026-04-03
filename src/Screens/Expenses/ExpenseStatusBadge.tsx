@@ -1,47 +1,96 @@
-import React from 'react';
+import React, {useMemo} from 'react';
 import {View, Text, StyleSheet} from 'react-native';
 import {COLORS, FONTS, SIZES} from '../../constants';
+import {useTheme} from '../../context/ThemeContext';
 
 interface ExpenseStatusBadgeProps {
   status: 'Open' | 'Posted' | 'Reversed';
 }
 
 const ExpenseStatusBadge: React.FC<ExpenseStatusBadgeProps> = ({status}) => {
-  const getStatusColor = (status: string) => {
+  const {isDark} = useTheme();
+  const palette = useMemo(() => {
+    if (isDark) {
+      switch (status) {
+        case 'Open':
+          return {
+            background: 'rgba(255, 193, 7, 0.18)',
+            text: '#FCD34D',
+            border: 'rgba(252, 211, 77, 0.4)',
+          };
+        case 'Posted':
+          return {
+            background: 'rgba(34, 197, 94, 0.2)',
+            text: '#4ADE80',
+            border: 'rgba(74, 222, 128, 0.45)',
+          };
+        case 'Reversed':
+          return {
+            background: 'rgba(244, 63, 94, 0.18)',
+            text: '#FB7185',
+            border: 'rgba(251, 113, 133, 0.45)',
+          };
+        default:
+          return {
+            background: 'rgba(255,255,255,0.08)',
+            text: COLORS.gray3,
+            border: 'rgba(255,255,255,0.12)',
+          };
+      }
+    }
     switch (status) {
       case 'Open':
-        return COLORS.warning || '#FFA500';
+        return {
+          background: '#FFF7E6',
+          text: '#B96D00',
+          border: '#F5D5A5',
+        };
       case 'Posted':
-        return COLORS.success || '#4CAF50';
+        return {
+          background: '#ECFDF3',
+          text: '#167C3D',
+          border: '#BCE3C7',
+        };
       case 'Reversed':
-        return COLORS.error || '#F44336';
+        return {
+          background: '#FEECEC',
+          text: '#B42318',
+          border: '#F5B1AB',
+        };
       default:
-        return COLORS.gray;
+        return {
+          background: COLORS.lightGray1,
+          text: COLORS.gray2,
+          border: COLORS.lightGray2,
+        };
     }
-  };
+  }, [isDark, status]);
 
   return (
     <View
       style={[
         styles.badge,
-        {backgroundColor: getStatusColor(status)},
+        {
+          backgroundColor: palette.background,
+          borderColor: palette.border,
+        },
       ]}>
-      <Text style={styles.badgeText}>{status}</Text>
+      <Text style={[styles.badgeText, {color: palette.text}]}>{status}</Text>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   badge: {
-    paddingHorizontal: SIZES.base,
-    paddingVertical: 2,
-    borderRadius: SIZES.base / 2,
+    paddingHorizontal: SIZES.base * 1.25,
+    paddingVertical: 4,
+    borderRadius: 999,
+    borderWidth: 1,
   },
   badgeText: {
     ...FONTS.body5,
-    color: COLORS.white,
     fontWeight: '600',
-    fontSize: 10,
+    fontSize: 11,
   },
 });
 

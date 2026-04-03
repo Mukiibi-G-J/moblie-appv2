@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useMemo} from 'react';
 import {
   View,
   Text,
@@ -8,15 +8,18 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  Image,
+  Dimensions,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import ReactNativeModal from 'react-native-modal';
-import {SafeAreaView} from 'react-native-safe-area-context';
+import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
-import {COLORS, FONTS, SIZES} from '../constants';
+import {COLORS, FONTS, SIZES, icons} from '../constants';
 import {CartItem, SalesInvoiceData} from '../@types/types.dto';
 import {validateCartTracking} from '../utils/salesTracking';
 import {
-  fetchCustomers,
   fetchPaymentMethods,
   createSalesInvoice,
   postSalesInvoice,
@@ -25,6 +28,11 @@ import {
   PaymentMethod,
 } from '../services/app.services';
 import PrintService, {CompanyInfo} from '../services/PrintService';
+import {useTheme} from '../context/ThemeContext';
+
+const WINDOW_HEIGHT = Dimensions.get('window').height;
+/** Tender step needs a real height; otherwise flex children collapse to a thin strip at the bottom. */
+const TENDER_MODAL_MIN_HEIGHT = Math.round(WINDOW_HEIGHT * 0.52);
 
 interface SalesCompletionModalProps {
   isVisible: boolean;
@@ -49,6 +57,67 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
   documentDate,
   initialSelectedCustomer,
 }) => {
+  const {colors, isDark} = useTheme();
+  const insets = useSafeAreaInsets();
+  const st = useMemo(
+    () => ({
+      modalView: {backgroundColor: colors.surface},
+      sectionTitle: {color: colors.textPrimary},
+      summaryLabel: {color: colors.textSecondary},
+      summaryValue: {color: colors.textPrimary},
+      totalRow: {borderTopColor: colors.border},
+      totalLabel: {color: colors.textPrimary},
+      content: {backgroundColor: colors.surface},
+      paymentRow: {borderBottomColor: colors.border},
+      paymentRowSel: {
+        backgroundColor: isDark ? 'rgba(2, 134, 255, 0.12)' : COLORS.transparentPrimary2,
+      },
+      paymentRowText: {color: colors.textPrimary},
+      paymentChevron: {tintColor: colors.iconMuted},
+      noPayText: {color: colors.textSecondary},
+      customerCard: {
+        borderColor: colors.border,
+        backgroundColor: colors.inputBackground,
+      },
+      customerName: {color: colors.textPrimary},
+      customerCode: {color: colors.textSecondary},
+      checkbox: {borderColor: colors.border},
+      checkboxLabel: {color: colors.textPrimary},
+      footer: {borderTopColor: colors.border, backgroundColor: colors.surface},
+      cancelBtn: {backgroundColor: colors.screenMuted},
+      cancelBtnText: {color: colors.textPrimary},
+      checkoutClose: {
+        borderColor: colors.border,
+        backgroundColor: colors.surface,
+      },
+      checkoutCloseGlyph: {color: colors.textPrimary},
+      splitLink: {color: colors.textSecondary},
+      heroTotal: {color: colors.textPrimary},
+      heroSub: {color: colors.textSecondary},
+      tenderHdr: {borderBottomColor: colors.border},
+      tenderBack: {backgroundColor: colors.screenMuted},
+      tenderTitle: {color: colors.textPrimary},
+      tenderLabel: {color: colors.textSecondary},
+      tenderShell: {
+        backgroundColor: colors.inputBackground,
+        borderColor: colors.border,
+      },
+      tenderInput: {color: colors.textPrimary},
+      tenderChange: {
+        backgroundColor: isDark ? 'rgba(2,134,255,0.1)' : COLORS.transparentPrimary,
+        borderColor: colors.border,
+      },
+      changeLabel: {color: colors.textSecondary},
+    }),
+    [colors, isDark],
+  );
+
+  const fallbackGeneralCustomer: Customer = {
+    id: 0,
+    no: 'GEN',
+    name: 'General',
+    system_id: 'general',
+  };
   const [isProcessing, setIsProcessing] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(
     null,
@@ -61,76 +130,33 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
   const [printReceipt, setPrintReceipt] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Data fetching states
-  const [customers, setCustomers] = useState<Customer[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
-  const [loadingCustomers, setLoadingCustomers] = useState(false);
   const [loadingPaymentMethods, setLoadingPaymentMethods] = useState(false);
+  /** Main checkout vs cash / amount entry (tender) screen */
+  const [screenMode, setScreenMode] = useState<'main' | 'tender'>('main');
 
-  // Customer search state
-  const [customerSearchQuery, setCustomerSearchQuery] = useState('');
-  const [showCustomerSearch, setShowCustomerSearch] = useState(false);
+  const formatUGX = (amount: number) =>
+    `UGX ${amount.toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}`;
 
-  // Fetch customers and payment methods on modal open
+  const formatTotalDisplay = () => formatUGX(total);
+
   useEffect(() => {
     if (isVisible) {
-      fetchCustomersData();
+      setScreenMode('main');
+      setSelectedCustomer(initialSelectedCustomer || fallbackGeneralCustomer);
       fetchPaymentMethodsData();
     }
   }, [isVisible, initialSelectedCustomer]);
 
-  const fetchCustomersData = async () => {
-    setLoadingCustomers(true);
-    try {
-      console.log('🔍 Fetching customers...');
-      const customersData = await fetchCustomers();
-      console.log('✅ Customers fetched:', customersData);
-
-      // Find existing "General" customer from API
-      const generalCustomer = customersData.find(
-        customer =>
-          customer.name.toLowerCase().includes('general') ||
-          customer.no.toLowerCase().includes('gen'),
-      );
-
-      if (generalCustomer) {
-        // Use existing General customer as default
-        setCustomers(customersData);
-        setSelectedCustomer(
-          initialSelectedCustomer && initialSelectedCustomer.id != null
-            ? customersData.find(customer => customer.id === initialSelectedCustomer.id) ||
-                initialSelectedCustomer
-            : generalCustomer,
-        );
-        console.log(
-          '✅ Found existing General customer:',
-          generalCustomer.name,
-        );
-      } else {
-        // Fallback: Create a General Customer if none exists
-        const fallbackGeneralCustomer: Customer = {
-          id: 0,
-          no: 'GEN',
-          name: 'General Customer',
-          system_id: 'general',
-        };
-
-        const allCustomers = [fallbackGeneralCustomer, ...customersData];
-        setCustomers(allCustomers);
-        setSelectedCustomer(initialSelectedCustomer || fallbackGeneralCustomer);
-        console.log('⚠️ No General customer found, created fallback');
-      }
-    } catch (error) {
-      console.error('❌ Failed to fetch customers:', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Failed to load customers',
-      });
-    } finally {
-      setLoadingCustomers(false);
+  useEffect(() => {
+    if (screenMode === 'tender' && paymentMethod?.requires_amount_received) {
+      setAmountReceived('');
+      setAmountReceivedDisplay('');
     }
-  };
+  }, [screenMode, paymentMethod?.requires_amount_received, paymentMethod?.id]);
 
   const fetchPaymentMethodsData = async () => {
     setLoadingPaymentMethods(true);
@@ -139,10 +165,6 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
       const paymentMethodsData = await fetchPaymentMethods();
       console.log('✅ Payment methods fetched:', paymentMethodsData);
       setPaymentMethods(paymentMethodsData);
-      // Set first payment method as default
-      if (paymentMethodsData.length > 0) {
-        setPaymentMethod(paymentMethodsData[0]);
-      }
     } catch (error) {
       console.error('❌ Failed to fetch payment methods:', error);
       Toast.show({
@@ -300,90 +322,85 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
           // Continue with the sale even if posting fails
         }
 
-        // Print receipt if requested (moved outside postSalesInvoice try-catch)
-        // Always attempt to print receipt if printer is available
-        // Check printer availability first
+        // Print receipt only when the user opted in and a printer path is available
         try {
-          console.log('🖨️ Checking printer availability...');
-          const printService = PrintService.getInstance();
-          
-          // Check if printer is available (Sunmi or Bluetooth)
-          const isPrinterAvailable = await printService.checkConnection();
-          
-          if (isPrinterAvailable || printReceipt) {
-            console.log('🖨️ Printer available, starting receipt printing...');
-            
-            // Fetch company information
-            let companyInfo: CompanyInfo | undefined;
-            try {
-              console.log('🏢 Fetching company information...');
-              const companyResponse = await getCompanyInfo();
-              if (companyResponse.data && companyResponse.data.company) {
-                const company = companyResponse.data.company;
-                companyInfo = {
-                  name: company.name || 'ZENTRO APP',
-                  logo: company.logo || '',
-                  address: company.address || 'Address',
-                  phone: company.phone || 'Phone',
-                  email: company.email || 'Email',
-                  tin: company.tin || 'TIN',
-                  vatNo: company.vatNo || 'VAT No',
-                };
-                console.log('✅ Company info fetched:', companyInfo);
-              } else {
-                console.log('⚠️ No company info found, using defaults');
-              }
-            } catch (companyError) {
-              console.error('❌ Error fetching company info:', companyError);
-              // Continue with default values
-            }
-
-            const receiptData = {
-              receiptId:
-                response.data.invoice_no || response.data.id.toString(),
-              username: username,
-              customerName: selectedCustomer?.name || 'General Customer',
-              cartItems: cartItems, // Use original cartItems
-              subtotal: total,
-              total: total,
-              tax: 0,
-              discount: 0,
-              amountReceived: parseFloat(amountReceived) || total,
-              change: calculateChange(),
-              paymentMethod: paymentMethod?.description || 'Cash',
-              saleDate: new Date().toISOString(),
-              companyInfo: companyInfo,
-            };
-
-            console.log('🖨️ Receipt data for printing:', receiptData);
-            const printResult = await printService.printReceipt(receiptData);
-
-            if (printResult) {
-              console.log('✅ Receipt printed successfully');
-              Toast.show({
-                type: 'success',
-                text1: 'Receipt Printed',
-                text2: 'Receipt has been sent to printer',
-              });
-            } else {
-              console.log('❌ Receipt printing failed - printer may not be connected');
-              if (printReceipt) {
-                // Only show error if user explicitly wanted to print
-                Toast.show({
-                  type: 'info',
-                  text1: 'Print Failed',
-                  text2: 'Receipt could not be printed. Please check printer connection.',
-                });
-              }
-            }
+          if (!printReceipt) {
+            console.log('🖨️ Print receipt unchecked — skipping');
           } else {
-            console.log('ℹ️ No printer available - skipping receipt printing');
-            if (printReceipt) {
+            console.log('🖨️ Checking printer availability...');
+            const printService = PrintService.getInstance();
+            const isPrinterAvailable = await printService.checkConnection();
+
+            if (!isPrinterAvailable) {
+              console.log('ℹ️ No printer available');
               Toast.show({
                 type: 'info',
                 text1: 'No Printer Found',
-                text2: 'Please connect a printer in Settings to print receipts automatically.',
+                text2:
+                  'Pair the built-in printer in Android Bluetooth settings, open Printer configuration, then try again.',
               });
+            } else {
+              console.log('🖨️ Printer available, starting receipt printing...');
+
+              let companyInfo: CompanyInfo | undefined;
+              try {
+                console.log('🏢 Fetching company information...');
+                const companyResponse = await getCompanyInfo();
+                if (companyResponse.data && companyResponse.data.company) {
+                  const company = companyResponse.data.company;
+                  companyInfo = {
+                    name: company.name || 'ZENTRO APP',
+                    logo: company.logo || '',
+                    address: company.address || 'Address',
+                    phone: company.phone || 'Phone',
+                    email: company.email || 'Email',
+                    tin: company.tin || 'TIN',
+                    vatNo: company.vatNo || 'VAT No',
+                  };
+                  console.log('✅ Company info fetched:', companyInfo);
+                } else {
+                  console.log('⚠️ No company info found, using defaults');
+                }
+              } catch (companyError) {
+                console.error('❌ Error fetching company info:', companyError);
+              }
+
+              const receiptData = {
+                receiptId:
+                  response.data.invoice_no || response.data.id.toString(),
+                username: username,
+                customerName: selectedCustomer?.name || 'General Customer',
+                cartItems: cartItems,
+                subtotal: total,
+                total: total,
+                tax: 0,
+                discount: 0,
+                amountReceived: parseFloat(amountReceived) || total,
+                change: calculateChange(),
+                paymentMethod: paymentMethod?.description || 'Cash',
+                saleDate: new Date().toISOString(),
+                companyInfo: companyInfo,
+              };
+
+              console.log('🖨️ Receipt data for printing:', receiptData);
+              const printResult = await printService.printReceipt(receiptData);
+
+              if (printResult) {
+                console.log('✅ Receipt printed successfully');
+                Toast.show({
+                  type: 'success',
+                  text1: 'Receipt Printed',
+                  text2: 'Receipt has been sent to printer',
+                });
+              } else {
+                console.log('❌ Receipt printing failed');
+                Toast.show({
+                  type: 'info',
+                  text1: 'Print Failed',
+                  text2:
+                    'Receipt could not be printed. Check Bluetooth printer in Settings.',
+                });
+              }
             }
           }
         } catch (printError) {
@@ -426,7 +443,8 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
 
   const handleClose = () => {
     if (!isProcessing) {
-      setSelectedCustomer(null);
+      setScreenMode('main');
+      setSelectedCustomer(initialSelectedCustomer || fallbackGeneralCustomer);
       setPaymentMethod(null);
       setAmountReceived('');
       setAmountReceivedDisplay('');
@@ -436,20 +454,33 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
     }
   };
 
+  const handlePaymentMethodRowPress = (method: PaymentMethod) => {
+    if (isProcessing) {
+      return;
+    }
+    setPaymentMethod(method);
+    setErrorMessage(null);
+    if (method.requires_amount_received) {
+      setScreenMode('tender');
+    }
+  };
+
+  const handleSplitAmountPress = () => {
+    Toast.show({
+      type: 'info',
+      text1: 'Split payment',
+      text2: 'Split payment is not available in the app yet.',
+      visibilityTime: 2500,
+      position: 'top',
+    });
+  };
+
   const change = calculateChange();
 
-  // Filter customers based on search query
-  const filteredCustomers = customers.filter(
-    customer =>
-      customer.name.toLowerCase().includes(customerSearchQuery.toLowerCase()) ||
-      customer.no.toLowerCase().includes(customerSearchQuery.toLowerCase()),
-  );
-
-  // Show only first 5 customers if not searching and more than 5 customers
-  const displayedCustomers =
-    showCustomerSearch || customers.length <= 5
-      ? filteredCustomers
-      : customers.slice(0, 5);
+  /** Cash/tender step: require full payment before enabling Complete Sale */
+  const tenderAmountOk =
+    !paymentMethod?.requires_amount_received ||
+    (amountReceived !== '' && parseFloat(amountReceived) >= total);
 
   return (
     <ReactNativeModal
@@ -461,14 +492,15 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
       animationOut="slideOutDown"
       useNativeDriver={false}
       statusBarTranslucent={true}>
-      <SafeAreaView style={styles.modalView}>
-        <View style={styles.header}>
-          <Text style={styles.title}>Complete Sale</Text>
-          <TouchableOpacity onPress={handleClose} disabled={isProcessing}>
-            <Text style={styles.closeButton}>✕</Text>
-          </TouchableOpacity>
-        </View>
-
+      <SafeAreaView
+        edges={['top', 'left', 'right']}
+        style={[
+          styles.modalView,
+          st.modalView,
+          screenMode === 'tender' && {minHeight: TENDER_MODAL_MIN_HEIGHT},
+          // Modal + Android: automatic bottom safe area is often wrong; use explicit inset
+          {paddingBottom: insets.bottom},
+        ]}>
         {/* Error Message - Fixed position below header */}
         {errorMessage && (
           <View style={styles.errorContainerFixed}>
@@ -481,196 +513,194 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
           </View>
         )}
 
-        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-          {/* Sale Summary */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Sale Summary</Text>
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Items:</Text>
-              <Text style={styles.summaryValue}>{cartItems.length}</Text>
-            </View>
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Subtotal:</Text>
-              <Text style={styles.summaryValue}>
-                UGX {total.toLocaleString()}
-              </Text>
-            </View>
-            {/* Tax and discount rows removed */}
-            <View style={[styles.summaryRow, styles.totalRow]}>
-              <Text style={styles.totalLabel}>Total:</Text>
-              <Text style={styles.totalValue}>
-                UGX {total.toLocaleString()}
-              </Text>
-            </View>
-          </View>
-
-          {/* Customer Selection */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Select Customer</Text>
-            {loadingCustomers ? (
-              <ActivityIndicator size="small" color={COLORS.primary} />
-            ) : customers.length === 0 ? (
-              <Text style={styles.noCustomersText}>
-                No customers available in the system.
-              </Text>
-            ) : (
-              <View>
-                <Text style={styles.sectionSubtitle}>
-                  Choose a customer from the system:
-                </Text>
-
-                {/* Customer Search */}
-                {customers.length > 5 && (
-                  <View style={styles.searchContainer}>
-                    <TextInput
-                      style={styles.searchInput}
-                      placeholder="Search customers..."
-                      value={customerSearchQuery}
-                      onChangeText={setCustomerSearchQuery}
-                      editable={!isProcessing}
-                    />
-                    <TouchableOpacity
-                      style={styles.searchToggleButton}
-                      onPress={() => setShowCustomerSearch(!showCustomerSearch)}
-                      disabled={isProcessing}>
-                      <Text style={styles.searchToggleText}>
-                        {showCustomerSearch ? 'Show Less' : 'Show All'}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-
-                {/* Customer List */}
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  style={styles.customersScroll}>
-                  {displayedCustomers.map(customer => (
-                    <TouchableOpacity
-                      key={customer.id}
-                      style={[
-                        styles.customerOption,
-                        selectedCustomer?.id === customer.id &&
-                          styles.selectedCustomerOption,
-                      ]}
-                      onPress={() => {
-                        setSelectedCustomer(customer);
-                      }}
-                      disabled={isProcessing}>
-                      <Text
-                        style={[
-                          styles.customerOptionText,
-                          selectedCustomer?.id === customer.id &&
-                            styles.selectedCustomerOptionText,
-                        ]}>
-                        {customer.no} - {customer.name}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-
-                {/* Show more indicator */}
-                {!showCustomerSearch && customers.length > 5 && (
-                  <Text style={styles.moreCustomersText}>
-                    +{customers.length - 5} more customers. Use search to find
-                    specific customers.
-                  </Text>
-                )}
-              </View>
-            )}
-          </View>
-
-          {/* Payment Method */}
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Payment Method</Text>
-            <View style={styles.paymentMethods}>
-              {loadingPaymentMethods ? (
-                <ActivityIndicator size="small" color={COLORS.primary} />
-              ) : paymentMethods.length === 0 ? (
-                <Text style={styles.noPaymentMethodsText}>
-                  No payment methods available.
-                </Text>
-              ) : (
-                paymentMethods.map(method => (
+        {screenMode === 'tender' && paymentMethod ? (
+          <KeyboardAvoidingView
+            style={styles.tenderKeyboardView}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}>
+            <View style={styles.tenderScreen}>
+              <View style={styles.tenderTopBlock}>
+                <View style={[styles.tenderHeader, st.tenderHdr]}>
                   <TouchableOpacity
-                    key={method.id}
-                    style={[
-                      styles.paymentMethod,
-                      paymentMethod?.id === method.id &&
-                        styles.selectedPaymentMethod,
-                    ]}
-                    onPress={() => setPaymentMethod(method)}
-                    disabled={isProcessing}>
-                    <Text
-                      style={[
-                        styles.paymentMethodText,
-                        paymentMethod?.id === method.id &&
-                          styles.selectedPaymentMethodText,
-                      ]}>
-                      {method.description}
-                    </Text>
+                    style={[styles.tenderBackButton, st.tenderBack]}
+                    onPress={() => setScreenMode('main')}
+                    disabled={isProcessing}
+                    hitSlop={{top: 12, bottom: 12, left: 12, right: 12}}>
+                    <Image source={icons.back} style={styles.tenderBackIcon} />
                   </TouchableOpacity>
-                ))
-              )}
-            </View>
-          </View>
-
-          {/* Amount Received (for Cash payments) */}
-          {paymentMethod?.requires_amount_received && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Amount Received</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter amount received"
-                value={amountReceivedDisplay}
-                onChangeText={handleAmountReceivedChange}
-                keyboardType="numeric"
-                editable={!isProcessing}
-              />
-              {amountReceived && (
-                <View style={styles.changeRow}>
-                  <Text style={styles.changeLabel}>Change:</Text>
-                  <Text style={styles.changeValue}>
-                    UGX {change.toLocaleString()}
+                  <Text
+                    style={[styles.tenderHeaderTitle, st.tenderTitle]}
+                    numberOfLines={2}
+                    ellipsizeMode="tail">
+                    {formatTotalDisplay()} · {paymentMethod.description}
                   </Text>
                 </View>
-              )}
+
+                <Text style={[styles.tenderFieldLabel, st.tenderLabel]}>Amount received</Text>
+                <View style={[styles.tenderInputShell, st.tenderShell]}>
+                  <TextInput
+                    style={[styles.tenderInput, st.tenderInput]}
+                    placeholder="0.00"
+                    placeholderTextColor={colors.placeholder}
+                    value={amountReceivedDisplay}
+                    onChangeText={handleAmountReceivedChange}
+                    keyboardType="decimal-pad"
+                    editable={!isProcessing}
+                  />
+                </View>
+                {amountReceived ? (
+                  <View style={[styles.tenderChangeCard, st.tenderChange]}>
+                    <Text style={[styles.changeLabel, st.changeLabel]}>Change</Text>
+                    <Text style={styles.changeValue}>{formatUGX(change)}</Text>
+                  </View>
+                ) : null}
+              </View>
+
+              <TouchableOpacity
+                style={[
+                  styles.tenderPrimaryButton,
+                  (isProcessing || !tenderAmountOk) && styles.disabledButton,
+                ]}
+                onPress={handleCompleteSale}
+                disabled={isProcessing || !tenderAmountOk}
+                activeOpacity={0.85}>
+                {isProcessing ? (
+                  <ActivityIndicator color={COLORS.white} size="small" />
+                ) : (
+                  <Text style={styles.tenderPrimaryButtonText}>
+                    Complete Sale
+                  </Text>
+                )}
+              </TouchableOpacity>
             </View>
-          )}
+          </KeyboardAvoidingView>
+        ) : (
+          <>
+            <View style={styles.checkoutHeader}>
+              <TouchableOpacity
+                style={[styles.checkoutCloseCircle, st.checkoutClose]}
+                onPress={handleClose}
+                disabled={isProcessing}
+                activeOpacity={0.7}>
+                <Text style={[styles.checkoutCloseGlyph, st.checkoutCloseGlyph]}>✕</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleSplitAmountPress}
+                disabled={isProcessing}
+                activeOpacity={0.7}>
+                <Text style={[styles.splitAmountLink, st.splitLink]}>Split Amount</Text>
+              </TouchableOpacity>
+            </View>
 
-          {/* Tax and Discount section removed */}
+            <ScrollView style={[styles.content, st.content]} showsVerticalScrollIndicator={false}>
+              <View style={styles.heroTotalWrap}>
+                <Text
+                  style={[styles.heroTotalText, st.heroTotal]}
+                  numberOfLines={1}
+                  adjustsFontSizeToFit
+                  minimumFontScale={0.28}>
+                  {formatTotalDisplay()}
+                </Text>
+                <Text style={[styles.heroSubtitle, st.heroSub]}>Select Payment Type Below</Text>
+              </View>
 
-          {/* Receipt Printing */}
-          <View style={styles.section}>
+              <View style={styles.paymentPickerSection}>
+                {loadingPaymentMethods ? (
+                  <ActivityIndicator size="small" color={COLORS.primary} />
+                ) : paymentMethods.length === 0 ? (
+                  <Text style={[styles.noPaymentMethodsText, st.noPayText]}>
+                    No payment methods available.
+                  </Text>
+                ) : (
+                  paymentMethods.map((method, index) => (
+                    <TouchableOpacity
+                      key={method.id}
+                      style={[
+                        styles.paymentPickerRow,
+                        st.paymentRow,
+                        index === paymentMethods.length - 1 &&
+                          styles.paymentPickerRowLast,
+                        paymentMethod?.id === method.id &&
+                          styles.paymentPickerRowSelected,
+                        paymentMethod?.id === method.id && st.paymentRowSel,
+                      ]}
+                      onPress={() => handlePaymentMethodRowPress(method)}
+                      disabled={isProcessing}
+                      activeOpacity={0.65}>
+                      <Text style={[styles.paymentPickerRowText, st.paymentRowText]}>
+                        {method.description}
+                      </Text>
+                      <Image
+                        source={icons.down_arrow}
+                        style={[styles.paymentPickerChevron, st.paymentChevron]}
+                      />
+                    </TouchableOpacity>
+                  ))
+                )}
+              </View>
+
+              {/* Sale Summary */}
+              <View style={styles.section}>
+            <Text style={[styles.sectionTitle, st.sectionTitle]}>Sale Summary</Text>
+            <View style={styles.summaryRow}>
+              <Text style={[styles.summaryLabel, st.summaryLabel]}>Items:</Text>
+              <Text style={[styles.summaryValue, st.summaryValue]}>{cartItems.length}</Text>
+            </View>
+            <View style={styles.summaryRow}>
+              <Text style={[styles.summaryLabel, st.summaryLabel]}>Subtotal:</Text>
+              <Text style={[styles.summaryValue, st.summaryValue]}>{formatUGX(total)}</Text>
+            </View>
+            {/* Tax and discount rows removed */}
+            <View style={[styles.summaryRow, styles.totalRow, st.totalRow]}>
+              <Text style={[styles.totalLabel, st.totalLabel]}>Total:</Text>
+              <Text style={styles.totalValue}>{formatUGX(total)}</Text>
+            </View>
+              </View>
+
+              {/* Selected Customer */}
+              <View style={styles.section}>
+            <Text style={[styles.sectionTitle, st.sectionTitle]}>Customer</Text>
+            <View style={[styles.selectedCustomerCard, st.customerCard]}>
+              <Text style={[styles.selectedCustomerName, st.customerName]}>
+                {selectedCustomer?.name || 'General'}
+              </Text>
+              <Text style={[styles.selectedCustomerCode, st.customerCode]}>
+                {selectedCustomer?.no || 'GEN'}
+              </Text>
+            </View>
+              </View>
+
+              {/* Receipt Printing */}
+              <View style={styles.section}>
             <TouchableOpacity
               style={styles.checkboxRow}
               onPress={() => setPrintReceipt(!printReceipt)}
               disabled={isProcessing}>
               <View
-                style={[styles.checkbox, printReceipt && styles.checkedBox]}>
+                style={[styles.checkbox, st.checkbox, printReceipt && styles.checkedBox]}>
                 {printReceipt && <Text style={styles.checkmark}>✓</Text>}
               </View>
-              <Text style={styles.checkboxLabel}>Print Receipt</Text>
+              <Text style={[styles.checkboxLabel, st.checkboxLabel]}>Print Receipt</Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
 
         {/* Action Buttons */}
-        <View style={styles.footer}>
+        <View style={[styles.footer, st.footer]}>
           <TouchableOpacity
-            style={[styles.button, styles.cancelButton]}
+            style={[styles.button, styles.cancelButton, st.cancelBtn]}
             onPress={handleClose}
             disabled={isProcessing}>
-            <Text style={styles.cancelButtonText}>Cancel</Text>
+            <Text style={[styles.cancelButtonText, st.cancelBtnText]}>Cancel</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[
               styles.button,
               styles.completeButton,
-              isProcessing && styles.disabledButton,
+              (isProcessing || !paymentMethod) && styles.disabledButton,
             ]}
             onPress={handleCompleteSale}
-            disabled={isProcessing}>
+            disabled={isProcessing || !paymentMethod}>
             {isProcessing ? (
               <ActivityIndicator color={COLORS.white} size="small" />
             ) : (
@@ -678,6 +708,8 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
             )}
           </TouchableOpacity>
         </View>
+          </>
+        )}
       </SafeAreaView>
     </ReactNativeModal>
   );
@@ -693,7 +725,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: '90%',
+    maxHeight: '92%',
   },
   header: {
     flexDirection: 'row',
@@ -884,77 +916,22 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingVertical: SIZES.radius,
   },
-  sectionSubtitle: {
-    ...FONTS.body5,
-    color: COLORS.gray,
-    marginTop: SIZES.radius,
-    marginBottom: SIZES.radius / 2,
-  },
-  customersScroll: {
-    marginTop: SIZES.radius,
-  },
-  customerOption: {
-    paddingHorizontal: SIZES.radius,
-    paddingVertical: SIZES.radius / 2,
+  selectedCustomerCard: {
     borderWidth: 1,
-    borderColor: COLORS.lightGray2,
-    borderRadius: SIZES.radius,
-    marginRight: SIZES.radius,
-    minWidth: 120,
-    alignItems: 'center',
-  },
-  selectedCustomerOption: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  customerOptionText: {
-    ...FONTS.body5,
-    color: COLORS.darkGray,
-    textAlign: 'center',
-  },
-  selectedCustomerOptionText: {
-    color: COLORS.white,
-    fontWeight: '600',
-  },
-  searchContainer: {
-    flexDirection: 'row',
-    marginBottom: SIZES.radius,
-    gap: SIZES.radius,
-  },
-  searchInput: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray2,
+    borderColor: COLORS.transparentPrimary2,
+    backgroundColor: COLORS.transparentPrimary,
     borderRadius: SIZES.radius,
     padding: SIZES.radius,
+  },
+  selectedCustomerName: {
     ...FONTS.body4,
-    color: COLORS.darkGray,
-  },
-  searchToggleButton: {
-    paddingHorizontal: SIZES.radius,
-    paddingVertical: SIZES.radius,
-    backgroundColor: COLORS.primary,
-    borderRadius: SIZES.radius,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  searchToggleText: {
-    ...FONTS.body5,
-    color: COLORS.white,
+    color: COLORS.primary2,
     fontWeight: '600',
   },
-  moreCustomersText: {
+  selectedCustomerCode: {
     ...FONTS.body5,
     color: COLORS.gray,
-    textAlign: 'center',
-    marginTop: SIZES.radius,
-    fontStyle: 'italic',
-  },
-  noCustomersText: {
-    ...FONTS.body4,
-    color: COLORS.gray,
-    textAlign: 'center',
-    paddingVertical: SIZES.radius,
+    marginTop: 4,
   },
   errorContainer: {
     backgroundColor: '#FFEBEE',
@@ -993,6 +970,181 @@ const styles = StyleSheet.create({
     color: '#D32F2F',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  checkoutHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: SIZES.padding,
+    paddingTop: 8,
+    paddingBottom: 12,
+  },
+  checkoutCloseCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.lightGray2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.white,
+  },
+  checkoutCloseGlyph: {
+    fontSize: 16,
+    color: COLORS.darkGray,
+    fontWeight: '600',
+  },
+  splitAmountLink: {
+    ...FONTS.body4,
+    color: COLORS.darkGray,
+    textDecorationLine: 'underline',
+    fontWeight: '600',
+  },
+  heroTotalWrap: {
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    marginBottom: 4,
+  },
+  heroTotalText: {
+    fontSize: 44,
+    fontWeight: '700',
+    color: COLORS.black,
+    textAlign: 'center',
+  },
+  heroSubtitle: {
+    ...FONTS.body4,
+    color: COLORS.gray,
+    textAlign: 'center',
+    marginTop: 14,
+    fontWeight: '500',
+  },
+  paymentPickerSection: {
+    marginBottom: SIZES.radius * 2,
+  },
+  paymentPickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 16,
+    paddingHorizontal: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.lightGray2,
+  },
+  paymentPickerRowLast: {
+    borderBottomWidth: 0,
+  },
+  paymentPickerRowSelected: {
+    backgroundColor: COLORS.transparentPrimary2,
+  },
+  paymentPickerRowText: {
+    ...FONTS.body3,
+    color: COLORS.darkGray,
+    fontWeight: '500',
+    fontSize: 17,
+    flex: 1,
+    paddingRight: 12,
+  },
+  paymentPickerChevron: {
+    width: 14,
+    height: 14,
+    tintColor: COLORS.gray,
+    transform: [{rotate: '-90deg'}],
+  },
+  tenderKeyboardView: {
+    flex: 1,
+    width: '100%',
+  },
+  tenderScreen: {
+    flex: 1,
+    width: '100%',
+    paddingHorizontal: SIZES.padding,
+    paddingBottom: SIZES.padding,
+    justifyContent: 'space-between',
+  },
+  tenderTopBlock: {
+    flexShrink: 0,
+  },
+  tenderHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+    paddingBottom: 16,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.lightGray1,
+  },
+  tenderBackButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    backgroundColor: COLORS.lightGray2,
+  },
+  tenderBackIcon: {
+    width: 22,
+    height: 22,
+    tintColor: COLORS.primary2,
+  },
+  tenderHeaderTitle: {
+    ...FONTS.body3,
+    color: COLORS.black,
+    fontWeight: '600',
+    flex: 1,
+  },
+  tenderFieldLabel: {
+    ...FONTS.body5,
+    color: COLORS.gray,
+    marginBottom: 8,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+  },
+  tenderInputShell: {
+    backgroundColor: COLORS.lightGray2,
+    borderRadius: SIZES.radius,
+    borderWidth: 1,
+    borderColor: COLORS.lightGray1,
+    paddingHorizontal: 16,
+    paddingVertical: 4,
+  },
+  tenderInput: {
+    paddingVertical: 14,
+    ...FONTS.h2,
+    fontSize: 28,
+    lineHeight: 34,
+    color: COLORS.black,
+    fontWeight: '600',
+  },
+  tenderChangeCard: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: COLORS.transparentPrimary,
+    borderRadius: SIZES.radius,
+    borderWidth: 1,
+    borderColor: COLORS.transparentPrimary2,
+  },
+  tenderPrimaryButton: {
+    backgroundColor: COLORS.primary,
+    paddingVertical: 18,
+    borderRadius: SIZES.radius,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+    shadowColor: COLORS.primary,
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  tenderPrimaryButtonText: {
+    color: COLORS.white,
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
 });
 

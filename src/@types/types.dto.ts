@@ -142,8 +142,30 @@ export interface SelectedTrackingDetails {
   code?: string | null;
 }
 
-export interface ItemJournalData {
-  document_ids: number[];
+/** Item journal line entry types (stored as enum name in API). */
+export type ItemJournalEntryType =
+  | 'Purchase'
+  | 'Sales'
+  | 'PositiveAdjustment'
+  | 'NegativeAdjustment'
+  | 'DirectCost';
+
+/** Create/update body for POST /api/item-journals/upsert/ */
+export interface ItemJournalUpsertPayload {
+  id?: number;
+  system_id?: string;
+  document_no?: string;
+  item: string;
+  entry_type: ItemJournalEntryType;
+  quantity: number;
+  unit_cost?: number;
+  unit_amount?: number;
+  description?: string;
+  date?: string;
+  user: number;
+  item_unit_of_measure?: number | null;
+  item_specification?: number | null;
+  deleted?: boolean;
 }
 
 export interface CartItem {

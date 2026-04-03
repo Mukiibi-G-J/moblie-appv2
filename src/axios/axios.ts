@@ -211,9 +211,16 @@ const createAxiosInstance = (tenant?: string) => {
         });
       }
 
-      // Finally, if backend returned `{detail: ...}`, surface it to callers.
-      if (error.response?.data?.detail) {
-        return Promise.reject(error.response.data.detail);
+      // If backend returned `{ detail: ... }`, often unwrap for callers — but keep the
+      // full Axios error when the body also has app-specific fields (e.g. item journal post).
+      const respData = error.response?.data as Record<string, unknown> | undefined;
+      if (respData?.detail != null) {
+        const hasStructuredAppError =
+          Array.isArray(respData.invalid_journals) ||
+          typeof respData.error === 'string';
+        if (!hasStructuredAppError) {
+          return Promise.reject(respData.detail);
+        }
       }
 
       return Promise.reject(error);
@@ -417,13 +424,14 @@ class ApiService {
       });
     }
 
-    // Finally, if backend returned `{detail: ...}`, surface it to callers.
-    if (
-      error.response?.data &&
-      typeof error.response.data === 'object' &&
-      'detail' in error.response.data
-    ) {
-      return Promise.reject((error.response.data as any).detail);
+    const respData = error.response?.data as Record<string, unknown> | undefined;
+    if (respData && typeof respData === 'object' && 'detail' in respData) {
+      const hasStructuredAppError =
+        Array.isArray(respData.invalid_journals) ||
+        typeof respData.error === 'string';
+      if (!hasStructuredAppError) {
+        return Promise.reject(respData.detail);
+      }
     }
 
     return Promise.reject(error);

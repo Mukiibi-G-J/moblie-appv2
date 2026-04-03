@@ -1,183 +1,320 @@
-import React from 'react';
+import React, {useMemo} from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
-  FlatList,
   Image,
   StyleSheet,
+  Platform,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
-import {COLORS, icons, constants} from '../../constants';
+import Toast from 'react-native-toast-message';
+import {FONTS, SIZES, icons} from '../../constants';
+import {PAGE_NAMES} from '../../constants/pageNames';
 import {usePermissions} from '../../hooks/usePermissions';
-import {useSetSelectedTab} from '../../context/Store';
+import {useTheme} from '../../context/ThemeContext';
+import {navigate} from '../../hooks/NavigationService';
+
+type PrimaryAction = {
+  key: string;
+  icon: number;
+  title: string;
+  subtitle: string;
+  onPress: () => void;
+};
+
+type LinkRow = {
+  key: string;
+  label: string;
+  icon: number;
+  onPress: () => void;
+  visible: boolean;
+};
+
+function chunkIntoPairs<T>(items: T[]): T[][] {
+  const rows: T[][] = [];
+  for (let i = 0; i < items.length; i += 2) {
+    rows.push(items.slice(i, i + 2));
+  }
+  return rows;
+}
 
 const Options = () => {
   const navigation = useNavigation();
-  const setSelectedTab = useSetSelectedTab();
-  const {isModuleVisible, hasAnyPageAccess, canCreate, canRead} = usePermissions();
+  const {isModuleVisible, hasAnyPageAccess, canRead} = usePermissions();
+  const {colors} = useTheme();
 
-  // Define all possible options with permission checks
-  const allOptions = [
-    {
-      icon: icons.cart,
-      iconColor: COLORS.primary,
-      title: 'Sale History',
-      subtitle: 'View past sales',
-      link: constants.screens.sales,
-      color: 'rgba(76, 175, 80, 0.1)',
-      borderColor: 'rgba(76, 175, 80, 0.3)',
-      // Permission check: sales module + sales page access
-      hasPermission: () =>
-        isModuleVisible('sales') && hasAnyPageAccess('Sales'),
-    },
-    {
+  const t = useMemo(
+    () => ({
+      sectionTitle: {color: colors.textPrimary},
+      tile: {
+        backgroundColor: colors.card,
+        borderColor: colors.border,
+      },
+      iconWrap: {
+        backgroundColor: colors.screenMuted,
+        borderColor: colors.border,
+      },
+      title: {color: colors.textPrimary},
+      subtitle: {color: colors.textSecondary},
+      listCard: {
+        backgroundColor: colors.card,
+        borderColor: colors.border,
+      },
+      linkRowBg: {backgroundColor: colors.background},
+      linkLabel: {color: colors.textPrimary},
+      linkIconTint: {tintColor: colors.textSecondary},
+      linkChevron: {color: colors.textSecondary},
+      rowDivider: {backgroundColor: colors.border},
+    }),
+    [colors],
+  );
+
+  const canOpenExpenseHistory =
+    isModuleVisible('expenses') &&
+    (hasAnyPageAccess(PAGE_NAMES.EXPENSE_HISTORY) ||
+      hasAnyPageAccess(PAGE_NAMES.EXPENSES));
+
+  const showSalesHistory =
+    isModuleVisible('sales') && hasAnyPageAccess(PAGE_NAMES.SALES_HISTORY);
+  const showPrintLabels =
+    isModuleVisible('items') && canRead('Items');
+
+  const primaryDefs: PrimaryAction[] = [];
+
+  if (isModuleVisible('items') && hasAnyPageAccess(PAGE_NAMES.ITEMS)) {
+    primaryDefs.push({
+      key: 'items',
       icon: icons.product,
-      iconColor: COLORS.secondary,
       title: 'Items',
       subtitle: 'Inventory & stock',
-      link: constants.screens.items,
-      color: 'rgba(33, 150, 243, 0.1)',
-      borderColor: 'rgba(33, 150, 243, 0.3)',
-      // Permission check: items module + items page access
-      hasPermission: () =>
-        isModuleVisible('items') && hasAnyPageAccess('Items'),
-    },
-    {
+      onPress: () => navigation.navigate('Items' as never),
+    });
+  }
+  if (showPrintLabels) {
+    primaryDefs.push({
+      key: 'printLabels',
       icon: icons.printer,
-      iconColor: COLORS.warning,
-      title: 'Print Labels',
-      subtitle: 'Generate labels',
-      link: 'PrintLabels',
-      color: 'rgba(255, 152, 0, 0.1)',
-      borderColor: 'rgba(255, 152, 0, 0.3)',
-      // Permission check: items module + read permission
-      hasPermission: () => isModuleVisible('items') && canRead('Items'),
+      title: 'Print labels',
+      subtitle: 'Barcode & tags',
+      onPress: () => navigation.navigate('PrintLabels' as never),
+    });
+  }
+  if (isModuleVisible('expenses') && hasAnyPageAccess(PAGE_NAMES.EXPENSES)) {
+    primaryDefs.push({
+      key: 'expenses',
+      icon: icons.coupon,
+      title: 'Expenses',
+      subtitle: 'Record & manage',
+      onPress: () => navigation.navigate('Expenses' as never),
+    });
+  }
+  if (canOpenExpenseHistory) {
+    primaryDefs.push({
+      key: 'expenseHistory',
+      icon: icons.reports,
+      title: 'Expense history',
+      subtitle: 'Posted expenses',
+      onPress: () => navigation.navigate('ExpenseHistory' as never),
+    });
+  }
+
+  const linkRows: LinkRow[] = [
+    {
+      key: 'salesHistory',
+      label: 'Sales history',
+      icon: icons.reports,
+      visible: showSalesHistory,
+      onPress: () => navigate('SalesHistory', undefined),
     },
     {
-      icon: icons.cart,
-      iconColor: COLORS.error,
-      title: 'Make Sale',
-      subtitle: 'Create new sale',
-      link: 'Cart',
-      color: 'rgba(244, 67, 54, 0.1)',
-      borderColor: 'rgba(244, 67, 54, 0.3)',
-      // Permission check: sales module + create permission
-      hasPermission: () => isModuleVisible('sales') && canCreate('Sales'),
+      key: 'reports',
+      label: 'Reports',
+      icon: icons.reports,
+      visible:
+        isModuleVisible('reports') && hasAnyPageAccess(PAGE_NAMES.REPORTS),
+      onPress: () => navigate('Reports', undefined),
+    },
+    {
+      key: 'stockAdjustments',
+      label: 'Stock adjustments',
+      icon: icons.itemJournal,
+      visible:
+        isModuleVisible('inventory') &&
+        hasAnyPageAccess(PAGE_NAMES.ITEM_JOURNAL),
+      onPress: () => navigate('ItemJournal', undefined),
+    },
+    {
+      key: 'customers',
+      label: 'Customers',
+      icon: icons.profile,
+      visible:
+        isModuleVisible('customers') &&
+        hasAnyPageAccess(PAGE_NAMES.CUSTOMER_MANAGEMENT),
+      onPress: () => navigate('Customers', undefined),
+    },
+    {
+      key: 'suppliers',
+      label: 'Suppliers',
+      icon: icons.company,
+      visible:
+        isModuleVisible('suppliers') &&
+        hasAnyPageAccess(PAGE_NAMES.SUPPLIERS),
+      onPress: () => navigate('Suppliers', undefined),
+    },
+    {
+      key: 'settings',
+      label: 'Settings',
+      icon: icons.setting,
+      visible: hasAnyPageAccess(PAGE_NAMES.PROFILE_SETTINGS),
+      onPress: () => navigate('Settings', undefined),
+    },
+    {
+      key: 'addons',
+      label: 'Add-ons',
+      icon: icons.plus,
+      visible: true,
+      onPress: () => navigate('Subscription', undefined),
+    },
+    {
+      key: 'referrals',
+      label: 'Referrals',
+      icon: icons.star,
+      visible: true,
+      onPress: () => {
+        Toast.show({
+          type: 'info',
+          text1: 'Referrals',
+          text2: 'Coming soon.',
+        });
+      },
+    },
+    {
+      key: 'support',
+      label: 'Help & Support',
+      icon: icons.help,
+      visible: true,
+      onPress: () => {
+        Toast.show({
+          type: 'info',
+          text1: 'Help & Support',
+          text2: 'Coming soon.',
+        });
+      },
     },
   ];
 
-  // Filter options based on permissions
-  const options = allOptions.filter(option => option.hasPermission());
+  const visibleLinks = linkRows.filter(r => r.visible);
+  const hasAnyContent = primaryDefs.length > 0 || visibleLinks.length > 0;
 
-  const renderOption = ({item}) => {
-    const handlePress = () => {
-      // Map tab names to screen names for navigation
-      const screenMap: {[key: string]: string} = {
-        [constants.screens.sales]: 'SalesHistory',
-        [constants.screens.items]: 'Items',
-      };
-      
-      // If it has a screen route, navigate to it (like Cart)
-      if (screenMap[item.link]) {
-        navigation.navigate(screenMap[item.link] as never);
-      } else if (item.link === 'Cart' || item.link === 'PrintLabels') {
-        // For other screens, use navigation directly
-        navigation.navigate(item.link as never);
-      } else {
-        // Fallback: try to switch tabs for other bottom tabs
-        console.log('Switching to tab:', item.link);
-        setSelectedTab(item.link);
-      }
-    };
-
-    return (
-      <TouchableOpacity
-        style={styles.optionButton}
-        onPress={handlePress}
-        activeOpacity={0.7}>
-      <View
-        style={[
-          styles.iconContainer,
-          {
-            backgroundColor: item.color,
-            borderColor: item.borderColor,
-          },
-        ]}>
-        <Image
-          source={item.icon}
-          style={[styles.icon, {tintColor: item.iconColor}]}
-          resizeMode="contain"
-        />
-      </View>
-      <View style={styles.textContainer}>
-        <Text style={styles.title}>{item.title}</Text>
-        <Text style={styles.subtitle}>{item.subtitle}</Text>
-      </View>
-    </TouchableOpacity>
-    );
-  };
-
-  // Don't render if no options available
-  if (options.length === 0) {
+  if (!hasAnyContent) {
     return null;
   }
 
+  const rows = chunkIntoPairs(primaryDefs);
+
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerText}>Quick Actions</Text>
-      </View>
-      <View style={styles.gridContainer}>
-        <FlatList
-          data={options}
-          renderItem={renderOption}
-          keyExtractor={item => item.title}
-          numColumns={2}
-          columnWrapperStyle={styles.columnWrapper}
-          showsVerticalScrollIndicator={false}
-          scrollEnabled={false}
-        />
-      </View>
+      {primaryDefs.length > 0 ? (
+        <>
+          <View style={styles.header}>
+            <Text style={[styles.headerText, t.sectionTitle, FONTS.h3]}>
+              Quick actions
+            </Text>
+          </View>
+          {rows.map((pair, rowIndex) => (
+            <View key={rowIndex} style={styles.gridRow}>
+              {pair.map(item => (
+                <TouchableOpacity
+                  key={item.key}
+                  style={[styles.optionButton, t.tile]}
+                  onPress={item.onPress}
+                  activeOpacity={0.7}>
+                  <View style={[styles.iconContainer, t.iconWrap]}>
+                    <Image
+                      source={item.icon as any}
+                      style={[styles.icon, {tintColor: colors.iconMuted}]}
+                      resizeMode="contain"
+                    />
+                  </View>
+                  <View style={styles.textContainer}>
+                    <Text style={[styles.title, t.title]}>{item.title}</Text>
+                    <Text style={[styles.subtitle, t.subtitle]}>
+                      {item.subtitle}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ))}
+        </>
+      ) : null}
+
+      {visibleLinks.length > 0 ? (
+        <View
+          style={[
+            styles.linksSection,
+            primaryDefs.length > 0 ? styles.linksSectionSpaced : null,
+          ]}>
+          <View style={styles.header}>
+            <Text style={[styles.headerText, t.sectionTitle, FONTS.h3]}>
+              More actions
+            </Text>
+          </View>
+          <View style={[styles.linkListCard, t.listCard]}>
+            {visibleLinks.map((row, index) => (
+              <View key={row.key}>
+                <TouchableOpacity
+                  style={[styles.linkRow, t.linkRowBg]}
+                  onPress={row.onPress}
+                  activeOpacity={0.65}>
+                  <Image
+                    source={row.icon as any}
+                    style={[styles.linkRowIcon, t.linkIconTint]}
+                    resizeMode="contain"
+                  />
+                  <Text style={[styles.linkRowLabel, t.linkLabel]}>
+                    {row.label}
+                  </Text>
+                  <Text style={[styles.linkChevron, t.linkChevron]}>›</Text>
+                </TouchableOpacity>
+                {index < visibleLinks.length - 1 ? (
+                  <View style={[styles.fullDivider, t.rowDivider]} />
+                ) : null}
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    paddingHorizontal: 16,
-    marginVertical: 16,
+    marginBottom: 8,
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 12,
   },
   headerText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: COLORS.darkGray,
+    fontSize: 17,
+    fontWeight: '700',
   },
-  seeAllText: {
-    fontSize: 14,
-    color: COLORS.primary,
-    fontWeight: '500',
-  },
-  gridContainer: {
-    marginTop: 8,
+  gridRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
   },
   optionButton: {
     width: '48%',
-    backgroundColor: '#fff',
-    borderRadius: 16,
+    borderRadius: 12,
     padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
+    borderWidth: 1,
+    ...Platform.select({
+      android: {elevation: 0},
+      default: {},
+    }),
   },
   iconContainer: {
     width: 48,
@@ -193,19 +330,50 @@ const styles = StyleSheet.create({
     height: 24,
   },
   textContainer: {
-    gap: 4,
+    marginTop: 0,
   },
   title: {
     fontSize: 15,
     fontWeight: '600',
-    color: COLORS.darkGray,
   },
   subtitle: {
     fontSize: 12,
-    color: COLORS.gray,
+    marginTop: 4,
   },
-  columnWrapper: {
-    justifyContent: 'space-between',
+  linksSection: {},
+  linksSectionSpaced: {
+    marginTop: 8,
+  },
+  linkListCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  linkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: SIZES.padding,
+  },
+  linkRowIcon: {
+    width: 24,
+    height: 24,
+    marginRight: 16,
+  },
+  linkRowLabel: {
+    ...FONTS.h3,
+    fontSize: 16,
+    fontWeight: '600',
+    flex: 1,
+  },
+  linkChevron: {
+    ...FONTS.h3,
+    fontSize: 22,
+    fontWeight: '300',
+  },
+  fullDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginLeft: SIZES.padding + 24 + 16,
   },
 });
 

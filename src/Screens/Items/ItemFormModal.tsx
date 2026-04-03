@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useCallback} from 'react';
+import React, {useState, useEffect, useCallback, useMemo} from 'react';
 import {
   View,
   Text,
@@ -19,6 +19,7 @@ import {Item} from './Items';
 import icons from '../../constants/icons';
 import {createItem, updateItem, fetchCategories} from '../../services/app.services';
 import Toast from 'react-native-toast-message';
+import {useTheme} from '../../context/ThemeContext';
 
 interface Category {
   id?: number;
@@ -56,6 +57,51 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
   const navigation = useNavigation();
   const route = useRoute<any>();
   const isEditMode = !!item;
+
+  const {colors} = useTheme();
+  const formTheme = useMemo(
+    () => ({
+      modalContent: {backgroundColor: colors.surface},
+      header: {borderBottomColor: colors.border},
+      title: {color: colors.textPrimary},
+      closeButton: {backgroundColor: colors.backButtonBg},
+      closeButtonText: {color: colors.textSecondary},
+      formCard: {
+        backgroundColor: colors.surface,
+        borderColor: colors.border,
+      },
+      label: {color: colors.textPrimary},
+      input: {
+        borderColor: colors.border,
+        color: colors.textPrimary,
+        backgroundColor: colors.inputBackground,
+      },
+      disabledInput: {
+        backgroundColor: colors.screenMuted,
+        color: colors.textSecondary,
+      },
+      loadingText: {color: colors.textSecondary},
+      pickerContainer: {
+        borderColor: colors.border,
+        backgroundColor: colors.inputBackground,
+      },
+      pickerButtonText: {color: colors.textPrimary},
+      pickerButtonPlaceholder: {color: colors.placeholder},
+      pickerArrow: {tintColor: colors.iconMuted},
+      priceInputContainer: {
+        borderColor: colors.border,
+        backgroundColor: colors.inputBackground,
+      },
+      priceInput: {color: colors.textPrimary},
+      footer: {borderTopColor: colors.border},
+      cancelButton: {
+        backgroundColor: colors.surface,
+        borderColor: colors.border,
+      },
+      cancelButtonText: {color: colors.textSecondary},
+    }),
+    [colors],
+  );
 
   // Form state
   const [formData, setFormData] = useState<ItemFormValues>({
@@ -326,16 +372,16 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
         onRequestClose={onClose}>
         <View style={styles.modalOverlay}>
           <KeyboardAvoidingView
-            style={styles.modalContent}
+            style={[styles.modalContent, formTheme.modalContent]}
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
           {/* Header */}
-          <View style={styles.header}>
-            <Text style={styles.title}>
+          <View style={[styles.header, formTheme.header]}>
+            <Text style={[styles.title, formTheme.title]}>
               {isEditMode ? 'Edit Item' : 'Create Item'}
             </Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <Text style={styles.closeButtonText}>✕</Text>
+            <TouchableOpacity onPress={onClose} style={[styles.closeButton, formTheme.closeButton]}>
+              <Text style={[styles.closeButtonText, formTheme.closeButtonText]}>✕</Text>
             </TouchableOpacity>
           </View>
 
@@ -344,13 +390,18 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled">
-            <View style={styles.formCard}>
+            <View style={[styles.formCard, formTheme.formCard]}>
               {/* Item No (Read-only, only for edit) */}
               {isEditMode && item?.no && (
                 <View style={styles.fieldContainer}>
-                  <Text style={styles.label}>Item No</Text>
+                  <Text style={[styles.label, formTheme.label]}>Item No</Text>
                   <TextInput
-                    style={[styles.input, styles.disabledInput]}
+                    style={[
+                      styles.input,
+                      formTheme.input,
+                      styles.disabledInput,
+                      formTheme.disabledInput,
+                    ]}
                     value={item.no}
                     editable={false}
                   />
@@ -359,15 +410,19 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
 
               {/* Item Name */}
               <View style={styles.fieldContainer}>
-                <Text style={styles.label}>Item Name *</Text>
+                <Text style={[styles.label, formTheme.label]}>Item Name *</Text>
                 <TextInput
-                  style={[styles.input, errors.item_name && styles.inputError]}
+                  style={[
+                    styles.input,
+                    formTheme.input,
+                    errors.item_name && styles.inputError,
+                  ]}
                   value={formData.item_name}
                   onChangeText={text =>
                     setFormData({...formData, item_name: text})
                   }
                   placeholder="Enter item name"
-                  placeholderTextColor={COLORS.gray3}
+                  placeholderTextColor={colors.placeholder}
                 />
                 {errors.item_name && (
                   <Text style={styles.errorText}>{errors.item_name}</Text>
@@ -376,15 +431,15 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
 
               {/* Description */}
               <View style={styles.fieldContainer}>
-                <Text style={styles.label}>Description</Text>
+                <Text style={[styles.label, formTheme.label]}>Description</Text>
                 <TextInput
-                  style={[styles.input, styles.textArea]}
+                  style={[styles.input, formTheme.input, styles.textArea]}
                   value={formData.description}
                   onChangeText={text =>
                     setFormData({...formData, description: text})
                   }
                   placeholder="Enter item description"
-                  placeholderTextColor={COLORS.gray3}
+                  placeholderTextColor={colors.placeholder}
                   multiline
                   numberOfLines={3}
                 />
@@ -392,30 +447,34 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
 
               {/* Category */}
               <View style={styles.fieldContainer}>
-                <Text style={styles.label}>Category</Text>
+                <Text style={[styles.label, formTheme.label]}>Category</Text>
                 {categoriesLoading ? (
                   <View style={styles.loadingContainer}>
                     <ActivityIndicator size="small" color={COLORS.primary} />
-                    <Text style={styles.loadingText}>
+                    <Text style={[styles.loadingText, formTheme.loadingText]}>
                       Loading categories...
                     </Text>
                   </View>
                 ) : (
                   <TouchableOpacity
-                    style={styles.pickerContainer}
+                    style={[styles.pickerContainer, formTheme.pickerContainer]}
                     activeOpacity={0.7}
                     onPress={openCategoriesPickerForForm}>
                     <View style={styles.pickerButtonInner}>
                       <Text
                         style={[
                           styles.pickerButtonText,
-                          !formData.category_id && styles.pickerButtonPlaceholder,
+                          formTheme.pickerButtonText,
+                          !formData.category_id && [
+                            styles.pickerButtonPlaceholder,
+                            formTheme.pickerButtonPlaceholder,
+                          ],
                         ]}>
                         {getSelectedCategoryLabel()}
                       </Text>
                       <Image
                         source={icons.down_arrow}
-                        style={styles.pickerArrow}
+                        style={[styles.pickerArrow, formTheme.pickerArrow]}
                         resizeMode="contain"
                       />
                     </View>
@@ -425,12 +484,13 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
 
               {/* Price */}
               <View style={styles.fieldContainer}>
-                <Text style={styles.label}>Price (UGX)</Text>
-                <View style={styles.priceInputContainer}>
+                <Text style={[styles.label, formTheme.label]}>Price (UGX)</Text>
+                <View style={[styles.priceInputContainer, formTheme.priceInputContainer]}>
                   <Text style={styles.pricePrefix}>UGX</Text>
                   <TextInput
                     style={[
                       styles.priceInput,
+                      formTheme.priceInput,
                       errors.unit_price && styles.inputError,
                     ]}
                     value={
@@ -448,7 +508,7 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
                       setFormData({...formData, unit_price: numericValue});
                     }}
                     placeholder="0"
-                    placeholderTextColor={COLORS.gray3}
+                    placeholderTextColor={colors.placeholder}
                     keyboardType="numeric"
                   />
                 </View>
@@ -460,12 +520,12 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
           </ScrollView>
 
           {/* Footer Buttons */}
-          <View style={styles.footer}>
+          <View style={[styles.footer, formTheme.footer]}>
             <TouchableOpacity
-              style={[styles.button, styles.cancelButton]}
+              style={[styles.button, styles.cancelButton, formTheme.cancelButton]}
               onPress={onClose}
               disabled={loading}>
-              <Text style={styles.cancelButtonText}>Cancel</Text>
+              <Text style={[styles.cancelButtonText, formTheme.cancelButtonText]}>Cancel</Text>
             </TouchableOpacity>
             {((isEditMode && canEdit) || (!isEditMode && canCreate)) && (
               <TouchableOpacity

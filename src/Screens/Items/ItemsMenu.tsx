@@ -60,24 +60,6 @@ const ItemsMenu = () => {
         onPress: () => navigation.navigate('ItemCategories' as never),
       },
       {
-        key: 'modifiers',
-        label: 'Modifiers',
-        visible: true,
-        onPress: () => showComingSoon('Modifiers'),
-      },
-      {
-        key: 'discounts',
-        label: 'Discounts',
-        visible: true,
-        onPress: () => showComingSoon('Discounts'),
-      },
-      {
-        key: 'options',
-        label: 'Options',
-        visible: true,
-        onPress: () => showComingSoon('Options'),
-      },
-      {
         key: 'units',
         label: 'Units',
         visible: true,

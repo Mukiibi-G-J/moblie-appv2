@@ -40,7 +40,8 @@ import NetworkManager from './src/utils/networkManager';
 import Toast from 'react-native-toast-message';
 import Login from './src/Screens/Authentication/Login';
 import AuthGuard from './src/Components/AuthGuard';
-import Purchases from './src/Screens/Purchases/Purchases';
+import PurchasesMenu from './src/Screens/Purchases/PurchasesMenu';
+import PurchaseHistory from './src/Screens/Purchases/PurchaseHistory';
 import PurchaseCreation from './src/Screens/Purchases/PurchaseCreation';
 import Suppliers from './src/Screens/Suppliers/Suppliers';
 import Payments from './src/Screens/Payments/Payments';
@@ -332,7 +333,16 @@ const AppNavigator = () => {
               name="Purchases"
               component={(props: any) => (
                 <ProtectedScreen pageName={PAGE_NAMES.PURCHASES}>
-                  <Purchases {...props} />
+                  <PurchasesMenu {...props} />
+                </ProtectedScreen>
+              )}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="PurchaseHistory"
+              component={(props: any) => (
+                <ProtectedScreen pageName={PAGE_NAMES.PURCHASES}>
+                  <PurchaseHistory {...props} />
                 </ProtectedScreen>
               )}
               options={{ headerShown: false }}

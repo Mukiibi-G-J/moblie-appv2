@@ -15,12 +15,15 @@ import {
   TextInput,
 } from 'react-native';
 import {useNavigation, useIsFocused} from '@react-navigation/native';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {COLORS, FONTS, SIZES} from '../../constants/theme';
 import icons from '../../constants/icons';
 import {fetchPurchasesData} from '../../services/app.services';
 import {usePermissions} from '../../hooks/usePermissions';
 import {PAGE_NAMES} from '../../constants/pageNames';
-import Header from '../../Components/Header';
+import {useTheme} from '../../context/ThemeContext';
+import {useTabContext} from '../../context/Store';
+import MainBottomTabBar from '../../Components/MainBottomTabBar';
 
 type PurchaseHistoryFilter = 'today' | 'last7days' | 'last30days';
 
@@ -52,30 +55,14 @@ const FILTERS: {id: PurchaseHistoryFilter; label: string}[] = [
   {id: 'last30days', label: 'Last 30 days'},
 ];
 
-const Purchases = () => {
+const PurchaseHistory = () => {
   const navigation = useNavigation();
   const isFocused = useIsFocused();
+  const insets = useSafeAreaInsets();
+  const {colors} = useTheme();
+  const {selectedTab, setSelectedTab} = useTabContext();
   const {canRead, canCreate, canEdit} = usePermissions();
   const PAGE_NAME = PAGE_NAMES.PURCHASES;
-
-  // Early return if no read permission
-  if (!canRead(PAGE_NAME)) {
-    return (
-      <View style={styles.container}>
-        <Header
-          title="Purchases"
-          showBack={true}
-          onBackPress={() => navigation.goBack()}
-        />
-        <View style={styles.accessDeniedContainer}>
-          <Text style={styles.accessDeniedTitle}>Access Denied</Text>
-          <Text style={styles.accessDeniedMessage}>
-            You don't have permission to view purchases.
-          </Text>
-        </View>
-      </View>
-    );
-  }
 
   const [activeFilter, setActiveFilter] =
     useState<PurchaseHistoryFilter>('today');
@@ -134,6 +121,9 @@ const Purchases = () => {
   }, [activeFilter]);
 
   const loadPurchases = async () => {
+    if (!canRead(PAGE_NAME)) {
+      return;
+    }
     setIsLoading(true);
     setError(null);
 
@@ -179,26 +169,94 @@ const Purchases = () => {
   };
 
   useEffect(() => {
+    if (!canRead(PAGE_NAME)) {
+      return;
+    }
     const debounceTimer = setTimeout(() => {
       loadPurchases();
     }, 500);
 
     return () => clearTimeout(debounceTimer);
-  }, [startDate, endDate, currentPage, statusFilter, searchQuery]);
+  }, [startDate, endDate, currentPage, statusFilter, searchQuery, canRead]);
 
   // Reload data when screen is focused
   useEffect(() => {
-    if (isFocused) {
-      loadPurchases();
+    if (!canRead(PAGE_NAME) || !isFocused) {
+      return;
     }
-  }, [isFocused]);
+    loadPurchases();
+  }, [isFocused, canRead]);
 
   const onRefresh = useCallback(async () => {
+    if (!canRead(PAGE_NAME)) {
+      return;
+    }
     setRefreshing(true);
     setCurrentPage(1);
     await loadPurchases();
     setRefreshing(false);
-  }, [startDate, endDate, statusFilter, searchQuery]);
+  }, [startDate, endDate, statusFilter, searchQuery, canRead]);
+
+  const onSelectTab = (tab: string) => {
+    setSelectedTab(tab);
+    navigation.navigate('Home' as never);
+  };
+
+  if (!canRead(PAGE_NAME)) {
+    return (
+      <View style={[styles.container, {backgroundColor: colors.background}]}>
+        <View
+          style={[
+            styles.topHeader,
+            {
+              paddingTop: Math.max(insets.top, 12),
+              backgroundColor: colors.background,
+              borderBottomColor: colors.border,
+            },
+          ]}>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={[
+              styles.headerCircleBtn,
+              {backgroundColor: colors.backButtonBg},
+            ]}
+            hitSlop={8}
+            accessibilityLabel="Go back">
+            <Image
+              source={icons.back}
+              style={[styles.headerBackIcon, {tintColor: colors.textPrimary}]}
+              resizeMode="contain"
+            />
+          </TouchableOpacity>
+          <Text style={[styles.headerTitle, {color: colors.textPrimary}]}>
+            Purchase history
+          </Text>
+          <View style={styles.headerTitleSpacer} />
+        </View>
+        <View
+          style={[
+            styles.accessDeniedContainer,
+            {
+              backgroundColor: colors.card,
+              borderColor: colors.border,
+              borderWidth: StyleSheet.hairlineWidth,
+            },
+          ]}>
+          <Text style={[styles.accessDeniedTitle, {color: COLORS.error}]}>
+            Access Denied
+          </Text>
+          <Text
+            style={[styles.accessDeniedMessage, {color: colors.textSecondary}]}>
+            You don't have permission to view purchases.
+          </Text>
+        </View>
+        <MainBottomTabBar
+          selectedTab={selectedTab}
+          onSelectTab={onSelectTab}
+        />
+      </View>
+    );
+  }
 
   const handleSearch = (text: string) => {
     setSearchQuery(text);
@@ -225,10 +283,18 @@ const Purchases = () => {
     if (totalPages <= 1) return null;
 
     return (
-      <View style={styles.paginationContainer}>
+      <View
+        style={[
+          styles.paginationContainer,
+          {
+            backgroundColor: colors.background,
+            borderTopColor: colors.border,
+          },
+        ]}>
         <TouchableOpacity
           style={[
             styles.pageButton,
+            {backgroundColor: colors.inputBackground},
             currentPage === 1 && styles.disabledButton,
           ]}
           onPress={() => setCurrentPage(prev => Math.max(1, prev - 1))}
@@ -245,7 +311,7 @@ const Purchases = () => {
         </TouchableOpacity>
 
         <View style={styles.pageInfoContainer}>
-          <Text style={styles.pageInfo}>
+          <Text style={[styles.pageInfo, {color: colors.textSecondary}]}>
             Page {currentPage} of {totalPages || 0}
           </Text>
         </View>
@@ -253,6 +319,7 @@ const Purchases = () => {
         <TouchableOpacity
           style={[
             styles.pageButton,
+            {backgroundColor: colors.inputBackground},
             currentPage === (totalPages || 0) && styles.disabledButton,
           ]}
           onPress={() =>
@@ -294,12 +361,20 @@ const Purchases = () => {
         return (
           <TouchableOpacity
             key={filter.id}
-            style={[styles.filterPill, isActive && styles.filterPillActive]}
+            style={[
+              styles.filterPill,
+              {
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+              },
+              isActive && styles.filterPillActive,
+            ]}
             onPress={() => setActiveFilter(filter.id)}
             activeOpacity={0.7}>
             <Text
               style={[
                 styles.filterLabel,
+                {color: colors.textSecondary},
                 isActive && styles.filterLabelActive,
               ]}>
               {filter.label}
@@ -312,7 +387,11 @@ const Purchases = () => {
 
   const renderSummaryCards = () => (
     <View style={styles.summaryRow}>
-      <View style={styles.summaryCard}>
+      <View
+        style={[
+          styles.summaryCard,
+          {backgroundColor: colors.card, borderColor: colors.border},
+        ]}>
         <View style={styles.summaryCardIcon}>
           <Image
             source={icons.salesCount as ImageSourcePropType}
@@ -320,12 +399,18 @@ const Purchases = () => {
             resizeMode="contain"
           />
         </View>
-        <Text style={styles.summaryLabel}>Purchase Count</Text>
-        <Text style={styles.summaryValue}>
+        <Text style={[styles.summaryLabel, {color: colors.textSecondary}]}>
+          Purchase Count
+        </Text>
+        <Text style={[styles.summaryValue, {color: colors.textPrimary}]}>
           {totalCount || purchases.length}
         </Text>
       </View>
-      <View style={styles.summaryCard}>
+      <View
+        style={[
+          styles.summaryCard,
+          {backgroundColor: colors.card, borderColor: colors.border},
+        ]}>
         <View style={[styles.summaryCardIcon, styles.revenueIcon]}>
           <Image
             source={icons.revenue as ImageSourcePropType}
@@ -333,12 +418,18 @@ const Purchases = () => {
             resizeMode="contain"
           />
         </View>
-        <Text style={styles.summaryLabel}>Total Amount</Text>
-        <Text style={styles.summaryValue}>
+        <Text style={[styles.summaryLabel, {color: colors.textSecondary}]}>
+          Total Amount
+        </Text>
+        <Text style={[styles.summaryValue, {color: colors.textPrimary}]}>
           UGX {Math.round(totalAmount).toLocaleString()}
         </Text>
       </View>
-      <View style={styles.summaryCard}>
+      <View
+        style={[
+          styles.summaryCard,
+          {backgroundColor: colors.card, borderColor: colors.border},
+        ]}>
         <View style={[styles.summaryCardIcon, styles.avgIcon]}>
           <Image
             source={icons.average as ImageSourcePropType}
@@ -346,8 +437,10 @@ const Purchases = () => {
             resizeMode="contain"
           />
         </View>
-        <Text style={styles.summaryLabel}>Avg Purchase</Text>
-        <Text style={styles.summaryValue}>
+        <Text style={[styles.summaryLabel, {color: colors.textSecondary}]}>
+          Avg Purchase
+        </Text>
+        <Text style={[styles.summaryValue, {color: colors.textPrimary}]}>
           UGX {Math.round(averagePurchase).toLocaleString()}
         </Text>
       </View>
@@ -386,7 +479,10 @@ const Purchases = () => {
 
   const renderHistoryItem = ({item}: {item: PurchaseInvoice}) => (
     <TouchableOpacity
-      style={styles.historyCard}
+      style={[
+        styles.historyCard,
+        {backgroundColor: colors.card, borderColor: colors.border},
+      ]}
       onPress={() => {
         if (item.status === 'Posted' || !canEdit(PAGE_NAME)) {
           setSelectedItem(item);
@@ -398,15 +494,17 @@ const Purchases = () => {
       activeOpacity={0.7}>
       <View style={styles.historyCardHeader}>
         <View style={styles.historyCardLeft}>
-          <Text style={styles.historyTitle} numberOfLines={1}>
+          <Text
+            style={[styles.historyTitle, {color: colors.textPrimary}]}
+            numberOfLines={1}>
             {item?.vendor_name || 'Unknown Vendor'}
           </Text>
-          <Text style={styles.historyInvoice}>
+          <Text style={[styles.historyInvoice, {color: colors.textSecondary}]}>
             Invoice #{item?.invoice_no || '—'}
           </Text>
         </View>
         <View style={styles.historyCardRight}>
-          <Text style={styles.historyAmount}>
+          <Text style={[styles.historyAmount, {color: COLORS.primary}]}>
             UGX {(item?.total_amount || 0).toLocaleString()}
           </Text>
           {item?.status && (
@@ -432,14 +530,15 @@ const Purchases = () => {
           )}
         </View>
       </View>
-      <View style={styles.historyCardFooter}>
+      <View
+        style={[styles.historyCardFooter, {borderTopColor: colors.border}]}>
         <View style={styles.historyMetaItem}>
           <Image
             source={icons.calender as ImageSourcePropType}
-            style={styles.metaIcon}
+            style={[styles.metaIcon, {tintColor: colors.textTertiary}]}
             resizeMode="contain"
           />
-          <Text style={styles.historyMeta}>
+          <Text style={[styles.historyMeta, {color: colors.textSecondary}]}>
             {new Date(item?.document_date || '').toLocaleDateString()}
           </Text>
         </View>
@@ -447,10 +546,12 @@ const Purchases = () => {
           <View style={styles.historyMetaItem}>
             <Image
               source={icons.calender as ImageSourcePropType}
-              style={styles.metaIcon}
+              style={[styles.metaIcon, {tintColor: colors.textTertiary}]}
               resizeMode="contain"
             />
-            <Text style={styles.historyMeta}>{item.vendor_invoice_no}</Text>
+            <Text style={[styles.historyMeta, {color: colors.textSecondary}]}>
+              {item.vendor_invoice_no}
+            </Text>
           </View>
         )}
       </View>
@@ -462,7 +563,9 @@ const Purchases = () => {
       return (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={COLORS.primary} />
-          <Text style={styles.loadingText}>Loading purchases...</Text>
+          <Text style={[styles.loadingText, {color: colors.textSecondary}]}>
+            Loading purchases...
+          </Text>
         </View>
       );
     }
@@ -470,14 +573,22 @@ const Purchases = () => {
     if (error) {
       return (
         <View style={styles.emptyContainer}>
-          <View style={styles.emptyIconContainer}>
+          <View
+            style={[
+              styles.emptyIconContainer,
+              {backgroundColor: colors.inputBackground},
+            ]}>
             <Image
               source={icons.cross as ImageSourcePropType}
-              style={styles.emptyIconImage}
+              style={[styles.emptyIconImage, {tintColor: colors.textTertiary}]}
             />
           </View>
-          <Text style={styles.emptyTitle}>Error Loading Purchases</Text>
-          <Text style={styles.emptyText}>{error}</Text>
+          <Text style={[styles.emptyTitle, {color: colors.textPrimary}]}>
+            Error Loading Purchases
+          </Text>
+          <Text style={[styles.emptyText, {color: colors.textSecondary}]}>
+            {error}
+          </Text>
           <TouchableOpacity
             style={styles.retryButton}
             onPress={loadPurchases}
@@ -505,15 +616,21 @@ const Purchases = () => {
         }
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <View style={styles.emptyIconContainer}>
+            <View
+              style={[
+                styles.emptyIconContainer,
+                {backgroundColor: colors.inputBackground},
+              ]}>
               <Image
                 source={icons.cross as ImageSourcePropType}
-                style={styles.emptyIconImage}
+                style={[styles.emptyIconImage, {tintColor: colors.textTertiary}]}
                 resizeMode="contain"
               />
             </View>
-            <Text style={styles.emptyTitle}>No purchases found</Text>
-            <Text style={styles.emptyText}>
+            <Text style={[styles.emptyTitle, {color: colors.textPrimary}]}>
+              No purchases found
+            </Text>
+            <Text style={[styles.emptyText, {color: colors.textSecondary}]}>
               {hasActiveFilters
                 ? 'Try adjusting your filters or search query.'
                 : 'Change the date filter or try again later.'}
@@ -551,9 +668,17 @@ const Purchases = () => {
         visible={modalVisible}
         onRequestClose={() => setModalVisible(false)}>
         <View style={styles.modalContainer}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
+          <View
+            style={[
+              styles.modalContent,
+              {backgroundColor: colors.surface},
+            ]}>
+            <View
+              style={[
+                styles.modalHeader,
+                {borderBottomColor: colors.border},
+              ]}>
+              <Text style={[styles.modalTitle, {color: colors.textPrimary}]}>
                 Invoice: {selectedItem.invoice_no || '—'}
               </Text>
               <TouchableOpacity
@@ -562,7 +687,7 @@ const Purchases = () => {
                 activeOpacity={0.7}>
                 <Image
                   source={icons.cross as ImageSourcePropType}
-                  style={styles.closeIcon}
+                  style={[styles.closeIcon, {tintColor: colors.textTertiary}]}
                 />
               </TouchableOpacity>
             </View>
@@ -570,14 +695,18 @@ const Purchases = () => {
             <ScrollView style={styles.modalScrollView}>
               <View style={styles.modalInfoContainer}>
                 <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Vendor:</Text>
-                  <Text style={styles.infoValue}>
+                  <Text style={[styles.infoLabel, {color: colors.textSecondary}]}>
+                    Vendor:
+                  </Text>
+                  <Text style={[styles.infoValue, {color: colors.textPrimary}]}>
                     {selectedItem.vendor_name || 'Unknown Vendor'}
                   </Text>
                 </View>
                 <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Date:</Text>
-                  <Text style={styles.infoValue}>
+                  <Text style={[styles.infoLabel, {color: colors.textSecondary}]}>
+                    Date:
+                  </Text>
+                  <Text style={[styles.infoValue, {color: colors.textPrimary}]}>
                     {new Date(
                       selectedItem.document_date || '',
                     ).toLocaleDateString()}
@@ -585,7 +714,9 @@ const Purchases = () => {
                 </View>
                 {selectedItem.status && (
                   <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Status:</Text>
+                    <Text style={[styles.infoLabel, {color: colors.textSecondary}]}>
+                      Status:
+                    </Text>
                     <View
                       style={[
                         styles.statusBadge,
@@ -616,14 +747,18 @@ const Purchases = () => {
                 )}
                 {selectedItem.vendor_invoice_no && (
                   <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Vendor Invoice No:</Text>
-                    <Text style={styles.infoValue}>
+                    <Text style={[styles.infoLabel, {color: colors.textSecondary}]}>
+                      Vendor Invoice No:
+                    </Text>
+                    <Text style={[styles.infoValue, {color: colors.textPrimary}]}>
                       {selectedItem.vendor_invoice_no}
                     </Text>
                   </View>
                 )}
                 <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Total:</Text>
+                  <Text style={[styles.infoLabel, {color: colors.textSecondary}]}>
+                    Total:
+                  </Text>
                   <Text style={styles.totalAmount}>
                     UGX {(selectedItem.total_amount || 0).toLocaleString()}
                   </Text>
@@ -631,21 +766,34 @@ const Purchases = () => {
               </View>
 
               {selectedItem.lines && selectedItem.lines.length > 0 && (
-                <View style={styles.linesContainer}>
-                  <Text style={styles.modalSubtitle}>Items Purchased</Text>
+                <View
+                  style={[
+                    styles.linesContainer,
+                    {borderTopColor: colors.border},
+                  ]}>
+                  <Text style={[styles.modalSubtitle, {color: colors.textPrimary}]}>
+                    Items Purchased
+                  </Text>
                   {selectedItem.lines.map((line, index) => (
-                    <View key={line.id || index} style={styles.lineItem}>
+                    <View
+                      key={line.id || index}
+                      style={[
+                        styles.lineItem,
+                        {backgroundColor: colors.inputBackground},
+                      ]}>
                       <View style={styles.lineItemHeader}>
-                        <Text style={styles.lineItemName}>
+                        <Text style={[styles.lineItemName, {color: colors.textPrimary}]}>
                           {line.item_name}
                         </Text>
-                        <Text style={styles.lineItemCode}>{line.item_no}</Text>
+                        <Text style={[styles.lineItemCode, {color: colors.textSecondary}]}>
+                          {line.item_no}
+                        </Text>
                       </View>
                       <View style={styles.lineItemDetails}>
-                        <Text style={styles.lineItemDetail}>
+                        <Text style={[styles.lineItemDetail, {color: colors.textSecondary}]}>
                           Qty: {line.quantity} {line.unit_of_measure || 'PCS'}
                         </Text>
-                        <Text style={styles.lineItemDetail}>
+                        <Text style={[styles.lineItemDetail, {color: colors.textSecondary}]}>
                           Cost: UGX{' '}
                           {parseFloat(line.unit_cost || '0').toLocaleString()}
                         </Text>
@@ -673,26 +821,60 @@ const Purchases = () => {
   };
 
   return (
-    <View style={styles.container}>
-      <Header
-        title="Purchases"
-        showBack={true}
-        onBackPress={() => navigation.goBack()}
-      />
+    <View style={[styles.container, {backgroundColor: colors.screenMuted}]}>
+      <View
+        style={[
+          styles.topHeader,
+          {
+            paddingTop: Math.max(insets.top, 12),
+            backgroundColor: colors.background,
+            borderBottomColor: colors.border,
+          },
+        ]}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={[
+            styles.headerCircleBtn,
+            {backgroundColor: colors.backButtonBg},
+          ]}
+          hitSlop={8}
+          accessibilityLabel="Go back">
+          <Image
+            source={icons.back}
+            style={[styles.headerBackIcon, {tintColor: colors.textPrimary}]}
+            resizeMode="contain"
+          />
+        </TouchableOpacity>
+        <Text style={[styles.headerTitle, {color: colors.textPrimary}]}>
+          Purchase history
+        </Text>
+        <View style={styles.headerTitleSpacer} />
+      </View>
       {/* Search Bar */}
-      <View style={styles.searchContainer}>
-        <View style={styles.searchInputContainer}>
+      <View
+        style={[
+          styles.searchContainer,
+          {
+            backgroundColor: colors.background,
+            borderBottomColor: colors.border,
+          },
+        ]}>
+        <View
+          style={[
+            styles.searchInputContainer,
+            {backgroundColor: colors.inputBackground},
+          ]}>
           <View style={styles.searchIconContainer}>
             <Image
               source={icons.search as ImageSourcePropType}
-              style={styles.searchIcon}
+              style={[styles.searchIcon, {tintColor: colors.textTertiary}]}
               resizeMode="contain"
             />
           </View>
           <TextInput
-            style={styles.searchInput}
+            style={[styles.searchInput, {color: colors.textPrimary}]}
             placeholder="Search by vendor or invoice..."
-            placeholderTextColor={COLORS.gray3}
+            placeholderTextColor={colors.placeholder}
             value={searchQuery}
             onChangeText={handleSearch}
           />
@@ -705,6 +887,7 @@ const Purchases = () => {
         <TouchableOpacity
           style={[
             styles.filterButton,
+            {backgroundColor: colors.inputBackground, borderColor: colors.border},
             hasActiveFilters && styles.filterButtonActive,
           ]}
           onPress={() => setFilterModalVisible(true)}
@@ -713,6 +896,7 @@ const Purchases = () => {
             source={icons.filter as ImageSourcePropType}
             style={[
               styles.filterIcon,
+              {tintColor: colors.textTertiary},
               hasActiveFilters && styles.filterIconActive,
             ]}
             resizeMode="contain"
@@ -721,12 +905,14 @@ const Purchases = () => {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.content}>
+      <View style={[styles.content, {backgroundColor: colors.screenMuted}]}>
         {renderFilterPills()}
         {renderSummaryCards()}
         <View style={styles.historySection}>
           <View style={styles.sectionHeader}>
-            <Text style={styles.sectionHeading}>Purchase History</Text>
+            <Text style={[styles.sectionHeading, {color: colors.textPrimary}]}>
+              Purchase History
+            </Text>
             {canCreate(PAGE_NAME) && (
               <TouchableOpacity
                 style={styles.newPurchaseButton}
@@ -757,15 +943,25 @@ const Purchases = () => {
         transparent={true}
         onRequestClose={() => setFilterModalVisible(false)}>
         <View style={styles.filterModalOverlay}>
-          <View style={styles.filterModalContent}>
-            <View style={styles.filterModalHeader}>
-              <Text style={styles.filterModalTitle}>Filter Purchases</Text>
+          <View
+            style={[
+              styles.filterModalContent,
+              {backgroundColor: colors.surface},
+            ]}>
+            <View
+              style={[
+                styles.filterModalHeader,
+                {borderBottomColor: colors.border},
+              ]}>
+              <Text style={[styles.filterModalTitle, {color: colors.textPrimary}]}>
+                Filter Purchases
+              </Text>
               <TouchableOpacity
                 onPress={() => setFilterModalVisible(false)}
                 style={styles.filterCloseButton}>
                 <Image
                   source={icons.cross as ImageSourcePropType}
-                  style={styles.filterCloseIcon}
+                  style={[styles.filterCloseIcon, {tintColor: colors.textTertiary}]}
                   resizeMode="contain"
                 />
               </TouchableOpacity>
@@ -775,8 +971,15 @@ const Purchases = () => {
               style={styles.filterScrollView}
               showsVerticalScrollIndicator={false}>
               {/* Status Filter */}
-              <View style={styles.filterSection}>
-                <Text style={styles.filterSectionLabel}>Status</Text>
+              <View
+                style={[
+                  styles.filterSection,
+                  {borderBottomColor: colors.border},
+                ]}>
+                <Text
+                  style={[styles.filterSectionLabel, {color: colors.textPrimary}]}>
+                  Status
+                </Text>
                 <View style={styles.stockFilterContainer}>
                   {[
                     {value: 'all', label: 'All Status'},
@@ -787,6 +990,10 @@ const Purchases = () => {
                       key={option.value}
                       style={[
                         styles.stockFilterButton,
+                        {
+                          backgroundColor: colors.inputBackground,
+                          borderColor: colors.border,
+                        },
                         statusFilter === option.value &&
                           styles.stockFilterButtonActive,
                       ]}
@@ -795,6 +1002,7 @@ const Purchases = () => {
                       <Text
                         style={[
                           styles.stockFilterButtonText,
+                          {color: colors.textSecondary},
                           statusFilter === option.value &&
                             styles.stockFilterButtonTextActive,
                         ]}>
@@ -807,12 +1015,22 @@ const Purchases = () => {
             </ScrollView>
 
             {/* Filter Actions */}
-            <View style={styles.filterActions}>
+            <View
+              style={[styles.filterActions, {borderTopColor: colors.border}]}>
               <TouchableOpacity
-                style={[styles.filterActionButton, styles.clearFilterButton]}
+                style={[
+                  styles.filterActionButton,
+                  styles.clearFilterButton,
+                  {
+                    backgroundColor: colors.inputBackground,
+                    borderColor: colors.border,
+                  },
+                ]}
                 onPress={handleClearFilter}
                 activeOpacity={0.7}>
-                <Text style={styles.clearFilterText}>Clear All</Text>
+                <Text style={[styles.clearFilterText, {color: colors.textSecondary}]}>
+                  Clear All
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.filterActionButton, styles.applyFilterButton]}
@@ -824,6 +1042,11 @@ const Purchases = () => {
           </View>
         </View>
       </Modal>
+
+      <MainBottomTabBar
+        selectedTab={selectedTab}
+        onSelectTab={onSelectTab}
+      />
     </View>
   );
 };
@@ -831,25 +1054,46 @@ const Purchases = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.lightGray2,
   },
   content: {
     flex: 1,
-    backgroundColor: COLORS.lightGray2,
+  },
+  topHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: SIZES.padding,
+    paddingBottom: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  headerCircleBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerBackIcon: {
+    width: 20,
+    height: 20,
+  },
+  headerTitle: {
+    flex: 1,
+    textAlign: 'center',
+    ...FONTS.h3,
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+  },
+  headerTitleSpacer: {
+    width: 40,
   },
   accessDeniedContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: SIZES.padding,
-    backgroundColor: COLORS.white,
     margin: SIZES.base * 2,
     borderRadius: SIZES.radius,
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
   },
   accessDeniedTitle: {
     ...FONTS.h2,
@@ -864,14 +1108,7 @@ const styles = StyleSheet.create({
   },
   searchContainer: {
     padding: SIZES.base * 2,
-    backgroundColor: COLORS.white,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray1,
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     flexDirection: 'row',
     alignItems: 'center',
     gap: SIZES.base,
@@ -880,7 +1117,6 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.lightGray2,
     borderRadius: SIZES.radius,
     paddingHorizontal: SIZES.base * 1.5,
     height: 48,
@@ -893,12 +1129,10 @@ const styles = StyleSheet.create({
   searchIcon: {
     width: 20,
     height: 20,
-    tintColor: COLORS.gray2,
   },
   searchInput: {
     flex: 1,
     ...FONTS.body3,
-    color: COLORS.black,
     paddingVertical: 0,
   },
   searchLoadingContainer: {
@@ -908,11 +1142,9 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: SIZES.radius,
-    backgroundColor: COLORS.lightGray2,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   filterButtonActive: {
     backgroundColor: COLORS.primary,
@@ -921,7 +1153,6 @@ const styles = StyleSheet.create({
   filterIcon: {
     width: 20,
     height: 20,
-    tintColor: COLORS.gray2,
   },
   filterIconActive: {
     tintColor: COLORS.white,
@@ -1067,7 +1298,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   listContent: {
-    paddingBottom: SIZES.padding,
+    paddingBottom: 100,
   },
   emptyContent: {
     flexGrow: 1,
@@ -1518,4 +1749,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default Purchases;
+export default PurchaseHistory;

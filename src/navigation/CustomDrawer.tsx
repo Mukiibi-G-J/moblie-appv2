@@ -10,7 +10,6 @@ import {
 import MainLayout from '../Screens/MainLayout';
 import {useAppContext, useAuth, useTabContext} from '../context/Store';
 import {usePermissions} from '../hooks/usePermissions';
-
 const Drawer = createDrawerNavigator();
 const CustomDrawerItem = ({
   label,
@@ -70,7 +69,7 @@ const CustomDrawerContent = ({
   const {logout} = useAppContext();
   const {isModuleVisible} = usePermissions();
 
-  // Quick Access - Links to bottom tabs (with indicator)
+  // Quick Access — bottom tabs only (More holds Sales History, etc.)
   const quickAccessItems = [
     {
       key: 'home',
@@ -82,18 +81,6 @@ const CustomDrawerContent = ({
         navigation.navigate('MainLayout');
       },
       isFocused: selectedTab === constants.screens.home,
-      isBottomTab: true,
-    },
-    {
-      key: 'sales',
-      label: constants.screens.sales,
-      icon: icons.cart,
-      moduleCode: 'sales',
-      action: () => {
-        setSelectedTab(constants.screens.sales);
-        navigation.navigate('MainLayout');
-      },
-      isFocused: selectedTab === constants.screens.sales,
       isBottomTab: true,
     },
     {
@@ -121,36 +108,6 @@ const CustomDrawerContent = ({
         navigation.navigate('Purchases');
       },
       isFocused: false,
-    },
-    {
-      key: 'suppliers',
-      label: constants.screens.suppliers,
-      icon: icons.product, // Reuse product icon or add truck icon
-      moduleCode: 'purchases', // Suppliers share purchases module
-      action: () => {
-        navigation.navigate('Suppliers');
-      },
-      isFocused: false,
-    },
-    {
-      key: 'itemCategories',
-      label: constants.screens.itemCategories,
-      icon: icons.product, // Reuse product icon
-      moduleCode: 'items',
-      action: () => {
-        navigation.navigate('ItemCategories');
-      },
-      isFocused: false,
-    },
-    {
-      key: 'itemJournal',
-      label: constants.screens.itemJournal,
-      icon: icons.itemJournal,
-      moduleCode: 'inventory',
-      action: () => {
-        navigation.navigate('ItemJournal');
-      },
-      isFocused: selectedTab === constants.screens.itemJournal,
     },
   ];
 
@@ -193,26 +150,6 @@ const CustomDrawerContent = ({
       moduleCode: 'payments',
       action: () => {
         navigation.navigate('LoanRepayments');
-      },
-      isFocused: false,
-    },
-    {
-      key: 'expenses',
-      label: constants.screens.expenses,
-      icon: icons.coupon,
-      moduleCode: 'expenses',
-      action: () => {
-        navigation.navigate('Expenses');
-      },
-      isFocused: selectedTab === constants.screens.expenses,
-    },
-    {
-      key: 'expenseHistory',
-      label: constants.screens.expenseHistory,
-      icon: icons.coupon,
-      moduleCode: 'expenses',
-      action: () => {
-        navigation.navigate('ExpenseHistory');
       },
       isFocused: false,
     },
@@ -273,30 +210,6 @@ const CustomDrawerContent = ({
     },
   ];
 
-  // Settings & Support Section
-  const settingsItems = [
-    {
-      key: 'settings',
-      label: constants.screens.settings,
-      icon: icons.setting,
-      moduleCode: undefined,
-      action: () => {
-        navigation.navigate('Settings');
-      },
-      isFocused: selectedTab === constants.screens.settings,
-    },
-    {
-      key: 'helpSupport',
-      label: constants.screens.helpSupport,
-      icon: icons.help,
-      moduleCode: undefined,
-      action: () => {
-        // TODO: Navigate to help screen
-        navigation.navigate('Settings'); // Temporary
-      },
-      isFocused: false,
-    },
-  ];
   return (
     <View
       style={{
@@ -556,38 +469,6 @@ const CustomDrawerContent = ({
             </>
           )}
 
-          {/* Settings & Support Section */}
-          <View
-            style={{
-              height: 2,
-              marginVertical: SIZES.height > 800 ? SIZES.radius : SIZES.base,
-              marginLeft: SIZES.radius,
-              backgroundColor: COLORS.lightGray1,
-            }}
-          />
-          <Text
-            style={{
-              color: COLORS.lightGray1,
-              ...FONTS.body5,
-              marginLeft: SIZES.radius,
-              marginBottom: SIZES.base,
-              marginTop: SIZES.base,
-              opacity: 0.7,
-            }}>
-            SETTINGS & SUPPORT
-          </Text>
-          {settingsItems.map(item => (
-            <CustomDrawerItem
-              key={item.key}
-              label={item.label}
-              icon={item.icon}
-              isFocused={item.isFocused}
-              onPress={() => {
-                navigation.closeDrawer();
-                item.action();
-              }}
-            />
-          ))}
         </View>
       </ScrollView>
       </View>

@@ -1,7 +1,53 @@
 import {Platform, PermissionsAndroid, EmitterSubscription} from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {ThermalPrinter} from '@finan-me/react-native-thermal-printer';
 import Toast from 'react-native-toast-message';
-import {PrintReceiptData, PrintItem, CompanyInfo} from './PrintService';
+import type {ItemLabelPrintData, PrintReceiptData} from './PrintService';
+
+const BT_PRINTER_STORAGE_KEY = 'zentro_bluetooth_printer_v1';
+
+/** Heuristic score for names of built-in / POS Bluetooth thermal printers (non-Sunmi handhelds). */
+function scoreBuiltinPrinterName(name: string): number {
+  const n = name.trim();
+  if (!n) {
+    return 0;
+  }
+  let score = 0;
+  const hints = [
+    /inner\s*printer/i,
+    /builtin|built[-\s]?in/i,
+    /内置|内建/,
+    /handheld/i,
+    /\bpda\b/i,
+    /pos.*print|print.*pos|pos[_\s-]*printer/i,
+    /thermal/i,
+    /receipt/i,
+    /58\s*mm|58mm|80\s*mm|80mm/i,
+    /^printer$/i,
+    /\bbt\b.*print|print.*\bbt\b/i,
+    /bluetooth\s*printer/i,
+    /woyou|jiuiv|sunmi/i,
+    /esc\s*pos|escpos/i,
+    /label\s*printer/i,
+    /\bspp\b/i,
+  ];
+  for (const re of hints) {
+    if (re.test(n)) {
+      score += 2;
+    }
+  }
+  if (/printer|print|thermal|pos|receipt|label/.test(n)) {
+    score += 1;
+  }
+  if (
+    /headphone|airpods|buds|galaxy\s*bud|watch|keyboard|mouse|speaker|car\s*audio/i.test(
+      n,
+    )
+  ) {
+    score -= 8;
+  }
+  return score;
+}
 
 export interface BluetoothDevice {
   address: string;
@@ -22,6 +68,34 @@ class BluetoothPrinterService {
       BluetoothPrinterService.instance = new BluetoothPrinterService();
     }
     return BluetoothPrinterService.instance;
+  }
+
+  /** Printable ASCII only; max length for narrow thermal labels. */
+  public static resolveLabelBarcodeValue(
+    barCodeNo?: string | null,
+    itemNo?: string | null,
+  ): string | null {
+    const candidates = [barCodeNo, itemNo]
+      .map(s => (s == null ? '' : String(s).trim()))
+      .filter(Boolean);
+    for (const raw of candidates) {
+      if (raw.length < 1 || raw.length > 48) {
+        continue;
+      }
+      if (!/^[\x20-\x7E]+$/.test(raw)) {
+        continue;
+      }
+      return raw;
+    }
+    return null;
+  }
+
+  public static formatLabelItemName(name: string): string {
+    const n = (name || 'Item').trim();
+    if (n.length <= 28) {
+      return n;
+    }
+    return `${n.slice(0, 25)}...`;
   }
 
   /**
@@ -346,78 +420,202 @@ class BluetoothPrinterService {
   }
 
   /**
-   * Connect to a Bluetooth printer
+   * Persist paired printer so sales printing works after app restart.
    */
-  public async connectToPrinter(device: BluetoothDevice): Promise<boolean> {
+  private async persistPrinterDevice(device: BluetoothDevice): Promise<void> {
     try {
-      if (Platform.OS !== 'android') {
-        return false;
-      }
+      const address = device.address.replace(/^bt:/i, '');
+      await AsyncStorage.setItem(
+        BT_PRINTER_STORAGE_KEY,
+        JSON.stringify({name: device.name, address}),
+      );
+    } catch (e) {
+      console.warn('Failed to persist Bluetooth printer:', e);
+    }
+  }
 
-      const hasPermissions = await this.requestBluetoothPermissions();
-      if (!hasPermissions) {
-        return false;
-      }
+  private async clearPersistedPrinter(): Promise<void> {
+    try {
+      await AsyncStorage.removeItem(BT_PRINTER_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
 
-      console.log('Connecting to printer:', device.name, device.address);
+  /**
+   * Open a session to a Bluetooth ESC/POS printer (used by manual connect, restore, and auto-detect).
+   */
+  public async establishBluetoothConnection(
+    device: BluetoothDevice,
+    options?: {showToast?: boolean},
+  ): Promise<boolean> {
+    const showToast = options?.showToast !== false;
 
-      // Format address: "bt:MAC_ADDRESS" for Bluetooth Classic
-      // The address should already be in MAC format (AA:BB:CC:DD:EE:FF)
-      let formattedAddress = device.address;
-      if (!formattedAddress.startsWith('bt:')) {
-        formattedAddress = `bt:${formattedAddress}`;
-      }
+    if (Platform.OS !== 'android') {
+      return false;
+    }
 
-      this.printerAddress = formattedAddress;
+    const hasPermissions = await this.requestBluetoothPermissions();
+    if (!hasPermissions) {
+      return false;
+    }
 
-      // Test connection to verify it works
-      try {
-        const testResult = await ThermalPrinter.testConnection(
-          formattedAddress,
-        );
-        console.log('Connection test result:', testResult);
+    let formattedAddress = device.address.replace(/^bt:/i, '');
+    if (!formattedAddress.startsWith('bt:')) {
+      formattedAddress = `bt:${formattedAddress}`;
+    }
 
-        if (testResult.success) {
-          this.isConnected = true;
-          this.connectedDevice = device;
-          this.isInitialized = true;
+    this.printerAddress = formattedAddress;
 
-          console.log('Bluetooth printer connected successfully');
-
+    try {
+      const testResult = await ThermalPrinter.testConnection(formattedAddress);
+      if (testResult.success) {
+        this.isConnected = true;
+        this.connectedDevice = {
+          name: device.name,
+          address: device.address.replace(/^bt:/i, ''),
+        };
+        this.isInitialized = true;
+        await this.persistPrinterDevice(this.connectedDevice);
+        if (showToast) {
           Toast.show({
             type: 'success',
             text1: 'Printer Connected',
             text2: `Connected to ${device.name}`,
           });
-
-          return true;
-        } else {
-          const errorMsg =
-            typeof testResult.error === 'string'
-              ? testResult.error
-              : testResult.error?.message || 'Connection test failed';
-          throw new Error(errorMsg);
         }
-      } catch (testError: any) {
-        console.error('Connection test failed:', testError);
-        throw new Error(testError?.message || 'Failed to connect to printer');
+        return true;
       }
-    } catch (error: any) {
-      console.error('Failed to connect to printer:', error);
       this.isConnected = false;
       this.connectedDevice = null;
       this.printerAddress = null;
-
-      Toast.show({
-        type: 'error',
-        text1: 'Connection Failed',
-        text2:
-          error?.message ||
-          'Failed to connect to Bluetooth printer. Please ensure the printer is paired.',
-      });
-
+      if (showToast) {
+        const errorMsg =
+          typeof testResult.error === 'string'
+            ? testResult.error
+            : (testResult.error as {message?: string})?.message ||
+              'Connection test failed';
+        Toast.show({
+          type: 'error',
+          text1: 'Connection Failed',
+          text2: errorMsg,
+        });
+      }
+      return false;
+    } catch (e: any) {
+      console.error('Bluetooth connection test failed:', e);
+      this.isConnected = false;
+      this.connectedDevice = null;
+      this.printerAddress = null;
+      if (showToast) {
+        Toast.show({
+          type: 'error',
+          text1: 'Connection Failed',
+          text2:
+            e?.message ||
+            'Failed to connect to Bluetooth printer. Please ensure the printer is paired.',
+        });
+      }
       return false;
     }
+  }
+
+  /**
+   * Reconnect to the last printer used (after app restart).
+   */
+  public async ensureConnectedFromStorage(): Promise<boolean> {
+    if (Platform.OS !== 'android') {
+      return false;
+    }
+    if (this.isPrinterConnected()) {
+      return true;
+    }
+    try {
+      const raw = await AsyncStorage.getItem(BT_PRINTER_STORAGE_KEY);
+      if (!raw) {
+        return false;
+      }
+      const parsed = JSON.parse(raw) as {name?: string; address?: string};
+      if (!parsed?.address) {
+        return false;
+      }
+      const device: BluetoothDevice = {
+        name: parsed.name || 'Printer',
+        address: parsed.address,
+      };
+      return await this.establishBluetoothConnection(device, {showToast: false});
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Many non-Sunmi POS units expose the internal 58mm printer as a paired Bluetooth device.
+   * When printer type is Auto, try likely candidates from the system paired list.
+   */
+  public async tryAutoConnectPosBuiltin(): Promise<boolean> {
+    if (Platform.OS !== 'android') {
+      return false;
+    }
+    if (this.isPrinterConnected()) {
+      return true;
+    }
+    const permitted = await this.requestBluetoothPermissions();
+    if (!permitted) {
+      return false;
+    }
+    try {
+      const result = await ThermalPrinter.scanDevices();
+      const paired = Array.isArray(result.paired) ? result.paired : [];
+
+      const ranked = paired
+        .filter(d => d?.address)
+        .map(d => ({
+          d,
+          score: scoreBuiltinPrinterName(d.name || ''),
+        }))
+        .filter(x => x.score > 0)
+        .sort((a, b) => b.score - a.score);
+
+      let ordered = ranked.map(x => x.d);
+      if (
+        ordered.length === 0 &&
+        paired.length === 1 &&
+        paired[0]?.address &&
+        scoreBuiltinPrinterName(paired[0].name || '') > -4
+      ) {
+        ordered = [paired[0]];
+      }
+
+      for (const d of ordered) {
+        const device: BluetoothDevice = {
+          name: d.name || 'Printer',
+          address: d.address.replace(/^bt:/i, ''),
+        };
+        const ok = await this.establishBluetoothConnection(device, {
+          showToast: false,
+        });
+        if (ok) {
+          console.log(
+            'Auto-connected Bluetooth thermal printer:',
+            device.name,
+            device.address,
+          );
+          return true;
+        }
+      }
+      return false;
+    } catch (e) {
+      console.log('tryAutoConnectPosBuiltin:', e);
+      return false;
+    }
+  }
+
+  /**
+   * Connect to a Bluetooth printer
+   */
+  public async connectToPrinter(device: BluetoothDevice): Promise<boolean> {
+    return this.establishBluetoothConnection(device, {showToast: true});
   }
 
   /**
@@ -432,6 +630,7 @@ class BluetoothPrinterService {
       this.connectedDevice = null;
       this.printerAddress = null;
       this.isInitialized = false;
+      await this.clearPersistedPrinter();
       console.log('Bluetooth printer disconnected');
     } catch (error) {
       console.error('Failed to disconnect printer:', error);
@@ -652,6 +851,134 @@ class BluetoothPrinterService {
     document.push({type: 'cut'});
 
     return document;
+  }
+
+  private buildItemLabelDocument(data: ItemLabelPrintData): any[] {
+    const doc: any[] = [];
+    doc.push({
+      type: 'text',
+      content: 'ITEM LABEL',
+      style: {align: 'center', bold: true},
+    });
+    doc.push({type: 'line'});
+    doc.push({
+      type: 'text',
+      content: BluetoothPrinterService.formatLabelItemName(data.item_name),
+      style: {align: 'center', bold: true},
+    });
+    if (data.no) {
+      doc.push({
+        type: 'text',
+        content: `No: ${data.no}`,
+        style: {align: 'center'},
+      });
+    }
+    const barcode = BluetoothPrinterService.resolveLabelBarcodeValue(
+      data.bar_code_no,
+      data.no,
+    );
+    if (barcode) {
+      doc.push({type: 'feed', lines: 1});
+      doc.push({
+        type: 'barcode',
+        content: barcode,
+        format: 'CODE128',
+        align: 'center',
+        heightPx: 72,
+        textPosition: 'below',
+      });
+    } else {
+      const humanLine = [data.bar_code_no, data.no]
+        .map(s => (s == null ? '' : String(s).trim()))
+        .find(Boolean);
+      if (humanLine) {
+        doc.push({
+          type: 'text',
+          content: `Code: ${humanLine}`,
+          style: {align: 'center'},
+        });
+      }
+    }
+    doc.push({type: 'feed', lines: 2});
+    doc.push({type: 'cut'});
+    return doc;
+  }
+
+  /**
+   * Print one label job (optional copies via thermal printer `copies`).
+   */
+  public async printItemLabel(data: ItemLabelPrintData): Promise<boolean> {
+    try {
+      if (!this.isConnected || !this.connectedDevice || !this.printerAddress) {
+        Toast.show({
+          type: 'error',
+          text1: 'Printer Not Connected',
+          text2: 'Please connect to a Bluetooth printer first.',
+        });
+        return false;
+      }
+
+      const hasPermissions = await this.requestBluetoothPermissions();
+      if (!hasPermissions) {
+        Toast.show({
+          type: 'error',
+          text1: 'Permissions Required',
+          text2: 'Bluetooth permissions are required to print.',
+        });
+        return false;
+      }
+
+      const copies = Math.min(
+        10,
+        Math.max(1, Math.floor(Number(data.copies) || 1)),
+      );
+      const document = this.buildItemLabelDocument(data);
+      const job = {
+        printers: [
+          {
+            address: this.printerAddress,
+            copies,
+            options: {
+              paperWidthMm: 58,
+              encoding: 'utf8' as const,
+              marginMm: 1,
+            },
+          },
+        ],
+        documents: [document],
+      };
+
+      const result = await ThermalPrinter.printReceipt(job);
+
+      if (result.success) {
+        Toast.show({
+          type: 'success',
+          text1: 'Label printed',
+          text2: copies > 1 ? `${copies} copies` : 'Ready',
+        });
+        return true;
+      }
+
+      const firstResult = result.results
+        ? Array.from(result.results.values())[0]
+        : null;
+      const errorMsg = firstResult?.error || 'Print failed';
+      throw new Error(
+        typeof errorMsg === 'string'
+          ? errorMsg
+          : errorMsg?.message || 'Print failed',
+      );
+    } catch (error: any) {
+      console.error('Failed to print item label via Bluetooth:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Print Failed',
+        text2:
+          error?.message ||
+          'Could not print the label. Check the printer connection.',
+      });
+      return false;
+    }
   }
 
   /**

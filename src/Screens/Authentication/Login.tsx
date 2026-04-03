@@ -1,4 +1,5 @@
-import React, {useState, useCallback} from 'react';
+import React, {useState, useCallback, useEffect} from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View,
   Text,
@@ -30,6 +31,11 @@ type LoginNav = NativeStackNavigationProp<RootStackParamList, 'SignIn'>;
 
 const emailLooksValid = (value: string) => /\S+@\S+\.\S+/.test(value.trim());
 
+/** Last sign-in attempt (wrong credentials): refill fields after error and across app restarts. */
+const LOGIN_DRAFT_TENANT = '@zentro_login_draft_tenant';
+const LOGIN_DRAFT_EMAIL = '@zentro_login_draft_email';
+const LOGIN_DRAFT_PASSWORD = '@zentro_login_draft_password';
+
 const Login = () => {
   const {colors} = useTheme();
   const navigation = useNavigation<LoginNav>();
@@ -45,12 +51,76 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [passwordError, setPasswordError] = useState('');
 
+  const saveLoginDraft = useCallback(
+    async (includePassword: boolean) => {
+      try {
+        const pairs: [string, string][] = [
+          [LOGIN_DRAFT_TENANT, tenant.trim()],
+          [LOGIN_DRAFT_EMAIL, email.trim()],
+        ];
+        if (includePassword) {
+          pairs.push([LOGIN_DRAFT_PASSWORD, password]);
+        }
+        await AsyncStorage.multiSet(pairs);
+      } catch {
+        /* ignore */
+      }
+    },
+    [tenant, email, password],
+  );
+
+  const clearStoredLoginPassword = useCallback(async () => {
+    try {
+      await AsyncStorage.removeItem(LOGIN_DRAFT_PASSWORD);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await AsyncStorage.multiGet([
+          LOGIN_DRAFT_TENANT,
+          LOGIN_DRAFT_EMAIL,
+          LOGIN_DRAFT_PASSWORD,
+        ]);
+        if (cancelled) {
+          return;
+        }
+        const map = Object.fromEntries(rows) as Record<string, string | undefined>;
+        const t = map[LOGIN_DRAFT_TENANT];
+        const e = map[LOGIN_DRAFT_EMAIL];
+        const p = map[LOGIN_DRAFT_PASSWORD];
+        if (t) {
+          setTenant(t);
+        }
+        if (e) {
+          setEmail(e);
+        }
+        if (p) {
+          setPassword(p);
+        }
+        if (t && e && p) {
+          setStep(2);
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const goBackToCredentials = useCallback(() => {
     setPassword('');
     setPasswordError('');
     setShowPassword(false);
     setStep(1);
-  }, []);
+    void clearStoredLoginPassword();
+  }, [clearStoredLoginPassword]);
 
   const handleLogin = async () => {
     if (!tenant || !email || !password) {
@@ -72,18 +142,20 @@ const Login = () => {
         });
 
         await context?.login({email, password, tenant});
+        await clearStoredLoginPassword();
+        await saveLoginDraft(false);
 
         setTimeout(() => {
           setLoading(false);
         }, 5000);
       } else {
         setLoading(false);
+        await saveLoginDraft(true);
         Toast.show({
           type: 'error',
           text1: 'Login failed',
           text2: 'Please check your credentials and try again',
         });
-        goBackToCredentials();
       }
     } catch (error: any) {
       console.log(error);
@@ -99,12 +171,12 @@ const Login = () => {
         errorMessage = 'Company not found. Please check your company name.';
       }
 
+      await saveLoginDraft(true);
       Toast.show({
         type: 'error',
         text1: 'Login failed',
         text2: errorMessage,
       });
-      goBackToCredentials();
     }
   };
 
@@ -181,6 +253,7 @@ const Login = () => {
       setContinuing(false);
     }
 
+    await saveLoginDraft(false);
     setStep(2);
   };
 

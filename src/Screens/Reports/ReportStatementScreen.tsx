@@ -1,21 +1,30 @@
-import React, {useCallback, useEffect, useMemo, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
   ActivityIndicator,
+  FlatList,
   Image,
+  Modal,
+  Platform,
+  Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
   View,
 } from 'react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import {useNavigation} from '@react-navigation/native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
+import Toast from 'react-native-toast-message';
 import {COLORS, FONTS, SIZES, icons} from '../../constants';
 import {useTheme} from '../../context/ThemeContext';
 import {
+  exportReportPdfFromApi,
   fetchBalanceSheetReport,
   fetchProfitLossStatement,
 } from '../../services/app.services';
+import {savePdfBufferAndShare} from '../../utils/reportPdfDownload';
 
 type ReportVariant = 'profit-loss' | 'balance-sheet';
 
@@ -78,24 +87,150 @@ type Props = {
   route?: any;
 };
 
-const getMonthRange = () => {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-  return {
-    startDate: start.toISOString().split('T')[0],
-    endDate: end.toISOString().split('T')[0],
-  };
+/** Calendar date in local timezone (avoid UTC shift from toISOString). */
+const toYmd = (d: Date) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 };
 
-const getToday = () => new Date().toISOString().split('T')[0];
+const parseYmdLocal = (ymd: string) => {
+  const [y, m, d] = ymd.split('-').map(Number);
+  return new Date(y, (m || 1) - 1, d || 1);
+};
+
+const getTodayDate = () => {
+  const n = new Date();
+  return new Date(n.getFullYear(), n.getMonth(), n.getDate());
+};
+
+const startOfQuarter = (d: Date) => {
+  const m = d.getMonth();
+  const startMonth = Math.floor(m / 3) * 3;
+  return new Date(d.getFullYear(), startMonth, 1);
+};
+
+const endOfPrevQuarter = (d: Date) => {
+  const qStart = startOfQuarter(d);
+  return new Date(qStart.getFullYear(), qStart.getMonth(), 0);
+};
+
+const startOfPrevQuarter = (d: Date) => {
+  const qStart = startOfQuarter(d);
+  return new Date(qStart.getFullYear(), qStart.getMonth() - 3, 1);
+};
+
+type DateRange = {startDate: string; endDate: string};
+
+type FilterMenuItem = {key: string; label: string};
+
+const PROFIT_LOSS_MENU: FilterMenuItem[] = [
+  {key: 'as_of_today', label: 'As of Today'},
+  {key: 'this_month', label: 'This Month'},
+  {key: 'this_month_to_date', label: 'This Month to Date'},
+  {key: 'this_quarter', label: 'This Quarter'},
+  {key: 'this_quarter_to_date', label: 'This Quarter to Date'},
+  {key: 'this_year', label: 'This Year'},
+  {key: 'this_year_to_date', label: 'This Year to Date'},
+  {key: 'last_month', label: 'Last Month'},
+  {key: 'last_quarter', label: 'Last Quarter'},
+  {key: 'last_year', label: 'Last Year'},
+  {key: 'custom', label: 'Custom'},
+];
+
+const BALANCE_SHEET_MENU: FilterMenuItem[] = [
+  {key: 'as_of_today', label: 'As of Today'},
+  {key: 'this_month', label: 'This Month'},
+  {key: 'this_month_to_date', label: 'This Month to Date'},
+  {key: 'this_quarter', label: 'This Quarter'},
+  {key: 'this_quarter_to_date', label: 'This Quarter to Date'},
+  {key: 'this_year', label: 'This Year'},
+  {key: 'this_year_to_date', label: 'This Year to Date'},
+  {key: 'last_month', label: 'Last Month'},
+  {key: 'last_quarter', label: 'Last Quarter'},
+  {key: 'last_year', label: 'Last Year'},
+  {key: 'custom', label: 'Custom'},
+];
+
+function profitLossRangeForPreset(key: string, today: Date): DateRange | null {
+  const y = today.getFullYear();
+  const m = today.getMonth();
+  const todayStr = toYmd(today);
+
+  switch (key) {
+    case 'as_of_today':
+      return {startDate: todayStr, endDate: todayStr};
+    case 'this_month':
+    case 'this_month_to_date': {
+      const start = new Date(y, m, 1);
+      return {startDate: toYmd(start), endDate: todayStr};
+    }
+    case 'this_quarter':
+    case 'this_quarter_to_date': {
+      const start = startOfQuarter(today);
+      return {startDate: toYmd(start), endDate: todayStr};
+    }
+    case 'this_year':
+    case 'this_year_to_date': {
+      const start = new Date(y, 0, 1);
+      return {startDate: toYmd(start), endDate: todayStr};
+    }
+    case 'last_month': {
+      const start = new Date(y, m - 1, 1);
+      const end = new Date(y, m, 0);
+      return {startDate: toYmd(start), endDate: toYmd(end)};
+    }
+    case 'last_quarter': {
+      const start = startOfPrevQuarter(today);
+      const end = endOfPrevQuarter(today);
+      return {startDate: toYmd(start), endDate: toYmd(end)};
+    }
+    case 'last_year': {
+      const start = new Date(y - 1, 0, 1);
+      const end = new Date(y - 1, 11, 31);
+      return {startDate: toYmd(start), endDate: toYmd(end)};
+    }
+    default:
+      return null;
+  }
+}
+
+/** Balance sheet is a point in time: one as-of date per preset. */
+function balanceSheetAsOfForPreset(key: string, today: Date): string | null {
+  const y = today.getFullYear();
+  const m = today.getMonth();
+  const todayStr = toYmd(today);
+
+  switch (key) {
+    case 'as_of_today':
+    case 'this_month':
+    case 'this_month_to_date':
+    case 'this_quarter':
+    case 'this_quarter_to_date':
+    case 'this_year':
+    case 'this_year_to_date':
+      return todayStr;
+    case 'last_month':
+      return toYmd(new Date(y, m, 0));
+    case 'last_quarter':
+      return toYmd(endOfPrevQuarter(today));
+    case 'last_year':
+      return toYmd(new Date(y - 1, 11, 31));
+    default:
+      return null;
+  }
+}
 
 const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const {colors} = useTheme();
+  const pendingCustomPlFrom = useRef<string | null>(null);
+  const latestFetchId = useRef(0);
+
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [profitLossData, setProfitLossData] = useState<ProfitLossResponse | null>(
     null,
@@ -103,49 +238,262 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
   const [balanceSheetData, setBalanceSheetData] =
     useState<BalanceSheetResponse | null>(null);
 
-  const pageMeta = useMemo(() => {
-    if (reportType === 'profit-loss') {
-      return {
-        title: 'Profit & Loss',
-        subtitle: 'Revenue, expenses, and net income for the current month.',
-      };
-    }
+  const [filterMenuVisible, setFilterMenuVisible] = useState(false);
+  const [periodLabel, setPeriodLabel] = useState(() =>
+    reportType === 'profit-loss' ? 'This Month to Date' : 'As of Today',
+  );
+  const [activeFilterKey, setActiveFilterKey] = useState(() =>
+    reportType === 'profit-loss' ? 'this_month_to_date' : 'as_of_today',
+  );
+  const [plRange, setPlRange] = useState<DateRange>(() =>
+    profitLossRangeForPreset('this_month_to_date', getTodayDate())!,
+  );
+  const [bsAsOf, setBsAsOf] = useState(() =>
+    balanceSheetAsOfForPreset('as_of_today', getTodayDate())!,
+  );
 
-    return {
-      title: 'Balance Sheet',
-      subtitle: 'Assets, liabilities, and equity as of today.',
-    };
-  }, [reportType]);
+  const [isDatePickerVisible, setIsDatePickerVisible] = useState(false);
+  const [datePickerMode, setDatePickerMode] = useState<
+    null | 'pl_from' | 'pl_to' | 'bs'
+  >(null);
+  const [exportingPdf, setExportingPdf] = useState(false);
 
-  const loadReport = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const pageTitle =
+    reportType === 'profit-loss' ? 'Profit & Loss' : 'Balance Sheet';
 
-    try {
-      if (reportType === 'profit-loss') {
-        const range = getMonthRange();
-        const response = await fetchProfitLossStatement(range);
-        setProfitLossData(response);
-        setBalanceSheetData(null);
+  const filterMenuItems = useMemo(
+    () =>
+      reportType === 'profit-loss' ? PROFIT_LOSS_MENU : BALANCE_SHEET_MENU,
+    [reportType],
+  );
+
+  const performFetch = useCallback(
+    async (mode: 'full' | 'refresh') => {
+      const fetchId = ++latestFetchId.current;
+      const showFullSpinner = mode === 'full';
+      if (showFullSpinner) {
+        setLoading(true);
       } else {
-        const response = await fetchBalanceSheetReport(getToday());
-        setBalanceSheetData(response);
-        setProfitLossData(null);
+        setRefreshing(true);
       }
-    } catch (fetchError: any) {
-      setError(
-        fetchError?.response?.data?.detail ||
-          fetchError?.message ||
-          'Unable to load this report right now.',
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [reportType]);
+      setError(null);
+      try {
+        const response =
+          reportType === 'profit-loss'
+            ? await fetchProfitLossStatement({
+                startDate: plRange.startDate,
+                endDate: plRange.endDate,
+              })
+            : await fetchBalanceSheetReport(bsAsOf);
+        if (fetchId !== latestFetchId.current) {
+          return;
+        }
+        if (reportType === 'profit-loss') {
+          setProfitLossData(response);
+          setBalanceSheetData(null);
+        } else {
+          setBalanceSheetData(response);
+          setProfitLossData(null);
+        }
+      } catch (fetchError: any) {
+        if (fetchId !== latestFetchId.current) {
+          return;
+        }
+        setError(
+          fetchError?.response?.data?.detail ||
+            fetchError?.message ||
+            'Unable to load this report right now.',
+        );
+      } finally {
+        if (fetchId !== latestFetchId.current) {
+          return;
+        }
+        if (showFullSpinner) {
+          setLoading(false);
+        } else {
+          setRefreshing(false);
+        }
+      }
+    },
+    [reportType, plRange.startDate, plRange.endDate, bsAsOf],
+  );
 
   useEffect(() => {
-    loadReport();
-  }, [loadReport]);
+    performFetch('full');
+  }, [performFetch]);
+
+  const loadReport = useCallback(() => performFetch('full'), [performFetch]);
+
+  const onPullRefresh = useCallback(
+    () => performFetch('refresh'),
+    [performFetch],
+  );
+
+  const canExportPdf =
+    !loading &&
+    !error &&
+    (reportType === 'profit-loss'
+      ? !!profitLossData
+      : !!balanceSheetData);
+
+  const handleExportPdf = useCallback(async () => {
+    if (!canExportPdf || exportingPdf) {
+      return;
+    }
+    setExportingPdf(true);
+    try {
+      const apiType =
+        reportType === 'profit-loss' ? 'profit_loss' : 'balance_sheet';
+      const filters: Record<string, unknown> =
+        reportType === 'profit-loss'
+          ? {start_date: plRange.startDate, end_date: plRange.endDate}
+          : {as_of_date: bsAsOf};
+      const buf = await exportReportPdfFromApi(apiType, filters);
+      const baseName = `zentro_${apiType}_${
+        reportType === 'profit-loss' ? plRange.endDate : bsAsOf
+      }`;
+      const {sharedOnIos} = await savePdfBufferAndShare(buf, baseName);
+      if (sharedOnIos) {
+        Toast.show({
+          type: 'success',
+          text1: 'PDF ready',
+          text2: 'Use the share sheet to save or send.',
+        });
+      } else {
+        Toast.show({
+          type: 'success',
+          text1: 'PDF saved',
+          text2:
+            'File path copied. Paste in a file manager to open the PDF in Downloads or share it.',
+        });
+      }
+    } catch (e: unknown) {
+      const err = e as {message?: string};
+      Toast.show({
+        type: 'error',
+        text1: 'PDF export failed',
+        text2: err?.message || 'Could not export PDF.',
+      });
+    } finally {
+      setExportingPdf(false);
+    }
+  }, [
+    bsAsOf,
+    canExportPdf,
+    exportingPdf,
+    plRange.endDate,
+    plRange.startDate,
+    reportType,
+  ]);
+
+  const handleSelectFilter = useCallback(
+    (item: FilterMenuItem) => {
+      if (item.key === 'custom') {
+        setFilterMenuVisible(false);
+        pendingCustomPlFrom.current = null;
+        if (reportType === 'profit-loss') {
+          setDatePickerMode('pl_from');
+          setIsDatePickerVisible(true);
+        } else {
+          setDatePickerMode('bs');
+          setIsDatePickerVisible(true);
+        }
+        return;
+      }
+
+      const today = getTodayDate();
+      if (reportType === 'profit-loss') {
+        const range = profitLossRangeForPreset(item.key, today);
+        if (!range) {
+          return;
+        }
+        setPlRange(range);
+        setPeriodLabel(item.label);
+        setActiveFilterKey(item.key);
+      } else {
+        const asOf = balanceSheetAsOfForPreset(item.key, today);
+        if (!asOf) {
+          return;
+        }
+        setBsAsOf(asOf);
+        setPeriodLabel(item.label);
+        setActiveFilterKey(item.key);
+      }
+      setFilterMenuVisible(false);
+    },
+    [reportType],
+  );
+
+  const handleDatePickerChange = useCallback(
+    (event: {type?: string}, selectedDate?: Date) => {
+      if (Platform.OS === 'android') {
+        setIsDatePickerVisible(false);
+      }
+      if (event.type === 'dismissed') {
+        setIsDatePickerVisible(false);
+        /*
+         * Android often emits `dismissed` immediately after a successful `set`
+         * when closing the first dialog. Do not reset the flow if we already
+         * stored the start date and are about to open the end-date picker.
+         */
+        if (
+          Platform.OS === 'android' &&
+          datePickerMode === 'pl_from' &&
+          pendingCustomPlFrom.current
+        ) {
+          return;
+        }
+        setDatePickerMode(null);
+        pendingCustomPlFrom.current = null;
+        return;
+      }
+      if (!selectedDate || !datePickerMode) {
+        return;
+      }
+
+      const dateStr = toYmd(selectedDate);
+
+      if (datePickerMode === 'pl_from') {
+        pendingCustomPlFrom.current = dateStr;
+        if (Platform.OS === 'ios') {
+          setDatePickerMode('pl_to');
+        } else {
+          setTimeout(() => {
+            setIsDatePickerVisible(true);
+            setDatePickerMode('pl_to');
+          }, 100);
+        }
+        return;
+      }
+
+      if (datePickerMode === 'pl_to') {
+        const from = pendingCustomPlFrom.current ?? dateStr;
+        let start = from;
+        let end = dateStr;
+        if (start > end) {
+          const t = start;
+          start = end;
+          end = t;
+        }
+        setPlRange({startDate: start, endDate: end});
+        setPeriodLabel(`Custom (${start} – ${end})`);
+        setActiveFilterKey('custom');
+        pendingCustomPlFrom.current = null;
+        setDatePickerMode(null);
+        setIsDatePickerVisible(false);
+        return;
+      }
+
+      if (datePickerMode === 'bs') {
+        setBsAsOf(dateStr);
+        setPeriodLabel(`Custom (${dateStr})`);
+        setActiveFilterKey('custom');
+        setDatePickerMode(null);
+        setIsDatePickerVisible(false);
+      }
+    },
+    [datePickerMode],
+  );
 
   const formatCurrency = (value?: number) => {
     const amount = typeof value === 'number' ? value : 0;
@@ -285,7 +633,7 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
         <View style={styles.stateWrap}>
           <ActivityIndicator size="large" color={COLORS.primary2} />
           <Text style={[styles.stateText, {color: colors.textSecondary}]}>
-            Loading {pageMeta.title.toLowerCase()}...
+            Loading {pageTitle.toLowerCase()}...
           </Text>
         </View>
       );
@@ -474,24 +822,140 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
 
         <View style={styles.headerTextWrap}>
           <Text style={[styles.headerTitle, {color: colors.textPrimary}]}>
-            {pageMeta.title}
+            {pageTitle}
           </Text>
           <Text style={[styles.headerSubtitle, {color: colors.textSecondary}]}>
-            {pageMeta.subtitle}
+            {periodLabel}
           </Text>
         </View>
 
-        <TouchableOpacity style={styles.refreshButton} onPress={loadReport}>
-          <Text style={styles.refreshButtonText}>Refresh</Text>
+        <TouchableOpacity
+          style={[
+            styles.pdfHeaderButton,
+            {
+              backgroundColor: colors.card,
+              borderColor: colors.border,
+              opacity: canExportPdf && !exportingPdf ? 1 : 0.45,
+            },
+          ]}
+          onPress={handleExportPdf}
+          disabled={!canExportPdf || exportingPdf}
+          accessibilityLabel="Export report as PDF">
+          {exportingPdf ? (
+            <ActivityIndicator size="small" color={COLORS.primary2} />
+          ) : (
+            <Text style={[styles.pdfHeaderButtonText, {color: COLORS.primary2}]}>
+              PDF
+            </Text>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[
+            styles.filterHeaderButton,
+            {backgroundColor: colors.card, borderColor: colors.border},
+          ]}
+          onPress={() => setFilterMenuVisible(true)}
+          accessibilityLabel="Filter report period">
+          <Image source={icons.filter} style={styles.filterHeaderIcon} />
         </TouchableOpacity>
       </View>
 
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}>
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onPullRefresh}
+            colors={[COLORS.primary2]}
+            tintColor={COLORS.primary2}
+          />
+        }>
         {renderBody()}
       </ScrollView>
+
+      <Modal
+        visible={filterMenuVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setFilterMenuVisible(false)}>
+        <View style={styles.filterModalRoot}>
+          <Pressable
+            style={[styles.filterBackdrop, {backgroundColor: 'rgba(0,0,0,0.35)'}]}
+            onPress={() => setFilterMenuVisible(false)}
+          />
+          <View
+            style={[
+              styles.filterDropdown,
+              {
+                top: Math.max(insets.top, 12) + 48,
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+              },
+            ]}>
+            <Text style={[styles.filterDropdownTitle, {color: colors.textPrimary}]}>
+              {reportType === 'profit-loss' ? 'Report period' : 'As of date'}
+            </Text>
+            <FlatList
+              data={filterMenuItems}
+              keyExtractor={i => i.key}
+              keyboardShouldPersistTaps="handled"
+              style={styles.filterMenuList}
+              renderItem={({item}) => (
+                <TouchableOpacity
+                  style={[
+                    styles.filterMenuRow,
+                    activeFilterKey === item.key && styles.filterMenuRowActive,
+                  ]}
+                  onPress={() => handleSelectFilter(item)}>
+                  <Text
+                    style={[
+                      styles.filterMenuRowText,
+                      {
+                        color:
+                          activeFilterKey === item.key
+                            ? COLORS.primary2
+                            : colors.textPrimary,
+                        fontWeight: activeFilterKey === item.key ? '700' : '500',
+                      },
+                    ]}>
+                    {item.label}
+                  </Text>
+                  {activeFilterKey === item.key ? (
+                    <Text style={styles.filterMenuCheck}>✓</Text>
+                  ) : null}
+                </TouchableOpacity>
+              )}
+            />
+          </View>
+        </View>
+      </Modal>
+
+      {isDatePickerVisible && datePickerMode ? (
+        <DateTimePicker
+          key={datePickerMode}
+          value={
+            datePickerMode === 'pl_from'
+              ? getTodayDate()
+              : datePickerMode === 'pl_to'
+                ? parseYmdLocal(
+                    pendingCustomPlFrom.current ?? toYmd(getTodayDate()),
+                  )
+                : parseYmdLocal(bsAsOf)
+          }
+          mode="date"
+          display="default"
+          onChange={handleDatePickerChange}
+          maximumDate={getTodayDate()}
+          minimumDate={
+            datePickerMode === 'pl_to' && pendingCustomPlFrom.current
+              ? parseYmdLocal(pendingCustomPlFrom.current)
+              : undefined
+          }
+        />
+      ) : null}
     </View>
   );
 };
@@ -534,17 +998,81 @@ const styles = StyleSheet.create({
     marginTop: 4,
     lineHeight: 18,
   },
-  refreshButton: {
-    backgroundColor: COLORS.primary2,
-    paddingHorizontal: 14,
-    height: 38,
+  pdfHeaderButton: {
+    minWidth: 44,
+    height: 42,
+    paddingHorizontal: 10,
     borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: 1,
+    marginRight: 8,
   },
-  refreshButtonText: {
+  pdfHeaderButtonText: {
     ...FONTS.body5,
-    color: COLORS.white,
+    fontWeight: '700',
+  },
+  filterHeaderButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+  },
+  filterHeaderIcon: {
+    width: 20,
+    height: 20,
+    tintColor: COLORS.primary2,
+  },
+  filterModalRoot: {
+    flex: 1,
+  },
+  filterBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  filterDropdown: {
+    position: 'absolute',
+    right: SIZES.padding,
+    width: 288,
+    maxHeight: '75%',
+    borderRadius: 16,
+    borderWidth: 1,
+    paddingBottom: 8,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+  },
+  filterDropdownTitle: {
+    ...FONTS.body5,
+    fontWeight: '700',
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 8,
+  },
+  filterMenuList: {
+    maxHeight: 400,
+  },
+  filterMenuRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  filterMenuRowActive: {
+    backgroundColor: COLORS.primary2 + '10',
+  },
+  filterMenuRowText: {
+    ...FONTS.body4,
+    flex: 1,
+    paddingRight: 12,
+  },
+  filterMenuCheck: {
+    ...FONTS.body4,
+    color: COLORS.primary2,
     fontWeight: '700',
   },
   scroll: {

@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useMemo} from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,7 @@ import {
   Image,
 } from 'react-native';
 import {COLORS} from '../../constants/theme';
+import {useTheme} from '../../context/ThemeContext';
 import icons from '../../constants/icons';
 import {
   ItemCategory,
@@ -55,6 +56,52 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [parentPickerVisible, setParentPickerVisible] = useState(false);
   const [parentSearchQuery, setParentSearchQuery] = useState('');
+
+  const {colors} = useTheme();
+  const catTheme = useMemo(
+    () => ({
+      pageRoot: {backgroundColor: colors.background},
+      page: {backgroundColor: colors.background},
+      pageTitle: {color: colors.textPrimary},
+      sectionTitle: {color: colors.textPrimary},
+      input: {
+        borderColor: colors.border,
+        color: colors.textPrimary,
+        backgroundColor: colors.inputBackground,
+      },
+      inputDisabled: {
+        backgroundColor: colors.screenMuted,
+        color: colors.textSecondary,
+      },
+      parentRow: {borderBottomColor: colors.border},
+      parentRowText: {color: colors.textPrimary},
+      parentRowPlaceholder: {color: colors.textSecondary},
+      sectionDivider: {backgroundColor: colors.border},
+      channelsCard: {
+        backgroundColor: colors.surface,
+        borderColor: colors.border,
+      },
+      channelsTitle: {color: colors.textPrimary},
+      channelsText: {color: colors.textSecondary},
+      previewTileButton: {backgroundColor: colors.screenMuted},
+      previewTileButtonText: {color: colors.textPrimary},
+      pickerModalContent: {backgroundColor: colors.surface},
+      pickerModalHeader: {borderBottomColor: colors.border},
+      pickerModalTitle: {color: colors.textPrimary},
+      pickerSearchContainer: {borderBottomColor: colors.border},
+      pickerSearchInputContainer: {backgroundColor: colors.inputBackground},
+      pickerSearchIcon: {tintColor: colors.iconMuted},
+      pickerSearchInput: {color: colors.textPrimary},
+      pickerItem: {borderBottomColor: colors.border},
+      pickerItemSelected: {backgroundColor: colors.screenMuted},
+      pickerItemText: {color: colors.textPrimary},
+      pickerEmptyText: {color: colors.textSecondary},
+      helpText: {color: colors.textSecondary},
+      headerIcon: {tintColor: colors.textPrimary},
+      pickerCloseIcon: {tintColor: colors.textPrimary},
+    }),
+    [colors],
+  );
 
   // Initialize form when category changes
   useEffect(() => {
@@ -224,8 +271,8 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
       onRequestClose={onClose}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.pageRoot}>
-        <View style={styles.page}>
+        style={[styles.pageRoot, catTheme.pageRoot]}>
+        <View style={[styles.page, catTheme.page]}>
           <View style={styles.pageHeader}>
             <TouchableOpacity
               onPress={onClose}
@@ -233,7 +280,7 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
               hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
               <Image
                 source={icons.cross}
-                style={styles.headerIcon}
+                style={[styles.headerIcon, catTheme.headerIcon]}
                 resizeMode="contain"
               />
             </TouchableOpacity>
@@ -256,7 +303,7 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
             contentContainerStyle={styles.formContent}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled">
-            <Text style={styles.pageTitle}>
+            <Text style={[styles.pageTitle, catTheme.pageTitle]}>
               {isEditMode ? 'Edit category' : 'Create category'}
             </Text>
 
@@ -273,7 +320,7 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
               </View>
 
               <TouchableOpacity
-                style={styles.previewTileButton}
+                style={[styles.previewTileButton, catTheme.previewTileButton]}
                 onPress={() =>
                   Toast.show({
                     type: 'info',
@@ -282,21 +329,24 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
                   })
                 }
                 activeOpacity={0.8}>
-                <Text style={styles.previewTileButtonText}>Edit POS tile</Text>
+                <Text style={[styles.previewTileButtonText, catTheme.previewTileButtonText]}>
+                  Edit POS tile
+                </Text>
               </TouchableOpacity>
             </View>
 
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Details</Text>
+              <Text style={[styles.sectionTitle, catTheme.sectionTitle]}>Details</Text>
 
               <TextInput
                 style={[
                   styles.input,
+                  catTheme.input,
                   errors.code && styles.inputError,
-                  isEditMode && styles.inputDisabled,
+                  isEditMode && [styles.inputDisabled, catTheme.inputDisabled],
                 ]}
                 placeholder="Category name"
-                placeholderTextColor={COLORS.gray3}
+                placeholderTextColor={colors.placeholder}
                 value={formData.code}
                 onChangeText={text =>
                   setFormData({...formData, code: text.toUpperCase()})
@@ -309,15 +359,20 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
                 <Text style={styles.errorText}>{errors.code}</Text>
               ) : null}
               {isEditMode ? (
-                <Text style={styles.helpText}>
+                <Text style={[styles.helpText, catTheme.helpText]}>
                   Category name cannot be changed after creation.
                 </Text>
               ) : null}
 
               <TextInput
-                style={[styles.input, styles.inputSpaced, errors.description && styles.inputError]}
+                style={[
+                  styles.input,
+                  catTheme.input,
+                  styles.inputSpaced,
+                  errors.description && styles.inputError,
+                ]}
                 placeholder="Description (optional)"
-                placeholderTextColor={COLORS.gray3}
+                placeholderTextColor={colors.placeholder}
                 value={formData.description}
                 onChangeText={text =>
                   setFormData({...formData, description: text})
@@ -328,22 +383,23 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
               {errors.description ? (
                 <Text style={styles.errorText}>{errors.description}</Text>
               ) : (
-                <Text style={styles.helpText}>
+                <Text style={[styles.helpText, catTheme.helpText]}>
                   Add a clearer label for reporting and search.
                 </Text>
               )}
             </View>
 
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Parent category</Text>
+              <Text style={[styles.sectionTitle, catTheme.sectionTitle]}>Parent category</Text>
               <TouchableOpacity
-                style={styles.parentRow}
+                style={[styles.parentRow, catTheme.parentRow]}
                 onPress={() => setParentPickerVisible(true)}
                 activeOpacity={0.7}>
                 <Text
                   style={[
                     styles.parentRowText,
-                    !formData.parent_id && styles.parentRowPlaceholder,
+                    catTheme.parentRowText,
+                    !formData.parent_id && [styles.parentRowPlaceholder, catTheme.parentRowPlaceholder],
                   ]}>
                   {getSelectedParentLabel()}
                 </Text>
@@ -351,13 +407,13 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
               </TouchableOpacity>
             </View>
 
-            <View style={styles.sectionDivider} />
+            <View style={[styles.sectionDivider, catTheme.sectionDivider]} />
 
             <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Channels</Text>
-              <View style={styles.channelsCard}>
-                <Text style={styles.channelsTitle}>Available in POS</Text>
-                <Text style={styles.channelsText}>
+              <Text style={[styles.sectionTitle, catTheme.sectionTitle]}>Channels</Text>
+              <View style={[styles.channelsCard, catTheme.channelsCard]}>
+                <Text style={[styles.channelsTitle, catTheme.channelsTitle]}>Available in POS</Text>
+                <Text style={[styles.channelsText, catTheme.channelsText]}>
                   This category will appear in your product flow and can be used
                   across your selling channels.
                 </Text>
@@ -377,9 +433,11 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
           setParentSearchQuery('');
         }}>
         <View style={styles.pickerModalOverlay}>
-          <View style={styles.pickerModalContent}>
-            <View style={styles.pickerModalHeader}>
-              <Text style={styles.pickerModalTitle}>Select Parent Category</Text>
+          <View style={[styles.pickerModalContent, catTheme.pickerModalContent]}>
+            <View style={[styles.pickerModalHeader, catTheme.pickerModalHeader]}>
+              <Text style={[styles.pickerModalTitle, catTheme.pickerModalTitle]}>
+                Select Parent Category
+              </Text>
               <TouchableOpacity
                 onPress={() => {
                   setParentPickerVisible(false);
@@ -388,24 +446,25 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
                 style={styles.pickerCloseButton}>
                 <Image
                   source={icons.cross}
-                  style={styles.pickerCloseIcon}
+                  style={[styles.pickerCloseIcon, catTheme.pickerCloseIcon]}
                   resizeMode="contain"
                 />
               </TouchableOpacity>
             </View>
 
             {/* Search Bar */}
-            <View style={styles.pickerSearchContainer}>
-              <View style={styles.pickerSearchInputContainer}>
+            <View style={[styles.pickerSearchContainer, catTheme.pickerSearchContainer]}>
+              <View
+                style={[styles.pickerSearchInputContainer, catTheme.pickerSearchInputContainer]}>
                 <Image
                   source={icons.search}
-                  style={styles.pickerSearchIcon}
+                  style={[styles.pickerSearchIcon, catTheme.pickerSearchIcon]}
                   resizeMode="contain"
                 />
                 <TextInput
-                  style={styles.pickerSearchInput}
+                  style={[styles.pickerSearchInput, catTheme.pickerSearchInput]}
                   placeholder="Search categories..."
-                  placeholderTextColor={COLORS.gray3}
+                  placeholderTextColor={colors.placeholder}
                   value={parentSearchQuery}
                   onChangeText={setParentSearchQuery}
                   autoFocus={true}
@@ -424,7 +483,11 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
                 <TouchableOpacity
                   style={[
                     styles.pickerItem,
-                    formData.parent_id === item.code && styles.pickerItemSelected,
+                    catTheme.pickerItem,
+                    formData.parent_id === item.code && [
+                      styles.pickerItemSelected,
+                      catTheme.pickerItemSelected,
+                    ],
                   ]}
                   onPress={() => {
                     setFormData({
@@ -438,6 +501,7 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
                   <Text
                     style={[
                       styles.pickerItemText,
+                      catTheme.pickerItemText,
                       formData.parent_id === item.code &&
                         styles.pickerItemTextSelected,
                     ]}>
@@ -454,7 +518,7 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
               )}
               ListEmptyComponent={
                 <View style={styles.pickerEmptyContainer}>
-                  <Text style={styles.pickerEmptyText}>
+                  <Text style={[styles.pickerEmptyText, catTheme.pickerEmptyText]}>
                     No categories found
                   </Text>
                 </View>

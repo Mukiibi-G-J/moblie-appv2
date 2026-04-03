@@ -61,6 +61,8 @@ const screens = {
   analytics: 'Analytics',
   expenses: 'Expenses',
   expenseHistory: 'Expense History',
+  /** Stack screen label (drawer / docs); same intent as page name "Sales History". */
+  salesHistory: 'Sales History',
   purchases: 'Purchases',
   suppliers: 'Suppliers',
   payments: 'Payments',
@@ -85,10 +87,6 @@ const bottom_tabs = [
   },
   {
     id: 2,
-    label: screens.sales,
-  },
-  {
-    id: 3,
     label: screens.more,
   },
 ];

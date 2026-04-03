@@ -11,18 +11,21 @@ import {
   Platform,
   ScrollView,
   Dimensions,
+  Image,
+  StatusBar,
 } from 'react-native';
-import {SafeAreaView} from 'react-native-safe-area-context';
+import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useNavigation} from '@react-navigation/native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import ReactNativeModal from 'react-native-modal';
 import {Expense} from '../../@types/expense';
 import {ExpenseServices} from '../../services/ExpenseServices';
 import ExpenseListItem from './ExpenseListItem';
-import Header from '../../Components/Header';
 import {COLORS, FONTS, SIZES} from '../../constants';
+import icons from '../../constants/icons';
 import {usePermissions} from '../../hooks/usePermissions';
 import {PAGE_NAMES} from '../../constants/pageNames';
+import {useTheme} from '../../context/ThemeContext';
 
 type DateFilter = 'today' | 'last7days' | 'last30days' | 'last3months' | 'alltime';
 const DATE_FILTERS: {id: DateFilter; label: string}[] = [
@@ -36,9 +39,72 @@ const STATUS_OPTIONS = ['Posted', 'Reversed', 'All'] as const;
 
 const ExpenseHistory = () => {
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
   const {canRead} = usePermissions();
   const PAGE_NAME = PAGE_NAMES.EXPENSE_HISTORY;
   const hasAccess = canRead(PAGE_NAME);
+  const {colors, isDark} = useTheme();
+  const t = useMemo(
+    () => ({
+      container: {backgroundColor: colors.background},
+      topHeader: {backgroundColor: colors.background},
+      headerBorder: {borderBottomColor: colors.border},
+      headerRoundButton: {
+        borderColor: colors.border,
+        backgroundColor: colors.surface,
+      },
+      headerRoundIcon: {tintColor: colors.textPrimary},
+      topTitle: {color: colors.textPrimary},
+      filterSection: {backgroundColor: colors.background},
+      searchPill: {
+        borderColor: colors.border,
+        backgroundColor: colors.screenMuted,
+      },
+      searchIcon: {tintColor: colors.iconMuted},
+      searchInput: {color: colors.textPrimary},
+      filterInlineIcon: {tintColor: colors.iconMuted},
+      filterSummaryRow: {backgroundColor: colors.screenMuted},
+      filterSummaryLabel: {color: colors.textSecondary},
+      filterSummaryValue: {color: colors.textPrimary},
+      dateChip: {backgroundColor: colors.screenMuted},
+      dateChipText: {color: colors.textSecondary},
+      customDateBtn: {backgroundColor: colors.screenMuted},
+      filterChip: {backgroundColor: colors.screenMuted},
+      filterChipText: {color: colors.textSecondary},
+      summaryContainer: {backgroundColor: colors.background},
+      summaryPrimary: isDark
+        ? {
+            backgroundColor: 'rgba(9, 146, 104, 0.2)',
+            borderColor: 'rgba(74, 222, 128, 0.35)',
+          }
+        : {backgroundColor: '#F0FFF7', borderColor: '#C7F1DA'},
+      summarySecondary: isDark
+        ? {
+            backgroundColor: 'rgba(47, 83, 216, 0.22)',
+            borderColor: 'rgba(147, 180, 255, 0.35)',
+          }
+        : {backgroundColor: '#F2F5FF', borderColor: '#D3DBFF'},
+      summaryLabel: {color: colors.textSecondary},
+      summaryValuePrimary: {color: isDark ? '#4ADE80' : '#099268'},
+      summaryValueSecondary: {color: isDark ? '#93B4FF' : '#2F53D8'},
+      summarySubtext: {color: colors.textSecondary},
+      emptyTitle: {color: colors.textSecondary},
+      emptyBody: {color: colors.textSecondary},
+      loadingText: {color: colors.textSecondary},
+      accessContainer: {backgroundColor: colors.background},
+      accessMessage: {color: colors.textSecondary},
+      bottomSheetContent: {backgroundColor: colors.surface},
+      sheetHandle: {backgroundColor: colors.iconMuted},
+      sheetHeader: {borderBottomColor: colors.border},
+      sheetTitle: {color: colors.textPrimary},
+      clearFiltersBtn: {backgroundColor: colors.screenMuted},
+      sheetCloseBtn: {backgroundColor: colors.backButtonBg},
+      sheetCloseText: {color: colors.textSecondary},
+      sheetSection: {borderBottomColor: colors.border},
+      sheetSectionTitle: {color: colors.textPrimary},
+    }),
+    [colors, isDark],
+  );
 
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(false);
@@ -244,6 +310,7 @@ const ExpenseHistory = () => {
             key={filter.id}
             style={[
               styles.dateFilterChip,
+              t.dateChip,
               dateFilter === filter.id && styles.dateFilterChipActive,
             ]}
             onPress={() => {
@@ -253,6 +320,7 @@ const ExpenseHistory = () => {
             <Text
               style={[
                 styles.dateFilterChipText,
+                t.dateChipText,
                 dateFilter === filter.id && styles.dateFilterChipTextActive,
               ]}>
               {filter.label}
@@ -261,7 +329,7 @@ const ExpenseHistory = () => {
         ))}
       </View>
       <TouchableOpacity
-        style={styles.customDateButton}
+        style={[styles.customDateButton, t.customDateBtn]}
         onPress={() => {
           setDatePickerMode('from');
           setIsDatePickerVisible(true);
@@ -281,12 +349,12 @@ const ExpenseHistory = () => {
       animationOut="slideOutDown"
       useNativeDriver={true}
       backdropOpacity={0.5}>
-      <View style={styles.bottomSheetContent}>
+      <View style={[styles.bottomSheetContent, t.bottomSheetContent]}>
         {/* Drag Handle */}
-        <View style={styles.bottomSheetHandle} />
+        <View style={[styles.bottomSheetHandle, t.sheetHandle]} />
         
-        <View style={styles.bottomSheetHeader}>
-          <Text style={styles.bottomSheetTitle}>Filters</Text>
+        <View style={[styles.bottomSheetHeader, t.sheetHeader]}>
+          <Text style={[styles.bottomSheetTitle, t.sheetTitle]}>Filters</Text>
           <View style={styles.bottomSheetHeaderActions}>
             <TouchableOpacity
               onPress={() => {
@@ -294,13 +362,13 @@ const ExpenseHistory = () => {
                 setStatusFilter('Posted');
                 setPage(1);
               }}
-              style={styles.clearFiltersButton}>
+              style={[styles.clearFiltersButton, t.clearFiltersBtn]}>
               <Text style={styles.clearFiltersButtonText}>Clear All</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => setShowFilters(false)}
-              style={styles.bottomSheetCloseButton}>
-              <Text style={styles.bottomSheetCloseText}>✕</Text>
+              style={[styles.bottomSheetCloseButton, t.sheetCloseBtn]}>
+              <Text style={[styles.bottomSheetCloseText, t.sheetCloseText]}>✕</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -311,20 +379,21 @@ const ExpenseHistory = () => {
           showsVerticalScrollIndicator={true}
           nestedScrollEnabled={true}>
           {/* Date Range Filters */}
-          <View style={styles.bottomSheetSection}>
-            <Text style={styles.bottomSheetSectionTitle}>Date Range</Text>
+          <View style={[styles.bottomSheetSection, t.sheetSection]}>
+            <Text style={[styles.bottomSheetSectionTitle, t.sheetSectionTitle]}>Date Range</Text>
             {renderDateFilters()}
           </View>
 
           {/* Status Filter Chips */}
-          <View style={styles.bottomSheetSection}>
-            <Text style={styles.bottomSheetSectionTitle}>Status</Text>
+          <View style={[styles.bottomSheetSection, t.sheetSection]}>
+            <Text style={[styles.bottomSheetSectionTitle, t.sheetSectionTitle]}>Status</Text>
             <View style={styles.filterChipsContainer}>
               {STATUS_OPTIONS.map(status => (
                 <TouchableOpacity
                   key={status}
                   style={[
                     styles.filterChip,
+                    t.filterChip,
                     statusFilter === status && styles.filterChipActive,
                   ]}
                   onPress={() => {
@@ -334,6 +403,7 @@ const ExpenseHistory = () => {
                   <Text
                     style={[
                       styles.filterChipText,
+                      t.filterChipText,
                       statusFilter === status && styles.filterChipTextActive,
                     ]}>
                     {status}
@@ -348,28 +418,56 @@ const ExpenseHistory = () => {
   );
 
   const renderFilters = () => (
-    <View style={styles.filterSection}>
-      {/* Search Bar with Filter Button */}
+    <View style={[styles.filterSection, t.filterSection]}>
       <View style={styles.searchContainer}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search posted expenses..."
-          placeholderTextColor={COLORS.gray}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-        <TouchableOpacity
-          style={styles.filterButton}
-          onPress={() => setShowFilters(true)}>
-          <Text style={styles.filterButtonText}>Filters</Text>
-        </TouchableOpacity>
+        <View style={[styles.searchPill, t.searchPill]}>
+          <Image source={icons.search as any} style={[styles.searchIcon, t.searchIcon]} />
+          <TextInput
+            style={[styles.searchInput, t.searchInput]}
+            placeholder="Search expense history"
+            placeholderTextColor={colors.placeholder}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+          <TouchableOpacity
+            style={styles.filterInlineButton}
+            onPress={() => setShowFilters(true)}
+            activeOpacity={0.7}>
+            <Image source={icons.filter as any} style={[styles.filterInlineIcon, t.filterInlineIcon]} />
+          </TouchableOpacity>
+        </View>
       </View>
 
-      {/* Filter summary */}
-      <View style={styles.filterSummaryRow}>
-        <Text style={styles.filterSummaryLabel}>Active filters: </Text>
-        <Text style={styles.filterSummaryValue}>{activeFilterLabel}</Text>
+      <View style={[styles.filterSummaryRow, t.filterSummaryRow]}>
+        <Text style={[styles.filterSummaryLabel, t.filterSummaryLabel]}>Active filters:</Text>
+        <Text style={[styles.filterSummaryValue, t.filterSummaryValue]}>{activeFilterLabel}</Text>
       </View>
+    </View>
+  );
+
+  const renderTopBar = () => (
+    <View
+      style={[
+        styles.topHeader,
+        t.topHeader,
+        {
+          paddingTop: Math.max(
+            insets.top,
+            Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0,
+            12,
+          ),
+          borderBottomWidth: StyleSheet.hairlineWidth,
+        },
+        t.headerBorder,
+      ]}>
+      <TouchableOpacity
+        style={[styles.headerRoundButton, t.headerRoundButton]}
+        onPress={() => navigation.goBack()}
+        activeOpacity={0.7}>
+        <Image source={icons.back as any} style={[styles.headerRoundIcon, t.headerRoundIcon]} />
+      </TouchableOpacity>
+      <Text style={[styles.topTitle, t.topTitle]}>Expense History</Text>
+      <View style={styles.headerTrailingSpacer} />
     </View>
   );
 
@@ -396,8 +494,8 @@ const ExpenseHistory = () => {
 
   const renderEmptyState = () => (
     <View style={styles.emptyContainer}>
-      <Text style={styles.emptyTitle}>No posted expenses</Text>
-      <Text style={styles.emptyBody}>
+      <Text style={[styles.emptyTitle, t.emptyTitle]}>No posted expenses</Text>
+      <Text style={[styles.emptyBody, t.emptyBody]}>
         Adjust your search or date filters to see more results.
       </Text>
     </View>
@@ -405,9 +503,9 @@ const ExpenseHistory = () => {
 
   if (!hasAccess) {
     return (
-      <View style={styles.accessDeniedContainer}>
+      <View style={[styles.accessDeniedContainer, t.accessContainer]}>
         <Text style={styles.accessDeniedTitle}>Access Denied</Text>
-        <Text style={styles.accessDeniedMessage}>
+        <Text style={[styles.accessDeniedMessage, t.accessMessage]}>
           You don't have permission to view expense history.
         </Text>
       </View>
@@ -415,20 +513,15 @@ const ExpenseHistory = () => {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <Header
-        title="EXPENSE HISTORY"
-        showBack={true}
-        onBackPress={() => navigation.goBack()}
-      />
-
+    <SafeAreaView style={[styles.container, t.container]} edges={['left', 'right', 'bottom']}>
+      {renderTopBar()}
       {renderFilters()}
       {renderSummary()}
 
       {loading && page === 1 ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={COLORS.primary} />
-          <Text style={styles.loadingText}>Loading expense history...</Text>
+          <Text style={[styles.loadingText, t.loadingText]}>Loading expense history...</Text>
         </View>
       ) : (
         <FlatList
@@ -437,7 +530,12 @@ const ExpenseHistory = () => {
           renderItem={({item}) => <ExpenseListItem expense={item} />}
           ListEmptyComponent={!loading ? renderEmptyState : null}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={[COLORS.primary]}
+              tintColor={COLORS.primary}
+            />
           }
           onEndReached={handleLoadMore}
           onEndReachedThreshold={0.5}
@@ -481,13 +579,47 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.white,
   },
+  topHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: SIZES.padding,
+    paddingBottom: 14,
+    backgroundColor: COLORS.white,
+  },
+  headerRoundButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.lightGray1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.white,
+  },
+  headerRoundIcon: {
+    width: 20,
+    height: 20,
+    tintColor: COLORS.black,
+  },
+  topTitle: {
+    flex: 1,
+    textAlign: 'center',
+    ...FONTS.h3,
+    fontSize: 17,
+    fontWeight: '700',
+    color: COLORS.black,
+    letterSpacing: -0.2,
+  },
+  headerTrailingSpacer: {
+    width: 40,
+    height: 40,
+  },
   filterSection: {
     backgroundColor: COLORS.white,
     paddingHorizontal: SIZES.padding,
-    paddingTop: SIZES.base,
+    paddingTop: 4,
     paddingBottom: SIZES.base,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray2,
   },
   dateFilterContainer: {
     marginBottom: SIZES.base,
@@ -527,30 +659,41 @@ const styles = StyleSheet.create({
     color: COLORS.primary,
   },
   searchContainer: {
-    flexDirection: 'row',
     marginBottom: SIZES.base / 2,
+  },
+  searchPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    minHeight: 48,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderColor: COLORS.lightGray2,
+    backgroundColor: COLORS.lightGray1,
+  },
+  searchIcon: {
+    width: 20,
+    height: 20,
+    marginRight: 10,
+    tintColor: COLORS.gray,
   },
   searchInput: {
     flex: 1,
-    height: 40,
-    backgroundColor: COLORS.lightGray1,
-    borderRadius: SIZES.radius,
-    paddingHorizontal: SIZES.base,
     ...FONTS.body3,
     color: COLORS.black,
-    marginRight: SIZES.base,
+    minHeight: 48,
+    paddingVertical: 12,
   },
-  filterButton: {
-    paddingHorizontal: SIZES.radius,
-    height: 40,
-    backgroundColor: COLORS.primary,
-    borderRadius: SIZES.radius,
+  filterInlineButton: {
+    padding: 8,
+    marginRight: -4,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  filterButtonText: {
-    ...FONTS.body3,
-    color: COLORS.white,
+  filterInlineIcon: {
+    width: 20,
+    height: 20,
+    tintColor: COLORS.gray,
   },
   sectionLabel: {
     ...FONTS.body4,
@@ -564,7 +707,7 @@ const styles = StyleSheet.create({
   },
   filterSummaryRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     backgroundColor: COLORS.lightGray1,
     borderRadius: SIZES.radius,
     paddingHorizontal: SIZES.base,
@@ -578,12 +721,13 @@ const styles = StyleSheet.create({
   filterSummaryLabel: {
     ...FONTS.body5,
     color: COLORS.gray,
-    fontSize: 11,
+    fontSize: 12,
+    marginRight: 4,
   },
   filterSummaryValue: {
     ...FONTS.body4,
     color: COLORS.black,
-    fontSize: 11,
+    fontSize: 12,
     flex: 1,
   },
   filterChip: {
@@ -609,25 +753,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.padding,
     paddingVertical: SIZES.base,
     backgroundColor: COLORS.white,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray2,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 2,
   },
   summaryCard: {
     flex: 1,
-    padding: SIZES.base / 2,
+    padding: SIZES.base,
     marginHorizontal: SIZES.base / 2,
     borderRadius: SIZES.radius,
     borderWidth: 1,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 1,
   },
   summaryCardPrimary: {
     backgroundColor: '#F0FFF7',

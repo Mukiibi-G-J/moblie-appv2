@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import {FONTS, SIZES, COLORS} from '../constants';
+import {useTheme} from '../context/ThemeContext';
 
 interface FooterTotalProps {
   subTotal: number;
@@ -27,8 +28,9 @@ const FooterTotal: React.FC<FooterTotalProps> = ({
   printReceipt,
   setPrintReceipt,
 }) => {
+  const {colors} = useTheme();
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, {backgroundColor: colors.background}]}>
       <TouchableOpacity
         style={[
           styles.checkoutButton,
@@ -41,7 +43,7 @@ const FooterTotal: React.FC<FooterTotalProps> = ({
         ) : (
           <>
             <Text style={styles.checkoutButtonText}>
-              Charge USh{total?.toLocaleString() || '0'}
+              Charge UGX {total?.toLocaleString() || '0'}
             </Text>
             <Text style={styles.checkoutButtonSubtext}>
               {totalQuantity} {totalQuantity === 1 ? 'item' : 'items'}

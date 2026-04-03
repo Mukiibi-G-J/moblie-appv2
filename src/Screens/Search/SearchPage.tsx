@@ -114,17 +114,17 @@ const SearchPage = () => {
       },
     });
 
-    Toast.show({
-      type: 'success',
-      text1: 'Item Added',
-      text2: `${item.item_name} has been added to sale.`,
-    });
-
-    // Clear search and go back to cart
-    setSearchQuery('');
-    setSearchResults([]);
-    setHasSearched(false);
-    navigation.goBack();
+    setTimeout(() => {
+      Toast.show({
+        type: 'success',
+        text1: 'Item Added',
+        text2: `${item.item_name} has been added to sale.`,
+      });
+      setSearchQuery('');
+      setSearchResults([]);
+      setHasSearched(false);
+      navigation.goBack();
+    }, 0);
   };
 
   const openBarcodeScanner = () => {

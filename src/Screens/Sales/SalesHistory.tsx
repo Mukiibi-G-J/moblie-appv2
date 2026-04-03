@@ -1,34 +1,84 @@
-import React, {useEffect, useMemo, useState, useCallback} from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   ActivityIndicator,
   FlatList,
   Image,
+  Platform,
+  RefreshControl,
+  ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
-  Modal,
-  ScrollView,
-  RefreshControl,
-  TextInput,
+  Dimensions,
 } from 'react-native';
-import {useIsFocused} from '@react-navigation/native';
-import {COLORS, FONTS, SIZES} from '../../constants/theme';
-import icons from '../../constants/icons';
+import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
+import {useNavigation} from '@react-navigation/native';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import ReactNativeModal from 'react-native-modal';
+import Toast from 'react-native-toast-message';
+import {COLORS, FONTS, SIZES, icons} from '../../constants';
 import {
   fetchSalesData,
   fetchSalesSummary,
   fetchSalesUserSummary,
-  getSalesInvoice,
   fetchPaymentMethods,
+  getCompanyInfo,
+  getSalesInvoice,
   PaymentMethod,
   SalesHistorySummary,
   SalesUserSummaryRow,
 } from '../../services/app.services';
+import PrintService, {
+  CompanyInfo,
+  PrintReceiptData,
+} from '../../services/PrintService';
+import {useAuth} from '../../context/Store';
 import {usePermissions} from '../../hooks/usePermissions';
 import {PAGE_NAMES} from '../../constants/pageNames';
+import {useTheme} from '../../context/ThemeContext';
+import SalesHistoryListItem, {
+  SalesHistoryListItemData,
+} from './SalesHistoryListItem';
+import SalesInvoiceStatusBadge from './SalesInvoiceStatusBadge';
 
-type SalesHistoryFilter = 'today' | 'last7days' | 'last30days';
+type DateFilter =
+  | 'today'
+  | 'last7days'
+  | 'last30days'
+  | 'last3months'
+  | 'alltime';
+
+const DATE_FILTERS: {id: DateFilter; label: string}[] = [
+  {id: 'today', label: 'Today'},
+  {id: 'last7days', label: 'Last 7 days'},
+  {id: 'last30days', label: 'Last 30 days'},
+  {id: 'last3months', label: 'Last 3 months'},
+  {id: 'alltime', label: 'All time'},
+];
+
+/** Calendar YYYY-MM-DD in local timezone (toISOString() is UTC and shifts the day). */
+function formatDateYmdLocal(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+const STATUS_OPTIONS = ['All', 'Posted', 'Draft'] as const;
+const PAYMENT_STATUS_OPTIONS = [
+  {id: 'all' as const, label: 'All'},
+  {id: 'paid' as const, label: 'Paid'},
+  {id: 'unpaid' as const, label: 'Unpaid'},
+];
 
 type SalesLine = {
   id: number;
@@ -40,102 +90,223 @@ type SalesLine = {
   unit_of_measure?: string;
 };
 
-type SalesInvoice = {
-  id?: number;
-  invoice_no?: string;
-  customer_name?: string;
-  document_date?: string;
-  total_amount?: number;
-  payment_method_name?: string;
-  status?: 'Draft' | 'Open' | 'Posted' | 'Cancelled';
+type SalesInvoice = SalesHistoryListItemData & {
   user_name?: string;
   lines?: SalesLine[];
+  created_at?: string;
 };
 
-const FILTERS: {id: SalesHistoryFilter; label: string}[] = [
-  {id: 'today', label: 'Today'},
-  {id: 'last7days', label: 'Last 7 days'},
-  {id: 'last30days', label: 'Last 30 days'},
-];
+function isPostedSale(status?: string) {
+  return String(status || '').toLowerCase() === 'posted';
+}
+
+function mapSalesInvoiceToReceiptData(
+  invoice: SalesInvoice,
+  companyInfo: CompanyInfo | undefined,
+  username: string,
+): PrintReceiptData {
+  const lines = invoice.lines || [];
+  let cartItems = lines.map(line => ({
+    item_name: line.item_name || 'Item',
+    quantity: Number.parseFloat(String(line.quantity)) || 0,
+    unit_price: Number.parseFloat(String(line.unit_price)) || 0,
+  }));
+  const subFromLines = cartItems.reduce(
+    (s, i) => s + i.quantity * i.unit_price,
+    0,
+  );
+  const totalRaw = Number(invoice.total_amount);
+  const total = Number.isFinite(totalRaw) ? totalRaw : subFromLines;
+  if (cartItems.length === 0 && total > 0) {
+    cartItems = [
+      {
+        item_name: 'Invoice total',
+        quantity: 1,
+        unit_price: total,
+      },
+    ];
+  }
+  const rawDate =
+    invoice.document_date ||
+    invoice.created_at ||
+    new Date().toISOString();
+  const saleDate =
+    typeof rawDate === 'string'
+      ? rawDate
+      : new Date(rawDate).toISOString();
+
+  return {
+    receiptId: invoice.invoice_no || String(invoice.id ?? ''),
+    username,
+    customerName: invoice.customer_name?.trim() || 'Walk-in customer',
+    cartItems,
+    subtotal: total,
+    total,
+    tax: 0,
+    discount: 0,
+    paymentMethod: invoice.payment_method_name || '—',
+    saleDate,
+    companyInfo,
+  };
+}
 
 const SalesHistory = () => {
+  const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
+  const {auth} = useAuth();
   const {canRead} = usePermissions();
   const PAGE_NAME = PAGE_NAMES.SALES_HISTORY;
-  const isFocused = useIsFocused();
-  const [activeFilter, setActiveFilter] = useState<SalesHistoryFilter>('today');
-  const [sales, setSales] = useState<SalesInvoice[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const [selectedItem, setSelectedItem] = useState<SalesInvoice | null>(null);
-  const [modalVisible, setModalVisible] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [filterModal, setFilterModal] = useState(false);
-  const [statusFilter, setStatusFilter] = useState<'all' | 'Posted' | 'Draft'>(
-    'Posted',
+  const hasAccess = canRead(PAGE_NAME);
+  const {colors, isDark} = useTheme();
+
+  const t = useMemo(
+    () => ({
+      container: {backgroundColor: colors.background},
+      topHeader: {backgroundColor: colors.background},
+      headerBorder: {borderBottomColor: colors.border},
+      headerRoundButton: {
+        borderColor: colors.border,
+        backgroundColor: colors.surface,
+      },
+      headerRoundIcon: {tintColor: colors.textPrimary},
+      topTitle: {color: colors.textPrimary},
+      filterSection: {backgroundColor: colors.background},
+      searchPill: {
+        borderColor: colors.border,
+        backgroundColor: colors.screenMuted,
+      },
+      searchIcon: {tintColor: colors.iconMuted},
+      searchInput: {color: colors.textPrimary},
+      filterInlineIcon: {tintColor: colors.iconMuted},
+      filterSummaryRow: {backgroundColor: colors.screenMuted},
+      filterSummaryLabel: {color: colors.textSecondary},
+      filterSummaryValue: {color: colors.textPrimary},
+      dateChip: {backgroundColor: colors.screenMuted},
+      dateChipText: {color: colors.textSecondary},
+      customDateBtn: {backgroundColor: colors.screenMuted},
+      filterChip: {backgroundColor: colors.screenMuted},
+      filterChipText: {color: colors.textSecondary},
+      summaryContainer: {backgroundColor: colors.background},
+      summaryPrimary: isDark
+        ? {
+            backgroundColor: 'rgba(9, 146, 104, 0.2)',
+            borderColor: 'rgba(74, 222, 128, 0.35)',
+          }
+        : {backgroundColor: '#F0FFF7', borderColor: '#C7F1DA'},
+      summarySecondary: isDark
+        ? {
+            backgroundColor: 'rgba(47, 83, 216, 0.22)',
+            borderColor: 'rgba(147, 180, 255, 0.35)',
+          }
+        : {backgroundColor: '#F2F5FF', borderColor: '#D3DBFF'},
+      summaryLabel: {color: colors.textSecondary},
+      summaryValuePrimary: {color: isDark ? '#4ADE80' : '#099268'},
+      summaryValueSecondary: {color: isDark ? '#93B4FF' : '#2F53D8'},
+      summarySubtext: {color: colors.textSecondary},
+      userChip: {
+        backgroundColor: colors.card,
+        borderColor: colors.border,
+      },
+      userChipName: {color: colors.textPrimary},
+      userChipMeta: {color: colors.textSecondary},
+      emptyTitle: {color: colors.textSecondary},
+      emptyBody: {color: colors.textSecondary},
+      loadingText: {color: colors.textSecondary},
+      accessContainer: {backgroundColor: colors.background},
+      accessMessage: {color: colors.textSecondary},
+      bottomSheetContent: {backgroundColor: colors.surface},
+      sheetHandle: {backgroundColor: colors.iconMuted},
+      sheetHeader: {borderBottomColor: colors.border},
+      sheetTitle: {color: colors.textPrimary},
+      clearFiltersBtn: {backgroundColor: colors.screenMuted},
+      sheetCloseBtn: {backgroundColor: colors.backButtonBg},
+      sheetCloseText: {color: colors.textSecondary},
+      sheetSection: {borderBottomColor: colors.border},
+      sheetSectionTitle: {color: colors.textPrimary},
+      detailBackdrop: {backgroundColor: colors.background},
+      detailCard: {
+        backgroundColor: colors.surface,
+        borderColor: colors.border,
+      },
+      detailTitle: {color: colors.textPrimary},
+      detailLabel: {color: colors.textSecondary},
+      detailValue: {color: colors.textPrimary},
+      lineRowBorder: {borderBottomColor: colors.border},
+    }),
+    [colors, isDark],
   );
+
+  const [sales, setSales] = useState<SalesInvoice[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+  const [dateFilter, setDateFilter] = useState<DateFilter>('last30days');
+  const [dateFrom, setDateFrom] = useState<string | null>(null);
+  const [dateTo, setDateTo] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] =
+    useState<(typeof STATUS_OPTIONS)[number]>('Posted');
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<
     'all' | 'paid' | 'unpaid'
   >('all');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(0);
-  const [totalCount, setTotalCount] = useState(0);
-  const itemsPerPage = 20;
-  const [summaryFromApi, setSummaryFromApi] = useState<SalesHistorySummary | null>(
+  const [paymentMethodIdFilter, setPaymentMethodIdFilter] = useState('');
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+  const [summaryFromApi, setSummaryFromApi] =
+    useState<SalesHistorySummary | null>(null);
+  const [userSummaries, setUserSummaries] = useState<SalesUserSummaryRow[]>([]);
+  const [showFilters, setShowFilters] = useState(false);
+  const [showDetail, setShowDetail] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<SalesInvoice | null>(null);
+  const [detailForModal, setDetailForModal] = useState<SalesInvoice | null>(
     null,
   );
-  const [userSummaries, setUserSummaries] = useState<SalesUserSummaryRow[]>([]);
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
-  const [paymentMethodIdFilter, setPaymentMethodIdFilter] = useState('');
-  const [detailForModal, setDetailForModal] = useState<SalesInvoice | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [printingReceipt, setPrintingReceipt] = useState(false);
+  const [isDatePickerVisible, setIsDatePickerVisible] = useState(false);
+  const [datePickerMode, setDatePickerMode] = useState<'from' | 'to' | null>(
+    null,
+  );
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const {startDate, endDate} = useMemo(() => {
-    // Get current date in local timezone (Uganda)
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth();
-    const day = now.getDate();
+    const today = new Date();
+    const end = new Date(
+      today.getFullYear(),
+      today.getMonth(),
+      today.getDate(),
+    );
+    let start = new Date(end);
 
-    // Create date objects in local timezone (not UTC)
-    const end = new Date(year, month, day);
-
-    let start = new Date(year, month, day);
-
-    if (activeFilter === 'last7days') {
-      start = new Date(year, month, day - 6);
-    } else if (activeFilter === 'last30days') {
-      start = new Date(year, month, day - 29);
+    if (dateFilter === 'today') {
+      start = new Date(end);
+    } else if (dateFilter === 'last7days') {
+      start.setDate(end.getDate() - 6);
+    } else if (dateFilter === 'last30days') {
+      start.setDate(end.getDate() - 29);
+    } else if (dateFilter === 'last3months') {
+      start.setMonth(end.getMonth() - 3);
+    } else {
+      return {startDate: null, endDate: null};
     }
 
-    // Format dates as YYYY-MM-DD in local timezone
-    const formatDate = (date: Date) => {
-      const y = date.getFullYear();
-      const m = String(date.getMonth() + 1).padStart(2, '0');
-      const d = String(date.getDate()).padStart(2, '0');
-      return `${y}-${m}-${d}`;
-    };
-
-    const formattedStart = formatDate(start);
-    const formattedEnd = formatDate(end);
-
-    // Debug logging to verify dates
-    console.log('SalesHistory: Date calculation:', {
-      now: now.toISOString(),
-      localDate: `${year}-${String(month + 1).padStart(2, '0')}-${String(
-        day,
-      ).padStart(2, '0')}`,
-      activeFilter,
-      startDate: formattedStart,
-      endDate: formattedEnd,
-    });
-
     return {
-      startDate: formattedStart,
-      endDate: formattedEnd,
+      startDate: formatDateYmdLocal(start),
+      endDate: formatDateYmdLocal(end),
     };
-  }, [activeFilter]);
+  }, [dateFilter]);
+
+  useEffect(() => {
+    if (dateFilter === 'alltime') {
+      setDateFrom(null);
+      setDateTo(null);
+    } else {
+      setDateFrom(startDate);
+      setDateTo(endDate);
+    }
+  }, [dateFilter, startDate, endDate]);
 
   useEffect(() => {
     let cancelled = false;
@@ -156,65 +327,70 @@ const SalesHistory = () => {
     };
   }, []);
 
-  const loadSales = async () => {
-    setIsLoading(true);
-    setError(null);
+  useEffect(() => {
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+    searchTimeoutRef.current = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+      setPage(1);
+    }, 400);
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, [searchQuery]);
 
+  const loadSales = useCallback(async () => {
+    if (!hasAccess) {
+      return;
+    }
     try {
-      console.log(
-        'SalesHistory: Fetching sales data from',
-        startDate,
-        'to',
-        endDate,
-      );
+      setLoading(true);
+      setError(null);
 
-      const filters: any = {
-        startDate,
-        endDate,
-        page: currentPage,
-        pageSize: itemsPerPage,
+      const filters: Parameters<typeof fetchSalesData>[0] = {
+        page,
+        pageSize: 20,
       };
 
-      // Apply status filter
-      if (statusFilter !== 'all') {
+      if (dateFrom) {
+        filters.startDate = dateFrom;
+      }
+      if (dateTo) {
+        filters.endDate = dateTo;
+      }
+      if (statusFilter !== 'All') {
         filters.status = statusFilter;
       }
-
-      // Apply payment status filter
       if (paymentStatusFilter === 'unpaid') {
         filters.paymentMethod = 'not_paid';
       } else if (paymentMethodIdFilter) {
         filters.paymentMethod = paymentMethodIdFilter;
       }
-
-      // Apply search
-      if (searchQuery.trim()) {
-        filters.search = searchQuery.trim();
+      const q = debouncedSearchQuery.trim();
+      if (q) {
+        filters.search = q;
       }
 
       const response = await fetchSalesData(filters);
+      const results = (response?.results || []) as SalesInvoice[];
 
-      console.log(
-        'SalesHistory: Received sales data:',
-        response?.results?.length || 0,
-        'items',
-      );
+      if (page === 1) {
+        setSales(results);
+      } else {
+        setSales(prev => [...prev, ...results]);
+      }
+      setHasMore(!!response?.next);
 
-      if (response && response.results && Array.isArray(response.results)) {
-        console.log(
-          'SalesHistory: Setting sales data, first item:',
-          response.results[0],
-        );
-        setSales(response.results);
-        setTotalCount(response.count || 0);
-        setTotalPages(Math.ceil((response.count || 0) / itemsPerPage));
-
+      if (page === 1) {
         const summaryFilters = {
-          startDate,
-          endDate,
-          status: statusFilter !== 'all' ? statusFilter : undefined,
+          startDate: dateFrom ?? undefined,
+          endDate: dateTo ?? undefined,
+          status: statusFilter !== 'All' ? statusFilter : undefined,
           paymentMethod: filters.paymentMethod,
-          search: searchQuery.trim() || undefined,
+          search: q || undefined,
         };
         const [summary, users] = await Promise.all([
           fetchSalesSummary(summaryFilters),
@@ -222,100 +398,134 @@ const SalesHistory = () => {
         ]);
         setSummaryFromApi(summary);
         setUserSummaries(users);
-      } else {
-        console.log('SalesHistory: Invalid response format:', response);
+      }
+    } catch {
+      setError('Unable to load sales history. Please try again.');
+      if (page === 1) {
         setSales([]);
-        setTotalPages(0);
-        setTotalCount(0);
         setSummaryFromApi(null);
         setUserSummaries([]);
       }
-    } catch (err: any) {
-      console.error('SalesHistory: Error loading sales:', {
-        message: err.message,
-        response: err.response?.data,
-        status: err.response?.status,
-      });
-      setError('Unable to load sales history. Please try again.');
-      setSales([]);
-      setTotalPages(0);
-      setTotalCount(0);
-      setSummaryFromApi(null);
-      setUserSummaries([]);
+      setHasMore(false);
     } finally {
-      setIsLoading(false);
-      setSearchLoading(false);
+      setLoading(false);
+      setRefreshing(false);
     }
-  };
-
-  useEffect(() => {
-    const debounceTimer = setTimeout(() => {
-      loadSales();
-    }, 500); // Debounce search
-
-    return () => clearTimeout(debounceTimer);
   }, [
-    startDate,
-    endDate,
-    currentPage,
+    hasAccess,
+    page,
+    dateFrom,
+    dateTo,
     statusFilter,
     paymentStatusFilter,
     paymentMethodIdFilter,
-    searchQuery,
+    debouncedSearchQuery,
   ]);
 
-  // Reload data when screen is focused (like Cart)
   useEffect(() => {
-    if (isFocused) {
-      loadSales();
+    if (!hasAccess) {
+      return;
     }
-  }, [isFocused]);
-
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    setCurrentPage(1);
-    await loadSales();
-    setRefreshing(false);
-  }, [
-    startDate,
-    endDate,
-    statusFilter,
-    paymentStatusFilter,
-    paymentMethodIdFilter,
-    searchQuery,
-  ]);
-
-  const handleSearch = (text: string) => {
-    setSearchQuery(text);
-    setCurrentPage(1); // Reset to first page when searching
-    setSearchLoading(true);
-  };
-
-  const handleApplyFilter = () => {
-    setCurrentPage(1); // Reset to first page when filtering
-    setFilterModal(false);
     loadSales();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    page,
+    dateFrom,
+    dateTo,
+    statusFilter,
+    paymentStatusFilter,
+    paymentMethodIdFilter,
+    debouncedSearchQuery,
+    hasAccess,
+  ]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    setHasMore(true);
+    if (page === 1) {
+      loadSales();
+    } else {
+      setPage(1);
+    }
+  }, [page, loadSales]);
+
+  const handleLoadMore = () => {
+    if (!loading && hasMore) {
+      setPage(p => p + 1);
+    }
   };
 
-  const handleClearFilter = () => {
-    setStatusFilter('Posted');
-    setPaymentStatusFilter('all');
-    setPaymentMethodIdFilter('');
-    setSearchQuery('');
-    setCurrentPage(1);
-    setFilterModal(false);
-  };
+  const pageRevenueFallback = useMemo(
+    () =>
+      sales.reduce((sum, inv) => {
+        const n = Number(inv?.total_amount);
+        return sum + (Number.isFinite(n) ? n : 0);
+      }, 0),
+    [sales],
+  );
 
-  const hasActiveFilters =
-    statusFilter !== 'Posted' ||
-    paymentStatusFilter !== 'all' ||
-    paymentMethodIdFilter !== '' ||
-    searchQuery.trim() !== '';
+  const pageProductsFallback = useMemo(
+    () =>
+      sales.reduce((sum, inv) => {
+        const lineQty = (inv.lines || []).reduce(
+          (ls, line) => ls + (parseInt(String(line.quantity), 10) || 0),
+          0,
+        );
+        return sum + lineQty;
+      }, 0),
+    [sales],
+  );
+
+  const activeFilterLabel = useMemo(() => {
+    const parts: string[] = [];
+    let dateLabel = 'All time';
+    if (dateFilter !== 'alltime') {
+      const match = DATE_FILTERS.find(f => f.id === dateFilter);
+      dateLabel = match ? match.label : 'Custom range';
+    } else if (dateFrom && dateTo) {
+      dateLabel = `${dateFrom} → ${dateTo}`;
+    }
+    parts.push(dateLabel);
+
+    const statusLabel =
+      statusFilter === 'All' ? 'All statuses' : `${statusFilter} only`;
+    parts.push(statusLabel);
+
+    const pay =
+      paymentStatusFilter === 'all'
+        ? 'Any payment'
+        : paymentStatusFilter === 'paid'
+          ? 'Paid'
+          : 'Unpaid';
+    parts.push(pay);
+
+    if (paymentMethodIdFilter && paymentStatusFilter !== 'unpaid') {
+      const pm = paymentMethods.find(
+        m => String(m.id) === paymentMethodIdFilter,
+      );
+      parts.push(pm ? pm.code || pm.description : 'Method');
+    }
+
+    if (debouncedSearchQuery.trim()) {
+      parts.push(`Search: "${debouncedSearchQuery.trim()}"`);
+    }
+
+    return parts.join(' · ');
+  }, [
+    dateFilter,
+    dateFrom,
+    dateTo,
+    statusFilter,
+    paymentStatusFilter,
+    paymentMethodIdFilter,
+    paymentMethods,
+    debouncedSearchQuery,
+  ]);
 
   const openSaleDetail = async (item: SalesInvoice) => {
     setSelectedItem(item);
     setDetailForModal(null);
-    setModalVisible(true);
+    setShowDetail(true);
     if (item.id == null) {
       setDetailForModal(item);
       return;
@@ -335,172 +545,483 @@ const SalesHistory = () => {
     }
   };
 
-  const closeDetailModal = () => {
-    setModalVisible(false);
+  const closeDetail = () => {
+    setShowDetail(false);
     setDetailForModal(null);
     setSelectedItem(null);
     setDetailLoading(false);
   };
 
-  const renderPagination = () => {
-    if (totalPages <= 1) return null;
+  const prepareInvoiceForPrint = useCallback(async (base: SalesInvoice) => {
+    if (base.id == null) {
+      return base;
+    }
+    if (base.lines && base.lines.length > 0) {
+      return base;
+    }
+    try {
+      const full = await getSalesInvoice(base.id);
+      return {
+        ...base,
+        ...full,
+        lines: full?.lines ?? base.lines,
+      } as SalesInvoice;
+    } catch {
+      return base;
+    }
+  }, []);
 
-    return (
-      <View style={styles.paginationContainer}>
-        <TouchableOpacity
-          style={[
-            styles.pageButton,
-            currentPage === 1 && styles.disabledButton,
-          ]}
-          onPress={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-          disabled={currentPage === 1}
-          activeOpacity={0.7}>
-          <Text
-            style={
-              currentPage === 1
-                ? styles.disabledButtonText
-                : styles.pageButtonText
-            }>
-            ⟨ Previous
-          </Text>
-        </TouchableOpacity>
-
-        <View style={styles.pageInfoContainer}>
-          <Text style={styles.pageInfo}>
-            Page {currentPage} of {totalPages || 0}
-          </Text>
-        </View>
-
-        <TouchableOpacity
-          style={[
-            styles.pageButton,
-            currentPage === (totalPages || 0) && styles.disabledButton,
-          ]}
-          onPress={() =>
-            setCurrentPage(prev => Math.min(totalPages || 0, prev + 1))
+  const handlePrintReceipt = useCallback(
+    async (invoice: SalesInvoice) => {
+      if (!isPostedSale(invoice.status)) {
+        Toast.show({
+          type: 'info',
+          text1: 'Not available',
+          text2: 'Only posted sales can be printed.',
+        });
+        return;
+      }
+      if (Platform.OS !== 'android') {
+        Toast.show({
+          type: 'info',
+          text1: 'Printing',
+          text2: 'Receipt printing is available on Android.',
+        });
+        return;
+      }
+      setPrintingReceipt(true);
+      try {
+        const prepared = await prepareInvoiceForPrint(invoice);
+        let companyInfo: CompanyInfo | undefined;
+        try {
+          const companyResponse = await getCompanyInfo();
+          const c = companyResponse.data?.company;
+          if (c) {
+            companyInfo = {
+              name: c.name || 'ZENTRO APP',
+              logo: c.logo || '',
+              address: c.address || '',
+              phone: c.phone || '',
+              email: c.email || '',
+              tin: c.tin || '',
+              vatNo: c.vatNo || '',
+            };
           }
-          disabled={currentPage === (totalPages || 0)}
-          activeOpacity={0.7}>
-          <Text
-            style={
-              currentPage === (totalPages || 0)
-                ? styles.disabledButtonText
-                : styles.pageButtonText
-            }>
-            Next ⟩
-          </Text>
-        </TouchableOpacity>
-      </View>
-    );
+        } catch {
+          /* optional */
+        }
+        const printService = PrintService.getInstance();
+        const connected = await printService.checkConnection();
+        if (!connected) {
+          Toast.show({
+            type: 'info',
+            text1: 'No printer',
+            text2: 'Connect a printer in Settings to print receipts.',
+          });
+          return;
+        }
+        const cashier =
+          auth.username?.trim() ||
+          auth.full_name?.trim() ||
+          'Cashier';
+        const receiptData = mapSalesInvoiceToReceiptData(
+          prepared,
+          companyInfo,
+          cashier,
+        );
+        const result = await printService.printReceipt(receiptData);
+        if (result) {
+          Toast.show({
+            type: 'success',
+            text1: 'Receipt printed',
+            text2: 'Sent to printer',
+          });
+        } else {
+          Toast.show({
+            type: 'error',
+            text1: 'Print failed',
+            text2: 'Could not print. Check the printer connection.',
+          });
+        }
+      } catch {
+        Toast.show({
+          type: 'error',
+          text1: 'Print error',
+          text2: 'Something went wrong.',
+        });
+      } finally {
+        setPrintingReceipt(false);
+      }
+    },
+    [auth.full_name, auth.username, prepareInvoiceForPrint],
+  );
+
+  const handleDatePickerChange = (event: any, selectedDate?: Date) => {
+    if (Platform.OS === 'android') {
+      setIsDatePickerVisible(false);
+    }
+    if (event.type === 'dismissed') {
+      setIsDatePickerVisible(false);
+      setDatePickerMode(null);
+      return;
+    }
+    if (selectedDate && datePickerMode) {
+      const dateStr = formatDateYmdLocal(selectedDate);
+      if (datePickerMode === 'from') {
+        setDateFrom(dateStr);
+        if (Platform.OS === 'ios') {
+          setDatePickerMode('to');
+        } else {
+          setTimeout(() => {
+            setIsDatePickerVisible(true);
+            setDatePickerMode('to');
+          }, 100);
+        }
+      } else {
+        setDateTo(dateStr);
+        setDatePickerMode(null);
+        setIsDatePickerVisible(false);
+        setDateFilter('alltime');
+        setPage(1);
+      }
+    }
   };
 
-  const pageRevenueFallback = useMemo(() => {
-    return sales.reduce(
-      (sum, invoice) => sum + (invoice?.total_amount || 0),
-      0,
-    );
-  }, [sales]);
-
-  const pageProductsFallback = useMemo(() => {
-    return sales.reduce((sum, inv) => {
-      const lineQty = (inv.lines || []).reduce(
-        (ls, line) => ls + (parseInt(String(line.quantity), 10) || 0),
-        0,
-      );
-      return sum + lineQty;
-    }, 0);
-  }, [sales]);
-
-  const renderFilterPills = () => (
-    <View style={styles.filterRow}>
-      {FILTERS.map(filter => {
-        const isActive = activeFilter === filter.id;
-        return (
+  const renderDateFilters = () => (
+    <View style={styles.dateFilterContainer}>
+      <View style={styles.dateFilterRow}>
+        {DATE_FILTERS.map(filter => (
           <TouchableOpacity
             key={filter.id}
-            style={[styles.filterPill, isActive && styles.filterPillActive]}
-            onPress={() => setActiveFilter(filter.id)}
-            activeOpacity={0.7}>
+            style={[
+              styles.dateFilterChip,
+              t.dateChip,
+              dateFilter === filter.id && styles.dateFilterChipActive,
+            ]}
+            onPress={() => {
+              setDateFilter(filter.id);
+              setPage(1);
+            }}>
             <Text
               style={[
-                styles.filterLabel,
-                isActive && styles.filterLabelActive,
+                styles.dateFilterChipText,
+                t.dateChipText,
+                dateFilter === filter.id && styles.dateFilterChipTextActive,
               ]}>
               {filter.label}
             </Text>
           </TouchableOpacity>
-        );
-      })}
+        ))}
+      </View>
+      <TouchableOpacity
+        style={[styles.customDateButton, t.customDateBtn]}
+        onPress={() => {
+          setDatePickerMode('from');
+          setIsDatePickerVisible(true);
+        }}>
+        <Text style={styles.customDateButtonText}>Custom range</Text>
+      </TouchableOpacity>
     </View>
   );
 
-  const renderSummaryCards = () => {
-    const invoiceCount =
-      summaryFromApi?.total_invoices ?? totalCount ?? sales.length;
-    const revenue = summaryFromApi?.total_sales ?? pageRevenueFallback;
-    const productsSold =
-      summaryFromApi?.total_products ?? pageProductsFallback;
+  const renderFilterBottomSheet = () => (
+    <ReactNativeModal
+      isVisible={showFilters}
+      onBackdropPress={() => setShowFilters(false)}
+      onBackButtonPress={() => setShowFilters(false)}
+      style={styles.bottomSheet}
+      animationIn="slideInUp"
+      animationOut="slideOutDown"
+      useNativeDriver
+      backdropOpacity={0.5}>
+      <View style={[styles.bottomSheetContent, t.bottomSheetContent]}>
+        <View style={[styles.bottomSheetHandle, t.sheetHandle]} />
+        <View style={[styles.bottomSheetHeader, t.sheetHeader]}>
+          <Text style={[styles.bottomSheetTitle, t.sheetTitle]}>Filters</Text>
+          <View style={styles.bottomSheetHeaderActions}>
+            <TouchableOpacity
+              onPress={() => {
+                setDateFilter('last30days');
+                setStatusFilter('Posted');
+                setPaymentStatusFilter('all');
+                setPaymentMethodIdFilter('');
+                setPage(1);
+              }}
+              style={[styles.clearFiltersButton, t.clearFiltersBtn]}>
+              <Text style={styles.clearFiltersButtonText}>Clear all</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setShowFilters(false)}
+              style={[styles.bottomSheetCloseButton, t.sheetCloseBtn]}>
+              <Text style={[styles.bottomSheetCloseText, t.sheetCloseText]}>
+                ✕
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
 
-    return (
-      <View style={styles.summaryRow}>
-        <View style={styles.summaryCard}>
-          <View style={styles.summaryCardIcon}>
-            <Image
-              source={icons.salesCount}
-              style={styles.summaryCardIconImage}
-              resizeMode="contain"
-            />
+        <ScrollView
+          style={styles.bottomSheetScrollView}
+          contentContainerStyle={styles.bottomSheetScrollContent}
+          nestedScrollEnabled
+          showsVerticalScrollIndicator>
+          <View style={[styles.bottomSheetSection, t.sheetSection]}>
+            <Text style={[styles.bottomSheetSectionTitle, t.sheetSectionTitle]}>
+              Date range
+            </Text>
+            {renderDateFilters()}
           </View>
-          <Text style={styles.summaryLabel}>Invoices</Text>
-          <Text style={styles.summaryValue}>{invoiceCount}</Text>
-        </View>
-        <View style={styles.summaryCard}>
-          <View style={[styles.summaryCardIcon, styles.revenueIcon]}>
-            <Image
-              source={icons.revenue}
-              style={styles.summaryCardIconImage}
-              resizeMode="contain"
-            />
+
+          <View style={[styles.bottomSheetSection, t.sheetSection]}>
+            <Text style={[styles.bottomSheetSectionTitle, t.sheetSectionTitle]}>
+              Status
+            </Text>
+            <View style={styles.filterChipsContainer}>
+              {STATUS_OPTIONS.map(status => (
+                <TouchableOpacity
+                  key={status}
+                  style={[
+                    styles.filterChip,
+                    t.filterChip,
+                    statusFilter === status && styles.filterChipActive,
+                  ]}
+                  onPress={() => {
+                    setStatusFilter(status);
+                    setPage(1);
+                  }}>
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      t.filterChipText,
+                      statusFilter === status && styles.filterChipTextActive,
+                    ]}>
+                    {status}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
-          <Text style={styles.summaryLabel}>Revenue</Text>
-          <Text style={styles.summaryValue}>
-            UGX {Math.round(revenue).toLocaleString()}
-          </Text>
-        </View>
-        <View style={styles.summaryCard}>
-          <View style={[styles.summaryCardIcon, styles.avgIcon]}>
-            <Image
-              source={icons.product}
-              style={styles.summaryCardIconImage}
-              resizeMode="contain"
-            />
+
+          <View style={[styles.bottomSheetSection, t.sheetSection]}>
+            <Text style={[styles.bottomSheetSectionTitle, t.sheetSectionTitle]}>
+              Payment status
+            </Text>
+            <View style={styles.filterChipsContainer}>
+              {PAYMENT_STATUS_OPTIONS.map(opt => (
+                <TouchableOpacity
+                  key={opt.id}
+                  style={[
+                    styles.filterChip,
+                    t.filterChip,
+                    paymentStatusFilter === opt.id && styles.filterChipActive,
+                  ]}
+                  onPress={() => {
+                    setPaymentStatusFilter(opt.id);
+                    if (opt.id === 'unpaid') {
+                      setPaymentMethodIdFilter('');
+                    }
+                    setPage(1);
+                  }}>
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      t.filterChipText,
+                      paymentStatusFilter === opt.id &&
+                        styles.filterChipTextActive,
+                    ]}>
+                    {opt.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
-          <Text style={styles.summaryLabel}>Qty sold</Text>
-          <Text style={styles.summaryValue}>
-            {Math.round(productsSold).toLocaleString()}
-          </Text>
+
+          {paymentStatusFilter !== 'unpaid' ? (
+            <View style={[styles.bottomSheetSection, t.sheetSection]}>
+              <Text
+                style={[styles.bottomSheetSectionTitle, t.sheetSectionTitle]}>
+                Payment method
+              </Text>
+              <View style={styles.filterChipsContainer}>
+                <TouchableOpacity
+                  style={[
+                    styles.filterChip,
+                    t.filterChip,
+                    paymentMethodIdFilter === '' && styles.filterChipActive,
+                  ]}
+                  onPress={() => {
+                    setPaymentMethodIdFilter('');
+                    setPage(1);
+                  }}>
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      t.filterChipText,
+                      paymentMethodIdFilter === '' &&
+                        styles.filterChipTextActive,
+                    ]}>
+                    All
+                  </Text>
+                </TouchableOpacity>
+                {paymentMethods.map(pm => (
+                  <TouchableOpacity
+                    key={pm.id}
+                    style={[
+                      styles.filterChip,
+                      t.filterChip,
+                      paymentMethodIdFilter === String(pm.id) &&
+                        styles.filterChipActive,
+                    ]}
+                    onPress={() => {
+                      setPaymentMethodIdFilter(String(pm.id));
+                      setPage(1);
+                    }}>
+                    <Text
+                      style={[
+                        styles.filterChipText,
+                        t.filterChipText,
+                        paymentMethodIdFilter === String(pm.id) &&
+                          styles.filterChipTextActive,
+                      ]}
+                      numberOfLines={1}>
+                      {pm.code || pm.description}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          ) : null}
+        </ScrollView>
+      </View>
+    </ReactNativeModal>
+  );
+
+  const renderFilters = () => (
+    <View style={[styles.filterSection, t.filterSection]}>
+      <View style={styles.searchContainer}>
+        <View style={[styles.searchPill, t.searchPill]}>
+          <Image
+            source={icons.search as any}
+            style={[styles.searchIcon, t.searchIcon]}
+          />
+          <TextInput
+            style={[styles.searchInput, t.searchInput]}
+            placeholder="Search customer or invoice"
+            placeholderTextColor={colors.placeholder}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+          <TouchableOpacity
+            style={styles.filterInlineButton}
+            onPress={() => setShowFilters(true)}
+            activeOpacity={0.7}>
+            <Image
+              source={icons.filter as any}
+              style={[styles.filterInlineIcon, t.filterInlineIcon]}
+            />
+          </TouchableOpacity>
         </View>
       </View>
-    );
-  };
+      <View style={[styles.filterSummaryRow, t.filterSummaryRow]}>
+        <Text style={[styles.filterSummaryLabel, t.filterSummaryLabel]}>
+          Active filters:
+        </Text>
+        <Text style={[styles.filterSummaryValue, t.filterSummaryValue]}>
+          {activeFilterLabel}
+        </Text>
+      </View>
+    </View>
+  );
+
+  const renderTopBar = () => (
+    <View
+      style={[
+        styles.topHeader,
+        t.topHeader,
+        {
+          paddingTop: Math.max(
+            insets.top,
+            Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0,
+            12,
+          ),
+          borderBottomWidth: StyleSheet.hairlineWidth,
+        },
+        t.headerBorder,
+      ]}>
+      <TouchableOpacity
+        style={[styles.headerRoundButton, t.headerRoundButton]}
+        onPress={() => navigation.goBack()}
+        activeOpacity={0.7}>
+        <Image
+          source={icons.back as any}
+          style={[styles.headerRoundIcon, t.headerRoundIcon]}
+        />
+      </TouchableOpacity>
+      <Text style={[styles.topTitle, t.topTitle]}>Sales History</Text>
+      <View style={styles.headerTrailingSpacer} />
+    </View>
+  );
+
+  const invoiceCount =
+    summaryFromApi?.total_invoices ?? sales.length;
+  const revenue = summaryFromApi?.total_sales ?? pageRevenueFallback;
+  const productsSold =
+    summaryFromApi?.total_products ?? pageProductsFallback;
+
+  const renderSummary = () => (
+    <View style={[styles.summaryContainer, t.summaryContainer]}>
+      <View
+        style={[
+          styles.summaryCard,
+          t.summaryPrimary,
+          {borderWidth: 1},
+        ]}>
+        <Text style={[styles.summaryLabel, t.summaryLabel]}>Revenue</Text>
+        <Text style={[styles.summaryValuePrimary, t.summaryValuePrimary]}>
+          UGX {Math.round(revenue).toLocaleString()}
+        </Text>
+        <Text style={[styles.summarySubtext, t.summarySubtext]}>
+          {invoiceCount} invoices
+        </Text>
+      </View>
+      <View
+        style={[
+          styles.summaryCard,
+          t.summarySecondary,
+          {borderWidth: 1},
+        ]}>
+        <Text style={[styles.summaryLabel, t.summaryLabel]}>Qty sold</Text>
+        <Text style={[styles.summaryValueSecondary, t.summaryValueSecondary]}>
+          {Math.round(productsSold).toLocaleString()}
+        </Text>
+        <Text style={[styles.summarySubtext, t.summarySubtext]}>
+          Units (summary)
+        </Text>
+      </View>
+    </View>
+  );
 
   const renderUserSummaries = () => {
     if (!userSummaries.length) {
       return null;
     }
     return (
-      <View style={styles.userSummarySection}>
-        <Text style={styles.userSummaryHeading}>Sales by user</Text>
+      <View style={styles.userSection}>
+        <Text style={[styles.userSectionTitle, t.summaryLabel]}>
+          Sales by user
+        </Text>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.userSummaryChips}>
+          contentContainerStyle={styles.userChipsRow}>
           {userSummaries.map((u, idx) => (
-            <View key={`${u.user_id ?? 'u'}-${idx}`} style={styles.userSummaryChip}>
-              <Text style={styles.userSummaryName} numberOfLines={1}>
+            <View
+              key={`${u.user_id ?? 'u'}-${idx}`}
+              style={[styles.userChip, t.userChip, {borderWidth: 1}]}>
+              <Text style={[styles.userChipName, t.userChipName]} numberOfLines={1}>
                 {u.user_name || 'Unknown'}
               </Text>
-              <Text style={styles.userSummaryMeta}>
+              <Text style={[styles.userChipMeta, t.userChipMeta]}>
                 UGX {Math.round(u.total_sales).toLocaleString()} ·{' '}
                 {u.total_invoices} inv.
               </Text>
@@ -511,1302 +1032,769 @@ const SalesHistory = () => {
     );
   };
 
-  const getStatusColor = (status?: string) => {
-    switch (status) {
-      case 'Posted':
-        return COLORS.success;
-      case 'Open':
-        return COLORS.warning;
-      case 'Draft':
-        return COLORS.info;
-      case 'Cancelled':
-        return COLORS.error;
-      default:
-        return COLORS.gray2;
-    }
-  };
-
-  const renderHistoryItem = ({item}: {item: SalesInvoice}) => (
-    <TouchableOpacity
-      style={styles.historyCard}
-      onPress={() => openSaleDetail(item)}
-      activeOpacity={0.7}>
-      <View style={styles.historyCardHeader}>
-        <View style={styles.historyCardLeft}>
-          <Text style={styles.historyTitle} numberOfLines={1}>
-            {item?.customer_name || 'Walk-in Customer'}
-          </Text>
-          <Text style={styles.historyInvoice}>
-            Invoice #{item?.invoice_no || '—'}
-          </Text>
-        </View>
-        <View style={styles.historyCardRight}>
-          <Text style={styles.historyAmount}>
-            UGX {(item?.total_amount || 0).toLocaleString()}
-          </Text>
-          {item?.status && (
-            <View
-              style={[
-                styles.statusBadge,
-                {backgroundColor: getStatusColor(item.status) + '20'},
-              ]}>
-              <View
-                style={[
-                  styles.statusDot,
-                  {backgroundColor: getStatusColor(item.status)},
-                ]}
-              />
-              <Text
-                style={[
-                  styles.statusText,
-                  {color: getStatusColor(item.status)},
-                ]}>
-                {item.status}
-              </Text>
-            </View>
-          )}
-        </View>
-      </View>
-      <View style={styles.historyCardFooter}>
-        <View style={styles.historyMetaItem}>
-          <Image
-            source={icons.calender}
-            style={styles.metaIcon}
-            resizeMode="contain"
-          />
-          <Text style={styles.historyMeta}>
-            {new Date(item?.document_date || '').toLocaleDateString()}
-          </Text>
-        </View>
-        <View style={styles.historyMetaItem}>
-          <Image
-            source={icons.wallet}
-            style={styles.metaIcon}
-            resizeMode="contain"
-          />
-          <Text style={styles.historyMeta}>
-            {item?.payment_method_name || 'Cash'}
-          </Text>
-        </View>
-      </View>
-    </TouchableOpacity>
-  );
-
-  const renderHistory = () => {
-    if (isLoading) {
-      return (
-        <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={COLORS.primary} />
-          <Text style={styles.loadingText}>Loading sales...</Text>
-        </View>
-      );
-    }
-
-    if (error) {
-      return (
-        <View style={styles.emptyContainer}>
-          <View style={styles.emptyIconContainer}>
-            <Image source={icons.cross} style={styles.emptyIconImage} />
-          </View>
-          <Text style={styles.emptyTitle}>Error Loading Sales</Text>
-          <Text style={styles.emptyText}>{error}</Text>
-          <TouchableOpacity
-            style={styles.retryButton}
-            onPress={loadSales}
-            activeOpacity={0.7}>
-            <Text style={styles.retryButtonText}>Retry</Text>
-          </TouchableOpacity>
-        </View>
-      );
-    }
-
-    return (
-      <FlatList
-        data={sales}
-        keyExtractor={item =>
-          `${item?.id || item?.invoice_no || Math.random().toString(36)}`
-        }
-        renderItem={renderHistoryItem}
-        contentContainerStyle={
-          sales.length ? styles.listContent : styles.emptyContent
-        }
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <View style={styles.emptyIconContainer}>
-              <Image
-                source={icons.cross}
-                style={styles.emptyIconImage}
-                resizeMode="contain"
-              />
-            </View>
-            <Text style={styles.emptyTitle}>No sales found</Text>
-            <Text style={styles.emptyText}>
-              {hasActiveFilters
-                ? 'Try adjusting your filters or search query.'
-                : 'Change the date filter or try again later.'}
-            </Text>
-            {hasActiveFilters && (
-              <TouchableOpacity
-                style={styles.clearFiltersButton}
-                onPress={handleClearFilter}
-                activeOpacity={0.7}>
-                <Text style={styles.clearFiltersButtonText}>Clear Filters</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        }
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            colors={[COLORS.primary]}
-            tintColor={COLORS.primary}
-          />
-        }
-      />
-    );
-  };
-
   const renderDetailModal = () => {
     const displayItem = detailForModal ?? selectedItem;
-    if (!displayItem) return null;
+    if (!displayItem) {
+      return null;
+    }
 
     return (
-      <Modal
-        animationType="slide"
-        transparent={true}
-        visible={modalVisible}
-        onRequestClose={closeDetailModal}>
-        <View style={styles.modalContainer}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
-                Invoice: {displayItem.invoice_no || '—'}
-              </Text>
-              <TouchableOpacity
-                style={styles.closeIconButton}
-                onPress={closeDetailModal}
-                activeOpacity={0.7}>
-                <Image
-                  source={icons.cross}
-                  style={styles.closeIcon}
-                  resizeMode="contain"
-                />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={styles.modalScrollView}>
-              {detailLoading && (
-                <View style={styles.modalLoadingInline}>
-                  <ActivityIndicator color={COLORS.primary} />
-                  <Text style={styles.modalLoadingText}>Loading line items…</Text>
-                </View>
-              )}
-              <View style={styles.modalInfoContainer}>
-                <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Customer:</Text>
-                  <Text style={styles.infoValue}>
-                    {displayItem.customer_name || 'Walk-in Customer'}
-                  </Text>
-                </View>
-                <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Date:</Text>
-                  <Text style={styles.infoValue}>
-                    {new Date(
-                      displayItem.document_date || '',
-                    ).toLocaleDateString()}
-                  </Text>
-                </View>
-                {displayItem.status && (
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Status:</Text>
-                    <View
-                      style={[
-                        styles.statusBadge,
-                        {
-                          backgroundColor:
-                            getStatusColor(displayItem.status) + '20',
-                        },
-                      ]}>
-                      <View
-                        style={[
-                          styles.statusDot,
-                          {
-                            backgroundColor: getStatusColor(
-                              displayItem.status,
-                            ),
-                          },
-                        ]}
-                      />
-                      <Text
-                        style={[
-                          styles.statusText,
-                          {color: getStatusColor(displayItem.status)},
-                        ]}>
-                        {displayItem.status}
-                      </Text>
-                    </View>
-                  </View>
-                )}
-                <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Payment Method:</Text>
-                  <Text style={styles.infoValue}>
-                    {displayItem.payment_method_name || 'Cash'}
-                  </Text>
-                </View>
-                {displayItem.user_name && (
-                  <View style={styles.infoRow}>
-                    <Text style={styles.infoLabel}>Sold by:</Text>
-                    <Text style={styles.infoValue}>
-                      {displayItem.user_name}
-                    </Text>
-                  </View>
-                )}
-                <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Total:</Text>
-                  <Text style={styles.totalAmount}>
-                    UGX {(displayItem.total_amount || 0).toLocaleString()}
-                  </Text>
-                </View>
-              </View>
-
-              {displayItem.lines && displayItem.lines.length > 0 && (
-                <View style={styles.linesContainer}>
-                  <Text style={styles.modalSubtitle}>Items Sold</Text>
-                  {displayItem.lines.map((line, index) => (
-                    <View key={line.id || index} style={styles.lineItem}>
-                      <View style={styles.lineItemHeader}>
-                        <Text style={styles.lineItemName}>
-                          {line.item_name}
-                        </Text>
-                        <Text style={styles.lineItemCode}>{line.item_no}</Text>
-                      </View>
-                      <View style={styles.lineItemDetails}>
-                        <Text style={styles.lineItemDetail}>
-                          Qty: {line.quantity} {line.unit_of_measure || 'PCS'}
-                        </Text>
-                        <Text style={styles.lineItemDetail}>
-                          Price: UGX{' '}
-                          {parseFloat(line.unit_price || '0').toLocaleString()}
-                        </Text>
-                      </View>
-                      <Text style={styles.lineItemTotal}>
-                        Total: UGX{' '}
-                        {parseFloat(line.total_amount || '0').toLocaleString()}
-                      </Text>
-                    </View>
-                  ))}
-                </View>
-              )}
-            </ScrollView>
-
+      <ReactNativeModal
+        isVisible={showDetail}
+        onBackdropPress={closeDetail}
+        onBackButtonPress={closeDetail}
+        style={styles.detailModal}
+        animationIn="slideInUp"
+        animationOut="slideOutDown"
+        useNativeDriver
+        backdropOpacity={0.5}>
+        <View style={[styles.detailSheet, t.bottomSheetContent]}>
+          <View style={[styles.bottomSheetHandle, t.sheetHandle]} />
+          <View style={[styles.detailHeader, t.sheetHeader]}>
+            <Text style={[styles.detailHeaderTitle, t.sheetTitle]} numberOfLines={1}>
+              Invoice {displayItem.invoice_no || '—'}
+            </Text>
             <TouchableOpacity
-              style={styles.closeButton}
-              onPress={closeDetailModal}
-              activeOpacity={0.7}>
-              <Text style={styles.closeButtonText}>Close</Text>
+              onPress={closeDetail}
+              style={[styles.bottomSheetCloseButton, t.sheetCloseBtn]}>
+              <Text style={[styles.bottomSheetCloseText, t.sheetCloseText]}>
+                ✕
+              </Text>
             </TouchableOpacity>
           </View>
+          <ScrollView
+            style={styles.detailScroll}
+            contentContainerStyle={styles.detailScrollContent}
+            showsVerticalScrollIndicator={false}>
+            {detailLoading ? (
+              <View style={styles.detailLoadingRow}>
+                <ActivityIndicator color={COLORS.primary} />
+                <Text style={[styles.loadingText, t.loadingText]}>
+                  Loading line items…
+                </Text>
+              </View>
+            ) : null}
+            <View style={styles.detailBlock}>
+              <Row
+                label="Customer"
+                value={displayItem.customer_name || 'Walk-in customer'}
+                t={t}
+              />
+              <Row
+                label="Date"
+                value={
+                  displayItem.document_date
+                    ? new Date(displayItem.document_date).toLocaleDateString()
+                    : '—'
+                }
+                t={t}
+              />
+              {displayItem.status ? (
+                <View style={styles.detailRow}>
+                  <Text style={[styles.detailRowLabel, t.detailLabel]}>
+                    Status
+                  </Text>
+                  <SalesInvoiceStatusBadge status={displayItem.status} />
+                </View>
+              ) : null}
+              <Row
+                label="Payment"
+                value={displayItem.payment_method_name || '—'}
+                t={t}
+              />
+              {displayItem.user_name ? (
+                <Row label="Sold by" value={displayItem.user_name} t={t} />
+              ) : null}
+              <Row
+                label="Total"
+                value={`UGX ${Math.round(
+                  Number(displayItem.total_amount) || 0,
+                ).toLocaleString()}`}
+                emphasize
+                t={t}
+              />
+            </View>
+            {displayItem.lines && displayItem.lines.length > 0 ? (
+              <View style={styles.linesBlock}>
+                <Text style={[styles.linesTitle, t.sheetSectionTitle]}>
+                  Line items
+                </Text>
+                {displayItem.lines.map((line, index) => (
+                  <View
+                    key={line.id || index}
+                    style={[styles.lineItem, t.lineRowBorder]}>
+                    <View style={styles.lineItemHeader}>
+                      <Text style={[styles.lineName, t.detailValue]} numberOfLines={2}>
+                        {line.item_name}
+                      </Text>
+                      <Text style={[styles.lineCode, t.detailLabel]}>
+                        {line.item_no}
+                      </Text>
+                    </View>
+                    <Text style={[styles.lineMeta, t.detailLabel]}>
+                      Qty {line.quantity} {line.unit_of_measure || 'PCS'} · Unit UGX{' '}
+                      {parseFloat(line.unit_price || '0').toLocaleString()}
+                    </Text>
+                    <Text style={[styles.lineTotal, t.summaryValuePrimary]}>
+                      UGX {parseFloat(line.total_amount || '0').toLocaleString()}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+          </ScrollView>
+          {isPostedSale(displayItem.status) && !detailLoading ? (
+            <View
+              style={[
+                styles.detailPrintBar,
+                {borderTopColor: colors.border, backgroundColor: colors.surface},
+              ]}>
+              <TouchableOpacity
+                style={styles.printReceiptBtn}
+                onPress={() => handlePrintReceipt(displayItem)}
+                disabled={printingReceipt}
+                activeOpacity={0.85}>
+                {printingReceipt ? (
+                  <ActivityIndicator color={COLORS.white} size="small" />
+                ) : (
+                  <>
+                    <Image
+                      source={icons.printer as any}
+                      style={styles.printReceiptBtnIcon}
+                    />
+                    <Text style={styles.printReceiptBtnText}>Print receipt</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          ) : null}
         </View>
-      </Modal>
+      </ReactNativeModal>
     );
   };
 
-  if (!canRead(PAGE_NAME)) {
+  const renderEmpty = () => (
+    <View style={styles.emptyContainer}>
+      <View style={[styles.emptyIconWrap, t.searchPill]}>
+        <Image
+          source={icons.reports as any}
+          style={[styles.emptyIcon, t.searchIcon]}
+        />
+      </View>
+      <Text style={[styles.emptyTitle, t.emptyTitle]}>
+        {error ? 'Something went wrong' : 'No sales found'}
+      </Text>
+      <Text style={[styles.emptyBody, t.emptyBody]}>
+        {error ||
+          'Adjust search or filters, or pull to refresh.'}
+      </Text>
+      {error ? (
+        <TouchableOpacity
+          style={styles.retryBtn}
+          onPress={() => {
+            setError(null);
+            setPage(1);
+            loadSales();
+          }}
+          activeOpacity={0.7}>
+          <Text style={styles.retryBtnText}>Retry</Text>
+        </TouchableOpacity>
+      ) : null}
+    </View>
+  );
+
+  if (!hasAccess) {
     return (
-      <View style={styles.container}>
-        <View style={styles.accessDeniedContainer}>
-          <Text style={styles.accessDeniedTitle}>Access Denied</Text>
-          <Text style={styles.accessDeniedMessage}>
-            You don't have permission to view sales history.
-          </Text>
-        </View>
+      <View style={[styles.accessDeniedContainer, t.accessContainer]}>
+        <Text style={styles.accessDeniedTitle}>Access denied</Text>
+        <Text style={[styles.accessDeniedMessage, t.accessMessage]}>
+          {"You don't have permission to view sales history."}
+        </Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      {/* Search Bar */}
-      <View style={styles.searchContainer}>
-        <View style={styles.searchInputContainer}>
-          <View style={styles.searchIconContainer}>
-            <Image
-              source={icons.search}
-              style={styles.searchIcon}
-              resizeMode="contain"
+    <SafeAreaView
+      style={[styles.container, t.container]}
+      edges={['left', 'right', 'bottom']}>
+      {renderTopBar()}
+      {renderFilters()}
+      {renderSummary()}
+      {renderUserSummaries()}
+
+      {loading && page === 1 ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+          <Text style={[styles.loadingText, t.loadingText]}>
+            Loading sales…
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={sales}
+          keyExtractor={(item, index) =>
+            item.id != null
+              ? String(item.id)
+              : `${item.invoice_no ?? 'sale'}-${index}`
+          }
+          renderItem={({item}) => (
+            <SalesHistoryListItem
+              item={item}
+              onPress={() => openSaleDetail(item)}
+              onPrintPress={
+                isPostedSale(item.status)
+                  ? () => handlePrintReceipt(item)
+                  : undefined
+              }
             />
-          </View>
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search by customer or invoice..."
-            placeholderTextColor={COLORS.gray3}
-            value={searchQuery}
-            onChangeText={handleSearch}
-          />
-          {searchLoading && (
-            <View style={styles.searchLoadingContainer}>
-              <ActivityIndicator size="small" color={COLORS.primary} />
-            </View>
           )}
-        </View>
-        <TouchableOpacity
-          style={[
-            styles.filterButton,
-            hasActiveFilters && styles.filterButtonActive,
-          ]}
-          onPress={() => setFilterModal(true)}
-          activeOpacity={0.7}>
-          <Image
-            source={icons.filter}
-            style={[
-              styles.filterIcon,
-              hasActiveFilters && styles.filterIconActive,
-            ]}
-            resizeMode="contain"
-          />
-          {hasActiveFilters && <View style={styles.filterBadge} />}
-        </TouchableOpacity>
-      </View>
+          ListEmptyComponent={!loading ? renderEmpty : null}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={[COLORS.primary]}
+              tintColor={COLORS.primary}
+            />
+          }
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.45}
+          ListFooterComponent={
+            loading && page > 1 ? (
+              <View style={styles.footerLoader}>
+                <ActivityIndicator size="small" color={COLORS.primary} />
+              </View>
+            ) : null
+          }
+          contentContainerStyle={
+            sales.length === 0 ? styles.emptyContentPadding : undefined
+          }
+        />
+      )}
 
-      <View style={styles.content}>
-        {renderFilterPills()}
-        {renderSummaryCards()}
-        {renderUserSummaries()}
-        <View style={styles.historySection}>
-          <Text style={styles.sectionHeading}>Sales History</Text>
-          {renderHistory()}
-        </View>
-      </View>
+      {isDatePickerVisible ? (
+        <DateTimePicker
+          value={
+            datePickerMode === 'from' && dateFrom
+              ? new Date(dateFrom)
+              : datePickerMode === 'to' && dateTo
+                ? new Date(dateTo)
+                : new Date()
+          }
+          mode="date"
+          display="default"
+          onChange={handleDatePickerChange}
+          maximumDate={new Date()}
+        />
+      ) : null}
 
-      {/* Pagination */}
-      {renderPagination()}
-
+      {renderFilterBottomSheet()}
       {renderDetailModal()}
-
-      {/* Filter Modal */}
-      <Modal
-        visible={filterModal}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setFilterModal(false)}>
-        <View style={styles.filterModalOverlay}>
-          <View style={styles.filterModalContent}>
-            <View style={styles.filterModalHeader}>
-              <Text style={styles.filterModalTitle}>Filter Sales</Text>
-              <TouchableOpacity
-                onPress={() => setFilterModal(false)}
-                style={styles.filterCloseButton}>
-                <Image
-                  source={icons.cross}
-                  style={styles.filterCloseIcon}
-                  resizeMode="contain"
-                />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView
-              style={styles.filterScrollView}
-              showsVerticalScrollIndicator={false}>
-              {/* Status Filter */}
-              <View style={styles.filterSection}>
-                <Text style={styles.filterSectionLabel}>Status</Text>
-                <View style={styles.stockFilterContainer}>
-                  {[
-                    {value: 'all', label: 'All Status'},
-                    {value: 'Posted', label: 'Posted'},
-                    {value: 'Draft', label: 'Draft'},
-                  ].map(option => (
-                    <TouchableOpacity
-                      key={option.value}
-                      style={[
-                        styles.stockFilterButton,
-                        statusFilter === option.value &&
-                          styles.stockFilterButtonActive,
-                      ]}
-                      onPress={() => setStatusFilter(option.value as any)}
-                      activeOpacity={0.7}>
-                      <Text
-                        style={[
-                          styles.stockFilterText,
-                          statusFilter === option.value &&
-                            styles.stockFilterTextActive,
-                        ]}>
-                        {option.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-
-              {/* Payment Status Filter */}
-              <View style={styles.filterSection}>
-                <Text style={styles.filterSectionLabel}>Payment Status</Text>
-                <View style={styles.stockFilterContainer}>
-                  {[
-                    {value: 'all', label: 'All'},
-                    {value: 'paid', label: 'Paid'},
-                    {value: 'unpaid', label: 'Unpaid'},
-                  ].map(option => (
-                    <TouchableOpacity
-                      key={option.value}
-                      style={[
-                        styles.stockFilterButton,
-                        paymentStatusFilter === option.value &&
-                          styles.stockFilterButtonActive,
-                      ]}
-                      onPress={() => {
-                        setPaymentStatusFilter(option.value as any);
-                        if (option.value === 'unpaid') {
-                          setPaymentMethodIdFilter('');
-                        }
-                      }}
-                      activeOpacity={0.7}>
-                      <Text
-                        style={[
-                          styles.stockFilterText,
-                          paymentStatusFilter === option.value &&
-                            styles.stockFilterTextActive,
-                        ]}>
-                        {option.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-
-              {/* Payment method (same as web: financials payment method id) */}
-              {paymentStatusFilter !== 'unpaid' && (
-                <View style={styles.filterSection}>
-                  <Text style={styles.filterSectionLabel}>
-                    Payment method
-                  </Text>
-                  <View style={styles.paymentMethodChips}>
-                    <TouchableOpacity
-                      style={[
-                        styles.paymentMethodChip,
-                        paymentMethodIdFilter === '' &&
-                          styles.paymentMethodChipActive,
-                      ]}
-                      onPress={() => setPaymentMethodIdFilter('')}
-                      activeOpacity={0.7}>
-                      <Text
-                        style={[
-                          styles.paymentMethodChipText,
-                          paymentMethodIdFilter === '' &&
-                            styles.paymentMethodChipTextActive,
-                        ]}>
-                        All
-                      </Text>
-                    </TouchableOpacity>
-                    {paymentMethods.map(pm => (
-                      <TouchableOpacity
-                        key={pm.id}
-                        style={[
-                          styles.paymentMethodChip,
-                          paymentMethodIdFilter === String(pm.id) &&
-                            styles.paymentMethodChipActive,
-                        ]}
-                        onPress={() =>
-                          setPaymentMethodIdFilter(String(pm.id))
-                        }
-                        activeOpacity={0.7}>
-                        <Text
-                          style={[
-                            styles.paymentMethodChipText,
-                            paymentMethodIdFilter === String(pm.id) &&
-                              styles.paymentMethodChipTextActive,
-                          ]}
-                          numberOfLines={1}>
-                          {pm.code || pm.description}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </View>
-              )}
-            </ScrollView>
-
-            {/* Filter Actions */}
-            <View style={styles.filterActions}>
-              <TouchableOpacity
-                style={[styles.filterActionButton, styles.clearFilterButton]}
-                onPress={handleClearFilter}
-                activeOpacity={0.7}>
-                <Text style={styles.clearFilterText}>Clear All</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.filterActionButton, styles.applyFilterButton]}
-                onPress={handleApplyFilter}
-                activeOpacity={0.7}>
-                <Text style={styles.applyFilterText}>Apply Filters</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-    </View>
+    </SafeAreaView>
   );
 };
 
-export default SalesHistory;
+function Row({
+  label,
+  value,
+  emphasize,
+  t,
+}: {
+  label: string;
+  value: string;
+  emphasize?: boolean;
+  t: {
+    detailLabel: {color: string};
+    detailValue: {color: string};
+    summaryValuePrimary: {color: string};
+  };
+}) {
+  return (
+    <View style={styles.detailRow}>
+      <Text style={[styles.detailRowLabel, t.detailLabel]}>{label}</Text>
+      <Text
+        style={[
+          emphasize ? styles.detailRowValueEmphasis : styles.detailRowValue,
+          emphasize ? t.summaryValuePrimary : t.detailValue,
+        ]}
+        numberOfLines={2}>
+        {value}
+      </Text>
+    </View>
+  );
+}
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.lightGray2,
+    backgroundColor: COLORS.white,
+  },
+  topHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: SIZES.padding,
+    paddingBottom: 14,
+  },
+  headerRoundButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerRoundIcon: {
+    width: 20,
+    height: 20,
+  },
+  topTitle: {
+    flex: 1,
+    textAlign: 'center',
+    ...FONTS.h3,
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+  },
+  headerTrailingSpacer: {
+    width: 40,
+    height: 40,
+  },
+  filterSection: {
+    paddingHorizontal: SIZES.padding,
+    paddingTop: 4,
+    paddingBottom: SIZES.base,
+  },
+  searchContainer: {
+    marginBottom: SIZES.base / 2,
+  },
+  searchPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    minHeight: 48,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+  },
+  searchIcon: {
+    width: 20,
+    height: 20,
+    marginRight: 10,
+  },
+  searchInput: {
+    flex: 1,
+    ...FONTS.body3,
+    minHeight: 48,
+    paddingVertical: 12,
+  },
+  filterInlineButton: {
+    padding: 8,
+    marginRight: -4,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  filterInlineIcon: {
+    width: 20,
+    height: 20,
+  },
+  filterSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    borderRadius: SIZES.radius,
+    paddingHorizontal: SIZES.base,
+    paddingVertical: SIZES.base / 2,
+    marginTop: SIZES.base / 2,
+  },
+  filterSummaryLabel: {
+    ...FONTS.body5,
+    fontSize: 12,
+    marginRight: 4,
+  },
+  filterSummaryValue: {
+    ...FONTS.body4,
+    fontSize: 12,
+    flex: 1,
+  },
+  dateFilterContainer: {
+    marginBottom: SIZES.base,
+  },
+  dateFilterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: SIZES.base,
+  },
+  dateFilterChip: {
+    paddingHorizontal: SIZES.radius,
+    paddingVertical: SIZES.base / 2,
+    borderRadius: SIZES.radius,
+    marginRight: SIZES.base,
+    marginBottom: SIZES.base / 2,
+  },
+  dateFilterChipActive: {
+    backgroundColor: COLORS.primary,
+  },
+  dateFilterChipText: {
+    ...FONTS.body4,
+  },
+  dateFilterChipTextActive: {
+    color: COLORS.white,
+  },
+  customDateButton: {
+    paddingVertical: SIZES.base / 2,
+    paddingHorizontal: SIZES.radius,
+    borderRadius: SIZES.radius,
+    alignSelf: 'flex-start',
+  },
+  customDateButtonText: {
+    ...FONTS.body4,
+    color: COLORS.primary,
+  },
+  filterChipsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  filterChip: {
+    paddingHorizontal: SIZES.radius,
+    paddingVertical: SIZES.base / 2,
+    borderRadius: SIZES.radius,
+    marginRight: SIZES.base,
+    marginBottom: SIZES.base / 2,
+  },
+  filterChipActive: {
+    backgroundColor: COLORS.primary,
+  },
+  filterChipText: {
+    ...FONTS.body4,
+  },
+  filterChipTextActive: {
+    color: COLORS.white,
+  },
+  summaryContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: SIZES.padding,
+    paddingVertical: SIZES.base,
+  },
+  summaryCard: {
+    flex: 1,
+    padding: SIZES.base,
+    marginHorizontal: SIZES.base / 2,
+    borderRadius: SIZES.radius,
+  },
+  summaryLabel: {
+    ...FONTS.body5,
+    fontSize: 10,
+    marginBottom: 2,
+  },
+  summaryValuePrimary: {
+    ...FONTS.h3,
+    fontSize: 16,
+    marginBottom: 2,
+    fontWeight: '700',
+  },
+  summaryValueSecondary: {
+    ...FONTS.h3,
+    fontSize: 16,
+    marginBottom: 2,
+    fontWeight: '700',
+  },
+  summarySubtext: {
+    ...FONTS.body5,
+    fontSize: 10,
+  },
+  userSection: {
+    paddingHorizontal: SIZES.padding,
+    paddingBottom: SIZES.base,
+  },
+  userSectionTitle: {
+    ...FONTS.body4,
+    fontWeight: '600',
+    marginBottom: SIZES.base,
+  },
+  userChipsRow: {
+    flexDirection: 'row',
+    gap: SIZES.base,
+    paddingRight: SIZES.padding,
+  },
+  userChip: {
+    borderRadius: SIZES.radius,
+    paddingVertical: SIZES.base,
+    paddingHorizontal: SIZES.base * 1.5,
+    minWidth: 140,
+  },
+  userChipName: {
+    ...FONTS.body4,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  userChipMeta: {
+    ...FONTS.body5,
+    fontSize: 11,
+  },
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  loadingText: {
+    ...FONTS.body3,
+    marginTop: SIZES.base,
+  },
+  footerLoader: {
+    paddingVertical: SIZES.base,
+  },
+  emptyContentPadding: {
+    flexGrow: 1,
+  },
+  emptyContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: SIZES.padding * 2,
+  },
+  emptyIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: SIZES.base * 2,
+  },
+  emptyIcon: {
+    width: 32,
+    height: 32,
+  },
+  emptyTitle: {
+    ...FONTS.h3,
+    marginBottom: SIZES.base,
+    textAlign: 'center',
+  },
+  emptyBody: {
+    ...FONTS.body4,
+    textAlign: 'center',
+  },
+  retryBtn: {
+    marginTop: SIZES.padding,
+    paddingHorizontal: SIZES.padding * 1.5,
+    paddingVertical: SIZES.base,
+    borderRadius: SIZES.radius,
+    backgroundColor: COLORS.primary,
+  },
+  retryBtnText: {
+    ...FONTS.button,
+    color: COLORS.white,
+    fontSize: 14,
   },
   accessDeniedContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: SIZES.padding,
-    backgroundColor: COLORS.white,
-    margin: SIZES.base * 2,
-    borderRadius: SIZES.radius,
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
+    padding: 20,
   },
   accessDeniedTitle: {
     ...FONTS.h2,
     color: COLORS.error,
-    marginBottom: SIZES.base * 1.5,
+    marginBottom: SIZES.base,
     textAlign: 'center',
   },
   accessDeniedMessage: {
     ...FONTS.body3,
-    color: COLORS.gray2,
     textAlign: 'center',
   },
-  content: {
-    flex: 1,
-    backgroundColor: COLORS.lightGray2,
+  bottomSheet: {
+    justifyContent: 'flex-end',
+    margin: 0,
   },
-  searchContainer: {
-    padding: SIZES.base * 2,
-    backgroundColor: COLORS.white,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray1,
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SIZES.base,
+  bottomSheetContent: {
+    borderTopLeftRadius: SIZES.radius * 2,
+    borderTopRightRadius: SIZES.radius * 2,
+    maxHeight: Dimensions.get('window').height * 0.88,
+    minHeight: Dimensions.get('window').height * 0.45,
   },
-  searchInputContainer: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.lightGray2,
-    borderRadius: SIZES.radius,
-    paddingHorizontal: SIZES.base * 1.5,
-    height: 48,
-  },
-  searchIconContainer: {
-    marginRight: SIZES.base,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  searchIcon: {
-    width: 20,
-    height: 20,
-    tintColor: COLORS.gray2,
-  },
-  searchInput: {
-    flex: 1,
-    ...FONTS.body3,
-    color: COLORS.black,
-    paddingVertical: 0,
-  },
-  searchLoadingContainer: {
-    marginLeft: SIZES.base,
-  },
-  filterButton: {
-    width: 48,
-    height: 48,
-    borderRadius: SIZES.radius,
-    backgroundColor: COLORS.lightGray2,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
-  },
-  filterButtonActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  filterIcon: {
-    width: 20,
-    height: 20,
-    tintColor: COLORS.gray2,
-  },
-  filterIconActive: {
-    tintColor: COLORS.white,
-  },
-  filterBadge: {
-    position: 'absolute',
-    top: 6,
-    right: 6,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: COLORS.error,
-  },
-  filterRow: {
-    flexDirection: 'row',
-    marginBottom: SIZES.base * 2,
-    paddingHorizontal: SIZES.base * 2,
-    gap: SIZES.base,
-  },
-  filterPill: {
-    paddingHorizontal: SIZES.base * 2,
-    paddingVertical: SIZES.base * 1.25,
-    borderRadius: SIZES.radius * 2,
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  filterPillActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  filterLabel: {
-    ...FONTS.body4,
-    color: COLORS.gray2,
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  filterLabelActive: {
-    color: COLORS.white,
-    fontWeight: '600',
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: SIZES.base * 2,
-    paddingHorizontal: SIZES.base * 2,
-    gap: SIZES.base,
-  },
-  summaryCard: {
-    flex: 1,
-    backgroundColor: COLORS.white,
-    borderRadius: SIZES.radius,
-    padding: SIZES.base * 2,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
-    alignItems: 'center',
-  },
-  summaryCardIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: COLORS.primary + '15',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: SIZES.base,
-  },
-  revenueIcon: {
-    backgroundColor: COLORS.success + '15',
-  },
-  avgIcon: {
-    backgroundColor: COLORS.warning + '15',
-  },
-  summaryCardIconImage: {
-    width: 28,
-    height: 28,
-    tintColor: COLORS.primary,
-  },
-  summaryCardIconText: {
-    fontSize: 24,
-  },
-  summaryLabel: {
-    ...FONTS.body5,
-    color: COLORS.gray2,
-    marginBottom: SIZES.base * 0.5,
-    fontSize: 11,
-    textAlign: 'center',
-  },
-  summaryValue: {
-    ...FONTS.h4,
-    color: COLORS.black,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  userSummarySection: {
-    marginBottom: SIZES.base * 2,
-    paddingHorizontal: SIZES.base * 2,
-  },
-  userSummaryHeading: {
-    ...FONTS.body4,
-    color: COLORS.gray2,
-    marginBottom: SIZES.base,
-    fontWeight: '600',
-  },
-  userSummaryChips: {
-    flexDirection: 'row',
-    gap: SIZES.base,
-    paddingRight: SIZES.base * 2,
-  },
-  userSummaryChip: {
-    backgroundColor: COLORS.white,
-    borderRadius: SIZES.radius,
-    paddingVertical: SIZES.base,
-    paddingHorizontal: SIZES.base * 1.5,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
-    minWidth: 140,
-  },
-  userSummaryName: {
-    ...FONTS.body4,
-    color: COLORS.black,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  userSummaryMeta: {
-    ...FONTS.body5,
-    color: COLORS.gray2,
-    fontSize: 11,
-  },
-  paymentMethodChips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: SIZES.base,
-  },
-  paymentMethodChip: {
-    paddingHorizontal: SIZES.base * 1.5,
-    paddingVertical: SIZES.base,
-    borderRadius: SIZES.radius,
-    backgroundColor: COLORS.lightGray2,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
-    maxWidth: '48%',
-  },
-  paymentMethodChipActive: {
-    backgroundColor: COLORS.primary + '18',
-    borderColor: COLORS.primary,
-  },
-  paymentMethodChipText: {
-    ...FONTS.body5,
-    color: COLORS.gray2,
-    fontSize: 12,
-  },
-  paymentMethodChipTextActive: {
-    color: COLORS.primary,
-    fontWeight: '600',
-  },
-  modalLoadingInline: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SIZES.base,
-    marginBottom: SIZES.base * 1.5,
-  },
-  modalLoadingText: {
-    ...FONTS.body4,
-    color: COLORS.gray2,
-  },
-  historySection: {
-    flex: 1,
-    paddingHorizontal: SIZES.base * 2,
-  },
-  sectionHeading: {
-    ...FONTS.h3,
-    color: COLORS.black,
-    marginBottom: SIZES.base * 1.5,
-    fontWeight: '600',
-  },
-  historyCard: {
-    backgroundColor: COLORS.white,
-    borderRadius: SIZES.radius,
-    padding: SIZES.base * 2,
-    marginBottom: SIZES.base,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  historyCardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: SIZES.base * 1.5,
-  },
-  historyCardLeft: {
-    flex: 1,
-    marginRight: SIZES.base,
-  },
-  historyCardRight: {
-    alignItems: 'flex-end',
-  },
-  historyTitle: {
-    ...FONTS.h4,
-    color: COLORS.black,
-    marginBottom: SIZES.base * 0.5,
-    fontWeight: '600',
-  },
-  historyAmount: {
-    ...FONTS.h5,
-    color: COLORS.primary,
-    fontWeight: '700',
-    marginBottom: SIZES.base * 0.5,
-  },
-  historyInvoice: {
-    ...FONTS.body5,
-    color: COLORS.gray2,
-    fontSize: 11,
-  },
-  historyCardFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: SIZES.base * 1.5,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.lightGray1,
-  },
-  historyMetaItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SIZES.base * 0.5,
-  },
-  metaIcon: {
-    width: 14,
-    height: 14,
-    tintColor: COLORS.gray2,
-  },
-  historyMeta: {
-    ...FONTS.body5,
-    color: COLORS.gray2,
-    fontSize: 11,
-  },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    paddingHorizontal: SIZES.base,
-    paddingVertical: SIZES.base * 0.5,
-    borderRadius: 12,
-    gap: SIZES.base * 0.5,
-  },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  statusText: {
-    ...FONTS.body5,
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  listContent: {
-    paddingBottom: SIZES.padding * 2,
-  },
-  emptyContent: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: SIZES.padding * 2,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: SIZES.padding * 2,
-  },
-  loadingText: {
-    ...FONTS.body3,
-    color: COLORS.gray2,
-    marginTop: SIZES.base * 1.5,
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: SIZES.padding * 2,
-    paddingHorizontal: SIZES.padding,
-  },
-  emptyIconContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: COLORS.lightGray2,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: SIZES.base * 2,
-  },
-  emptyIcon: {
-    fontSize: 40,
-  },
-  emptyIconImage: {
+  bottomSheetHandle: {
     width: 40,
-    height: 40,
-    tintColor: COLORS.gray2,
-  },
-  emptyTitle: {
-    ...FONTS.h3,
-    color: COLORS.black,
-    marginBottom: SIZES.base,
-    textAlign: 'center',
-  },
-  emptyText: {
-    ...FONTS.body3,
-    color: COLORS.gray2,
-    textAlign: 'center',
-    maxWidth: 250,
-    marginBottom: SIZES.base * 2,
-  },
-  clearFiltersButton: {
-    backgroundColor: COLORS.primary,
-    paddingHorizontal: SIZES.base * 3,
-    paddingVertical: SIZES.base * 1.5,
-    borderRadius: SIZES.radius,
-    shadowColor: COLORS.primary,
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
+    height: 4,
+    borderRadius: 2,
+    alignSelf: 'center',
     marginTop: SIZES.base,
+    marginBottom: SIZES.base / 2,
   },
-  clearFiltersButtonText: {
-    ...FONTS.button,
-    color: COLORS.white,
-    fontSize: 14,
-  },
-  retryButton: {
-    backgroundColor: COLORS.primary,
-    paddingHorizontal: SIZES.base * 3,
-    paddingVertical: SIZES.base * 1.5,
-    borderRadius: SIZES.radius,
-    shadowColor: COLORS.primary,
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  retryButtonText: {
-    ...FONTS.button,
-    color: COLORS.white,
-    fontSize: 14,
-  },
-  modalContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: COLORS.overlay2,
-    paddingHorizontal: SIZES.base * 2.5,
-  },
-  modalContent: {
-    backgroundColor: COLORS.white,
-    borderRadius: SIZES.radius * 2,
-    width: '100%',
-    maxHeight: '90%',
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 10},
-    shadowOpacity: 0.3,
-    shadowRadius: 20,
-    elevation: 15,
-    overflow: 'hidden',
-  },
-  modalHeader: {
+  bottomSheetHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: SIZES.padding,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray1,
-    backgroundColor: COLORS.white,
   },
-  modalTitle: {
-    ...FONTS.h2,
-    color: COLORS.black,
-    flex: 1,
+  bottomSheetHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.base,
   },
-  closeIconButton: {
+  clearFiltersButton: {
+    paddingHorizontal: SIZES.base,
+    paddingVertical: SIZES.base / 2,
+    borderRadius: SIZES.radius,
+  },
+  clearFiltersButtonText: {
+    ...FONTS.body4,
+    color: COLORS.primary,
+    fontSize: 12,
+  },
+  bottomSheetTitle: {
+    ...FONTS.h3,
+    fontWeight: '600',
+  },
+  bottomSheetCloseButton: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: COLORS.lightGray2,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  closeIcon: {
-    width: 16,
-    height: 16,
-    tintColor: COLORS.gray2,
+  bottomSheetCloseText: {
+    ...FONTS.h3,
   },
-  modalScrollView: {
-    maxHeight: 400,
+  bottomSheetScrollView: {
+    flexGrow: 0,
+    maxHeight: Dimensions.get('window').height * 0.62,
   },
-  modalInfoContainer: {
+  bottomSheetScrollContent: {
+    paddingBottom: SIZES.padding * 2,
+  },
+  bottomSheetSection: {
     padding: SIZES.padding,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray1,
   },
-  infoRow: {
+  bottomSheetSectionTitle: {
+    ...FONTS.body3,
+    fontWeight: '600',
+    marginBottom: SIZES.base,
+  },
+  detailModal: {
+    justifyContent: 'flex-end',
+    margin: 0,
+  },
+  detailSheet: {
+    borderTopLeftRadius: SIZES.radius * 2,
+    borderTopRightRadius: SIZES.radius * 2,
+    maxHeight: Dimensions.get('window').height * 0.92,
+    paddingBottom: SIZES.padding,
+  },
+  detailHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: SIZES.padding,
+    paddingBottom: SIZES.base,
+    borderBottomWidth: 1,
+  },
+  detailHeaderTitle: {
+    ...FONTS.h3,
+    fontWeight: '700',
+    flex: 1,
+    marginRight: SIZES.base,
+  },
+  detailScroll: {
+    maxHeight: Dimensions.get('window').height * 0.72,
+  },
+  detailScrollContent: {
+    paddingBottom: SIZES.padding * 2,
+  },
+  detailLoadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.base,
+    padding: SIZES.padding,
+  },
+  detailBlock: {
+    paddingHorizontal: SIZES.padding,
+    paddingTop: SIZES.base,
+  },
+  detailRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: SIZES.base * 1.5,
+    marginBottom: SIZES.base * 1.25,
+    gap: SIZES.base,
   },
-  infoLabel: {
-    ...FONTS.h4,
-    color: COLORS.gray2,
+  detailRowLabel: {
+    ...FONTS.body4,
     fontWeight: '500',
   },
-  infoValue: {
+  detailRowValue: {
     ...FONTS.body3,
-    color: COLORS.black,
     flex: 1,
     textAlign: 'right',
     fontWeight: '500',
   },
-  totalAmount: {
+  detailRowValueEmphasis: {
     ...FONTS.h3,
-    color: COLORS.primary,
+    flex: 1,
+    textAlign: 'right',
     fontWeight: '700',
   },
-  linesContainer: {
-    padding: SIZES.padding,
+  linesBlock: {
+    paddingHorizontal: SIZES.padding,
+    paddingTop: SIZES.base,
   },
-  modalSubtitle: {
-    ...FONTS.h3,
-    color: COLORS.black,
-    marginBottom: SIZES.base * 2,
-    fontWeight: '600',
+  linesTitle: {
+    marginBottom: SIZES.base,
   },
   lineItem: {
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray1,
-    paddingVertical: SIZES.base * 1.5,
-    marginBottom: SIZES.base,
+    paddingVertical: SIZES.base * 1.25,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   lineItemHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: SIZES.base,
+    alignItems: 'flex-start',
+    marginBottom: 6,
+    gap: SIZES.base,
   },
-  lineItemName: {
-    ...FONTS.h4,
+  lineName: {
+    ...FONTS.body3,
     fontWeight: '600',
-    color: COLORS.black,
     flex: 1,
   },
-  lineItemCode: {
+  lineCode: {
     ...FONTS.body5,
-    color: COLORS.gray2,
     fontSize: 11,
   },
-  lineItemDetails: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: SIZES.base,
+  lineMeta: {
+    ...FONTS.body5,
+    marginBottom: 4,
   },
-  lineItemDetail: {
-    ...FONTS.body4,
-    color: COLORS.gray2,
-  },
-  lineItemTotal: {
-    ...FONTS.h5,
+  lineTotal: {
+    ...FONTS.body3,
     fontWeight: '700',
-    color: COLORS.primary,
     textAlign: 'right',
   },
-  closeButton: {
-    margin: SIZES.padding,
-    padding: SIZES.base * 1.5,
-    backgroundColor: COLORS.primary,
-    borderRadius: SIZES.radius,
-    alignItems: 'center',
-    shadowColor: COLORS.primary,
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
+  detailPrintBar: {
+    paddingHorizontal: SIZES.padding,
+    paddingTop: SIZES.base,
+    paddingBottom: SIZES.base,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
-  closeButtonText: {
-    ...FONTS.button,
-    color: COLORS.white,
-    fontSize: 15,
-  },
-  // Pagination Styles
-  paginationContainer: {
+  printReceiptBtn: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: SIZES.base * 2,
-    backgroundColor: COLORS.white,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.lightGray1,
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: -2},
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  pageButton: {
-    paddingHorizontal: SIZES.base * 2,
-    paddingVertical: SIZES.base * 1.5,
-    borderRadius: SIZES.radius,
-    backgroundColor: COLORS.primary,
-    minWidth: 100,
-    alignItems: 'center',
-  },
-  disabledButton: {
-    backgroundColor: COLORS.lightGray1,
-  },
-  pageButtonText: {
-    ...FONTS.button,
-    color: COLORS.white,
-    fontSize: 13,
-  },
-  disabledButtonText: {
-    ...FONTS.button,
-    color: COLORS.gray3,
-    fontSize: 13,
-  },
-  pageInfoContainer: {
-    paddingHorizontal: SIZES.base * 2,
-  },
-  pageInfo: {
-    ...FONTS.body4,
-    color: COLORS.gray2,
-    fontWeight: '500',
-  },
-  // Filter Modal Styles
-  filterModalOverlay: {
-    flex: 1,
-    backgroundColor: COLORS.overlay2,
-    justifyContent: 'flex-end',
-  },
-  filterModalContent: {
-    backgroundColor: COLORS.white,
-    borderTopLeftRadius: SIZES.radius * 2,
-    borderTopRightRadius: SIZES.radius * 2,
-    maxHeight: '80%',
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: -5},
-    shadowOpacity: 0.2,
-    shadowRadius: 10,
-    elevation: 10,
-  },
-  filterModalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: SIZES.base * 2,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray1,
-  },
-  filterModalTitle: {
-    ...FONTS.h2,
-    color: COLORS.black,
-  },
-  filterCloseButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: COLORS.lightGray2,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  filterCloseIcon: {
-    width: 16,
-    height: 16,
-    tintColor: COLORS.gray2,
-  },
-  filterScrollView: {
-    maxHeight: 400,
-  },
-  filterSection: {
-    padding: SIZES.base * 2,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray1,
-  },
-  filterSectionLabel: {
-    ...FONTS.h4,
-    color: COLORS.black,
-    marginBottom: SIZES.base * 1.5,
-    fontWeight: '600',
-  },
-  stockFilterContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: SIZES.base,
-  },
-  stockFilterButton: {
-    paddingHorizontal: SIZES.base * 2,
-    paddingVertical: SIZES.base * 1.25,
-    borderRadius: SIZES.radius,
-    backgroundColor: COLORS.lightGray2,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
-  },
-  stockFilterButtonActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  stockFilterText: {
-    ...FONTS.body4,
-    color: COLORS.gray2,
-  },
-  stockFilterTextActive: {
-    color: COLORS.white,
-    fontWeight: '600',
-  },
-  filterActions: {
-    flexDirection: 'row',
-    padding: SIZES.base * 2,
-    gap: SIZES.base,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.lightGray1,
-  },
-  filterActionButton: {
-    flex: 1,
-    paddingVertical: SIZES.base * 1.5,
-    borderRadius: SIZES.radius,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  clearFilterButton: {
-    backgroundColor: COLORS.lightGray2,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
-  },
-  applyFilterButton: {
     backgroundColor: COLORS.primary,
-    shadowColor: COLORS.primary,
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
+    paddingVertical: 14,
+    borderRadius: SIZES.radius,
   },
-  clearFilterText: {
-    ...FONTS.button,
-    color: COLORS.gray2,
-    fontSize: 15,
+  printReceiptBtnIcon: {
+    width: 20,
+    height: 20,
+    tintColor: COLORS.white,
+    marginRight: 10,
   },
-  applyFilterText: {
-    ...FONTS.button,
+  printReceiptBtnText: {
+    ...FONTS.body3,
     color: COLORS.white,
-    fontSize: 15,
+    fontWeight: '700',
   },
 });
+
+export default SalesHistory;

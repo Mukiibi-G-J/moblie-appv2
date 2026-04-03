@@ -8,19 +8,23 @@ import {
   ScrollView,
   Alert,
   Platform,
+  Image,
+  StatusBar,
 } from 'react-native';
-import {SafeAreaView} from 'react-native-safe-area-context';
-import {COLORS, FONTS, SIZES} from '../../constants';
+import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
+import {useNavigation} from '@react-navigation/native';
+import {COLORS, FONTS, SIZES, icons} from '../../constants';
+import {useTheme} from '../../context/ThemeContext';
 import Toast from 'react-native-toast-message';
 import PrintService, {PrinterType} from '../../services/PrintService';
 import BluetoothPrinterService, {
   BluetoothDevice,
 } from '../../services/BluetoothPrinterService';
-import Header from '../../Components/Header';
-import {useNavigation} from '@react-navigation/native';
 
 const PrinterConfig: React.FC = () => {
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
+  const {colors} = useTheme();
   const [printerType, setPrinterType] = useState<PrinterType>('auto');
   const [isLoading, setIsLoading] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
@@ -31,18 +35,21 @@ const PrinterConfig: React.FC = () => {
     useState<BluetoothDevice | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
-  const [manualDeviceName, setManualDeviceName] = useState('');
-  const [manualDeviceAddress, setManualDeviceAddress] = useState('');
 
   const printService = PrintService.getInstance();
   const bluetoothService = BluetoothPrinterService.getInstance();
+
+  const headerPaddingTop = Math.max(
+    insets.top,
+    Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0,
+    12,
+  );
 
   useEffect(() => {
     loadPrinterSettings();
     checkBluetoothConnection();
   }, []);
 
-  // Refresh connection status when printer type changes to bluetooth
   useEffect(() => {
     if (printerType === 'bluetooth') {
       checkBluetoothConnection();
@@ -51,8 +58,15 @@ const PrinterConfig: React.FC = () => {
 
   const loadPrinterSettings = async () => {
     try {
-      const savedType = printService.getPrinterType();
+      const savedType = await printService.syncPrinterTypeFromStorage();
       setPrinterType(savedType);
+      if (Platform.OS === 'android') {
+        await bluetoothService.ensureConnectedFromStorage();
+        if (savedType === 'auto' && !bluetoothService.isPrinterConnected()) {
+          await bluetoothService.tryAutoConnectPosBuiltin();
+        }
+        checkBluetoothConnection();
+      }
     } catch (error) {
       console.error('Failed to load printer settings:', error);
     }
@@ -61,7 +75,7 @@ const PrinterConfig: React.FC = () => {
   const checkBluetoothConnection = () => {
     const device = bluetoothService.getConnectedDevice();
     const isConnected = bluetoothService.isPrinterConnected();
-    console.log('Bluetooth connection status:', { device, isConnected });
+    console.log('Bluetooth connection status:', {device, isConnected});
     setConnectedDevice(device);
   };
 
@@ -70,10 +84,10 @@ const PrinterConfig: React.FC = () => {
       setIsLoading(true);
       await printService.setPrinterType(type);
       setPrinterType(type);
-      
+
       Toast.show({
         type: 'success',
-        text1: 'Printer Type Updated',
+        text1: 'Printer type updated',
         text2: `Printer type set to ${type}`,
       });
     } catch (error) {
@@ -92,7 +106,7 @@ const PrinterConfig: React.FC = () => {
     if (Platform.OS !== 'android') {
       Toast.show({
         type: 'info',
-        text1: 'Not Supported',
+        text1: 'Not supported',
         text2: 'Bluetooth printing is only available on Android',
       });
       return;
@@ -108,13 +122,14 @@ const PrinterConfig: React.FC = () => {
       if (devices.length === 0) {
         Toast.show({
           type: 'info',
-          text1: 'No Printers Found',
-          text2: 'Make sure your printer is powered on and paired in Bluetooth Settings',
+          text1: 'No printers found',
+          text2:
+            'Make sure your printer is powered on and paired in Bluetooth settings',
         });
       } else {
         Toast.show({
           type: 'success',
-          text1: 'Scan Complete',
+          text1: 'Scan complete',
           text2: `Found ${devices.length} device(s)`,
         });
       }
@@ -122,7 +137,7 @@ const PrinterConfig: React.FC = () => {
       console.error('Failed to scan for printers:', error);
       Toast.show({
         type: 'error',
-        text1: 'Scan Failed',
+        text1: 'Scan failed',
         text2: error?.message || 'Failed to scan for Bluetooth printers',
       });
     } finally {
@@ -134,7 +149,6 @@ const PrinterConfig: React.FC = () => {
     try {
       setIsConnecting(true);
 
-      // Disconnect current device if any
       if (connectedDevice) {
         await bluetoothService.disconnect();
       }
@@ -150,7 +164,7 @@ const PrinterConfig: React.FC = () => {
       console.error('Failed to connect to printer:', error);
       Toast.show({
         type: 'error',
-        text1: 'Connection Failed',
+        text1: 'Connection failed',
         text2: error?.message || 'Failed to connect to printer',
       });
     } finally {
@@ -176,24 +190,25 @@ const PrinterConfig: React.FC = () => {
     try {
       setIsTesting(true);
 
-      // Check if Bluetooth printer is selected and connected
       if (printerType === 'bluetooth') {
-        if (!connectedDevice) {
+        if (!bluetoothService.isPrinterConnected()) {
+          await bluetoothService.ensureConnectedFromStorage();
+        }
+        if (!bluetoothService.isPrinterConnected()) {
           Alert.alert(
-            'Printer Not Connected',
+            'Printer not connected',
             'Please connect to a Bluetooth printer first before testing.',
             [{text: 'OK'}],
           );
           return;
         }
+        checkBluetoothConnection();
 
-        // Test using Bluetooth service directly
         const success = await bluetoothService.testPrinter();
         if (!success) {
           throw new Error('Bluetooth printer test failed');
         }
       } else {
-        // Test using print service (for Sunmi or auto-detect)
         const success = await printService.testPrinter();
         if (!success) {
           throw new Error('Printer test failed');
@@ -202,7 +217,7 @@ const PrinterConfig: React.FC = () => {
     } catch (error: any) {
       console.error('Printer test failed:', error);
       Alert.alert(
-        'Printer Test Failed',
+        'Printer test failed',
         error?.message ||
           'Failed to test printer. Please check your printer connection.',
         [{text: 'OK'}],
@@ -214,318 +229,414 @@ const PrinterConfig: React.FC = () => {
 
   const showHelpInfo = () => {
     Alert.alert(
-      'Printer Setup Help',
-      '1. Choose your printer type.\n2. For Bluetooth printers, pair in Android Bluetooth Settings first.\n3. Tap "Scan for Printers" and select your device.\n4. Use "Test Printer" to verify everything works.',
+      'Printer setup',
+      '1. Choose Auto detect (recommended) or Bluetooth.\n2. Pair your printer in Android Bluetooth settings (many handheld POS units list the internal printer there).\n3. Tap "Scan for printers" and select it, or rely on Auto after pairing.\n4. Use "Test printer" to verify.',
       [{text: 'OK'}],
     );
   };
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <Header
-        title="Printer Configuration"
-        showBack
-        onBackPress={() => navigation.goBack()}
-        rightComponent={
-          <TouchableOpacity style={styles.helpButton} onPress={showHelpInfo}>
-            <Text style={styles.helpButtonText}>?</Text>
-          </TouchableOpacity>
-        }
-      />
+  const renderTypeOption = (
+    type: PrinterType,
+    title: string,
+    description: string,
+  ) => {
+    const selected = printerType === type;
+    return (
+      <TouchableOpacity
+        style={[
+          styles.option,
+          {
+            borderColor: selected ? COLORS.primary2 : colors.border,
+            backgroundColor: selected
+              ? COLORS.transparentPrimary
+              : colors.card,
+          },
+        ]}
+        onPress={() => handlePrinterTypeChange(type)}
+        disabled={isLoading}
+        activeOpacity={0.65}>
+        <View style={styles.optionContent}>
+          <Text
+            style={[
+              styles.optionText,
+              {color: selected ? COLORS.primary2 : colors.textPrimary},
+            ]}>
+            {title}
+          </Text>
+          <Text style={[styles.optionDescription, {color: colors.textSecondary}]}>
+            {description}
+          </Text>
+        </View>
+        {selected ? (
+          <View style={styles.checkmark}>
+            <Text style={styles.checkmarkText}>✓</Text>
+          </View>
+        ) : null}
+      </TouchableOpacity>
+    );
+  };
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Printer Type Selection */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Printer Type</Text>
-          <Text style={styles.sectionSubtitle}>
+  return (
+    <SafeAreaView
+      style={[styles.safeOuter, {backgroundColor: colors.background}]}
+      edges={['left', 'right', 'bottom']}>
+      <View style={[styles.root, {backgroundColor: colors.background}]}>
+        <View
+          style={[
+            styles.topHeader,
+            {
+              paddingTop: headerPaddingTop,
+              borderBottomColor: colors.border,
+            },
+          ]}>
+          <TouchableOpacity
+            style={[
+              styles.headerRoundButton,
+              {
+                borderColor: colors.border,
+                backgroundColor: colors.card,
+              },
+            ]}
+            onPress={() => navigation.goBack()}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Go back">
+            <Image
+              source={icons.back as any}
+              style={[styles.headerRoundIcon, {tintColor: colors.textPrimary}]}
+              resizeMode="contain"
+            />
+          </TouchableOpacity>
+          <Text
+            style={[styles.topTitle, {color: colors.textPrimary}]}
+            numberOfLines={1}
+            ellipsizeMode="tail">
+            Printer configuration
+          </Text>
+          <TouchableOpacity
+            style={[
+              styles.headerHelpButton,
+              {backgroundColor: COLORS.transparentPrimary},
+            ]}
+            onPress={showHelpInfo}
+            hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
+            accessibilityRole="button"
+            accessibilityLabel="Printer setup help">
+            <Image
+              source={icons.help as any}
+              style={[styles.headerHelpIcon, {tintColor: COLORS.primary3}]}
+              resizeMode="contain"
+            />
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled">
+          <Text style={[styles.sectionTitle, {color: COLORS.primary3}]}>
+            Printer type
+          </Text>
+          <Text style={[styles.sectionSubtitle, {color: colors.textSecondary}]}>
             Select the type of printer you want to use
           </Text>
 
-          <View style={styles.optionContainer}>
-            <TouchableOpacity
-              style={[
-                styles.option,
-                printerType === 'auto' && styles.optionSelected,
-              ]}
-              onPress={() => handlePrinterTypeChange('auto')}
-              disabled={isLoading}>
-              <View style={styles.optionContent}>
-                <Text
-                  style={[
-                    styles.optionText,
-                    printerType === 'auto' && styles.optionTextSelected,
-                  ]}>
-                  Auto Detect
-                </Text>
-                <Text style={styles.optionDescription}>
-                  Automatically detect available printer (Sunmi or Bluetooth)
-                </Text>
-              </View>
-              {printerType === 'auto' && (
-                <View style={styles.checkmark}>
-                  <Text style={styles.checkmarkText}>✓</Text>
-                </View>
+          <View style={[styles.card, {backgroundColor: colors.card}]}>
+            <View style={styles.optionStack}>
+              {renderTypeOption(
+                'auto',
+                'Auto detect',
+                'Sunmi when available; otherwise Bluetooth (including built-in POS printers paired in Android)',
               )}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.option,
-                printerType === 'sunmi' && styles.optionSelected,
-              ]}
-              onPress={() => handlePrinterTypeChange('sunmi')}
-              disabled={isLoading}>
-              <View style={styles.optionContent}>
-                <Text
-                  style={[
-                    styles.optionText,
-                    printerType === 'sunmi' && styles.optionTextSelected,
-                  ]}>
-                  Sunmi Printer
-                </Text>
-                <Text style={styles.optionDescription}>
-                  Use built-in Sunmi printer (Sunmi devices only)
-                </Text>
-              </View>
-              {printerType === 'sunmi' && (
-                <View style={styles.checkmark}>
-                  <Text style={styles.checkmarkText}>✓</Text>
-                </View>
+              {renderTypeOption(
+                'sunmi',
+                'Sunmi printer',
+                'Built-in Sunmi printer (Sunmi devices only)',
               )}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.option,
-                printerType === 'bluetooth' && styles.optionSelected,
-              ]}
-              onPress={() => handlePrinterTypeChange('bluetooth')}
-              disabled={isLoading}>
-              <View style={styles.optionContent}>
-                <Text
-                  style={[
-                    styles.optionText,
-                    printerType === 'bluetooth' && styles.optionTextSelected,
-                  ]}>
-                  Bluetooth Printer
-                </Text>
-                <Text style={styles.optionDescription}>
-                  Use Bluetooth thermal printer (PT-210, etc.)
-                </Text>
-              </View>
-              {printerType === 'bluetooth' && (
-                <View style={styles.checkmark}>
-                  <Text style={styles.checkmarkText}>✓</Text>
-                </View>
+              {renderTypeOption(
+                'bluetooth',
+                'Bluetooth printer',
+                'Bluetooth thermal printer (e.g. PT-210)',
               )}
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Bluetooth Printer Section */}
-        {printerType === 'bluetooth' && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Bluetooth Printer</Text>
-            <Text style={styles.sectionSubtitle}>
-              Connect to a Bluetooth thermal printer like PT-210
-            </Text>
-
-            {/* Connected Device Info */}
-            {connectedDevice && (
-              <View style={styles.connectedDeviceContainer}>
-                <View style={styles.connectedDeviceInfo}>
-                  <Text style={styles.connectedDeviceLabel}>Connected:</Text>
-                  <Text style={styles.connectedDeviceName}>
-                    {connectedDevice.name}
-                  </Text>
-                  <Text style={styles.connectedDeviceAddress}>
-                    {connectedDevice.address}
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  style={styles.disconnectButton}
-                  onPress={disconnectPrinter}>
-                  <Text style={styles.disconnectButtonText}>Disconnect</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* Scan Button */}
-            <TouchableOpacity
-              style={[styles.scanButton, isScanning && styles.scanButtonDisabled]}
-              onPress={scanForPrinters}
-              disabled={isScanning}>
-              {isScanning ? (
-                <ActivityIndicator color={COLORS.white} size="small" />
-              ) : (
-                <Text style={styles.scanButtonText}>Scan for Printers</Text>
-              )}
-            </TouchableOpacity>
-
-            {/* Device List */}
-            {bluetoothDevices.length > 0 && (
-              <View style={styles.deviceList}>
-                <Text style={styles.deviceListTitle}>Available Printers</Text>
-                {bluetoothDevices.map((device, index) => (
-                  <TouchableOpacity
-                    key={index}
-                    style={[
-                      styles.deviceItem,
-                      connectedDevice?.address === device.address &&
-                        styles.deviceItemConnected,
-                    ]}
-                    onPress={() => connectToPrinter(device)}
-                    disabled={isConnecting}>
-                    <View style={styles.deviceItemContent}>
-                      <Text style={styles.deviceItemName}>{device.name}</Text>
-                      <Text style={styles.deviceItemAddress}>
-                        {device.address}
-                      </Text>
-                    </View>
-                    {isConnecting ? (
-                      <ActivityIndicator size="small" color={COLORS.primary} />
-                    ) : (
-                      <Text style={styles.deviceItemArrow}>›</Text>
-                    )}
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-
-            {/* Instructions */}
-            <View style={styles.instructionsContainer}>
-              <Text style={styles.instructionsTitle}>Setup Instructions:</Text>
-              <Text style={styles.instructionsText}>
-                1. Turn on your Bluetooth printer (PT-210, etc.)
-              </Text>
-              <Text style={styles.instructionsText}>
-                2. Make sure the printer is in pairing mode
-              </Text>
-              <Text style={styles.instructionsText}>
-                3. Tap "Scan for Printers" to find available devices
-              </Text>
-              <Text style={styles.instructionsText}>
-                4. Select your printer from the list to connect
-              </Text>
-              <Text style={styles.instructionsText}>
-                5. Use "Test Printer" to verify the connection
-              </Text>
-              <Text style={styles.instructionsText}>
-                Note: For best results, pair your printer in Android Bluetooth Settings first
-              </Text>
             </View>
           </View>
-        )}
 
-        {/* Test Printer Button */}
-        <View style={styles.section}>
+          {printerType === 'bluetooth' ? (
+            <>
+              <Text
+                style={[
+                  styles.sectionTitle,
+                  styles.sectionTitleSpaced,
+                  {color: COLORS.primary3},
+                ]}>
+                Bluetooth printer
+              </Text>
+              <Text
+                style={[styles.sectionSubtitle, {color: colors.textSecondary}]}>
+                Connect to a Bluetooth thermal printer
+              </Text>
+
+              {connectedDevice ? (
+                <View
+                  style={[
+                    styles.connectedCard,
+                    {
+                      backgroundColor: COLORS.transparentPrimary,
+                      borderColor: COLORS.transparentPrimary2,
+                    },
+                  ]}>
+                  <View style={styles.connectedDeviceInfo}>
+                    <Text
+                      style={[styles.connectedDeviceLabel, {color: colors.textSecondary}]}>
+                      Connected
+                    </Text>
+                    <Text
+                      style={[styles.connectedDeviceName, {color: colors.textPrimary}]}>
+                      {connectedDevice.name}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.connectedDeviceAddress,
+                        {color: colors.textTertiary},
+                      ]}>
+                      {connectedDevice.address}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.disconnectButton}
+                    onPress={disconnectPrinter}
+                    activeOpacity={0.85}>
+                    <Text style={styles.disconnectButtonText}>Disconnect</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+
+              <TouchableOpacity
+                style={[
+                  styles.primaryButton,
+                  isScanning && styles.primaryButtonDisabled,
+                ]}
+                onPress={scanForPrinters}
+                disabled={isScanning}
+                activeOpacity={0.85}>
+                {isScanning ? (
+                  <ActivityIndicator color={COLORS.white} size="small" />
+                ) : (
+                  <Text style={styles.primaryButtonText}>Scan for printers</Text>
+                )}
+              </TouchableOpacity>
+
+              {bluetoothDevices.length > 0 ? (
+                <View style={styles.deviceList}>
+                  <Text style={[styles.deviceListTitle, {color: colors.textPrimary}]}>
+                    Available printers
+                  </Text>
+                  {bluetoothDevices.map((device, index) => (
+                    <TouchableOpacity
+                      key={`${device.address}-${index}`}
+                      style={[
+                        styles.deviceItem,
+                        {
+                          backgroundColor: colors.screenMuted,
+                          borderColor:
+                            connectedDevice?.address === device.address
+                              ? COLORS.primary2
+                              : colors.border,
+                        },
+                        connectedDevice?.address === device.address &&
+                          styles.deviceItemConnected,
+                      ]}
+                      onPress={() => connectToPrinter(device)}
+                      disabled={isConnecting}
+                      activeOpacity={0.65}>
+                      <View style={styles.deviceItemContent}>
+                        <Text
+                          style={[styles.deviceItemName, {color: colors.textPrimary}]}>
+                          {device.name}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.deviceItemAddress,
+                            {color: colors.textSecondary},
+                          ]}>
+                          {device.address}
+                        </Text>
+                      </View>
+                      {isConnecting ? (
+                        <ActivityIndicator size="small" color={COLORS.primary2} />
+                      ) : (
+                        <Text style={[styles.deviceItemArrow, {color: COLORS.primary2}]}>
+                          ›
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : null}
+
+              <View
+                style={[
+                  styles.infoCard,
+                  {
+                    borderColor: COLORS.transparentPrimary2,
+                    backgroundColor: COLORS.transparentPrimary,
+                  },
+                ]}>
+                <Text style={[styles.infoCardTitle, {color: COLORS.primary3}]}>
+                  Setup tips
+                </Text>
+                <Text style={[styles.infoCardBody, {color: colors.textSecondary}]}>
+                  Many handheld POS units expose the internal 58mm printer as a paired
+                  Bluetooth device: pair it in Android Bluetooth settings, then scan
+                  and select it here (or use Auto detect). Use Test printer when
+                  connected.
+                </Text>
+              </View>
+            </>
+          ) : null}
+
           <TouchableOpacity
-            style={[styles.testButton, isTesting && styles.testButtonDisabled]}
+            style={[
+              styles.primaryButton,
+              styles.testButtonSpaced,
+              isTesting && styles.primaryButtonDisabled,
+            ]}
             onPress={testPrinter}
-            disabled={isTesting}>
+            disabled={isTesting}
+            activeOpacity={0.85}>
             {isTesting ? (
               <ActivityIndicator color={COLORS.white} size="small" />
             ) : (
-              <Text style={styles.testButtonText}>Test Printer</Text>
+              <Text style={styles.primaryButtonText}>Test printer</Text>
             )}
           </TouchableOpacity>
-          <Text style={styles.testButtonHelp}>
-            Print a test receipt to verify your printer is working correctly
+          <Text style={[styles.testButtonHelp, {color: colors.textSecondary}]}>
+            Print a test receipt to verify your printer is working
           </Text>
-        </View>
-      </ScrollView>
+        </ScrollView>
+      </View>
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
+  safeOuter: {
     flex: 1,
-    backgroundColor: COLORS.white,
   },
-  helpButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+  root: {
+    flex: 1,
+  },
+  topHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: SIZES.padding,
+    paddingBottom: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  headerRoundButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: COLORS.lightGray2,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.white,
   },
-  helpButtonText: {
-    ...FONTS.h3,
-    color: COLORS.primary,
-    lineHeight: 24,
+  headerRoundIcon: {
+    width: 20,
+    height: 20,
   },
-  content: {
+  topTitle: {
     flex: 1,
-    padding: SIZES.padding,
+    textAlign: 'center',
+    marginHorizontal: 8,
+    ...FONTS.h3,
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: -0.2,
   },
-  section: {
-    marginBottom: SIZES.padding * 2,
+  headerHelpButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerHelpIcon: {
+    width: 22,
+    height: 22,
+  },
+  scroll: {
+    flex: 1,
+  },
+  scrollContent: {
+    padding: SIZES.padding,
+    paddingBottom: SIZES.padding * 2,
   },
   sectionTitle: {
-    ...FONTS.h3,
-    color: COLORS.black,
-    fontWeight: '600',
-    marginBottom: SIZES.base,
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  sectionTitleSpaced: {
+    marginTop: 8,
   },
   sectionSubtitle: {
-    ...FONTS.body5,
-    color: COLORS.gray,
-    marginBottom: SIZES.radius,
+    ...FONTS.body4,
+    marginBottom: 14,
+    lineHeight: 20,
   },
-  optionContainer: {
-    gap: SIZES.base,
+  card: {
+    borderRadius: SIZES.radius,
+    marginBottom: SIZES.padding,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: 1},
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  optionStack: {
+    padding: SIZES.base,
+    gap: 10,
   },
   option: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: SIZES.radius,
-    borderRadius: SIZES.radius,
-    borderWidth: 2,
-    borderColor: COLORS.lightGray2,
-    backgroundColor: COLORS.white,
-  },
-  optionSelected: {
-    borderColor: COLORS.primary,
-    backgroundColor: COLORS.lightPrimary,
+    borderRadius: 14,
+    borderWidth: 1,
   },
   optionContent: {
     flex: 1,
   },
   optionText: {
     ...FONTS.body3,
-    color: COLORS.black,
     fontWeight: '600',
-    marginBottom: SIZES.base / 2,
-  },
-  optionTextSelected: {
-    color: COLORS.primary,
+    marginBottom: 4,
   },
   optionDescription: {
     ...FONTS.body5,
-    color: COLORS.gray,
+    lineHeight: 18,
   },
   checkmark: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: COLORS.primary,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: COLORS.primary2,
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: SIZES.base,
   },
   checkmarkText: {
     color: COLORS.white,
-    fontSize: 16,
-    fontWeight: 'bold',
+    fontSize: 15,
+    fontWeight: '700',
   },
-  connectedDeviceContainer: {
+  connectedCard: {
     padding: SIZES.radius,
-    borderRadius: SIZES.radius,
-    backgroundColor: COLORS.lightPrimary,
+    borderRadius: 14,
+    borderWidth: 1,
     marginBottom: SIZES.radius,
   },
   connectedDeviceInfo: {
@@ -533,23 +644,21 @@ const styles = StyleSheet.create({
   },
   connectedDeviceLabel: {
     ...FONTS.body5,
-    color: COLORS.gray,
-    marginBottom: SIZES.base / 2,
+    marginBottom: 4,
+    fontWeight: '600',
   },
   connectedDeviceName: {
     ...FONTS.body3,
-    color: COLORS.primary,
-    fontWeight: '600',
-    marginBottom: SIZES.base / 2,
+    fontWeight: '700',
+    marginBottom: 4,
   },
   connectedDeviceAddress: {
     ...FONTS.body5,
-    color: COLORS.gray,
   },
   disconnectButton: {
-    paddingVertical: SIZES.base,
-    paddingHorizontal: SIZES.radius,
-    borderRadius: SIZES.base,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 999,
     backgroundColor: COLORS.error,
     alignSelf: 'flex-start',
   },
@@ -558,147 +667,88 @@ const styles = StyleSheet.create({
     color: COLORS.white,
     fontWeight: '600',
   },
-  scanButton: {
-    backgroundColor: COLORS.primary,
-    paddingVertical: SIZES.radius,
+  primaryButton: {
+    backgroundColor: COLORS.primary2,
+    paddingVertical: 16,
     paddingHorizontal: SIZES.padding,
-    borderRadius: SIZES.radius,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: SIZES.radius,
+    marginBottom: SIZES.base,
+    shadowColor: COLORS.primary3,
+    shadowOffset: {width: 0, height: 4},
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  scanButtonDisabled: {
-    opacity: 0.6,
+  primaryButtonDisabled: {
+    opacity: 0.55,
   },
-  scanButtonText: {
+  primaryButtonText: {
     ...FONTS.body3,
     color: COLORS.white,
-    fontWeight: '600',
+    fontWeight: '700',
+  },
+  testButtonSpaced: {
+    marginTop: SIZES.base,
   },
   deviceList: {
-    marginTop: SIZES.radius,
+    marginTop: SIZES.base,
+    marginBottom: SIZES.radius,
   },
   deviceListTitle: {
     ...FONTS.body4,
-    color: COLORS.black,
-    fontWeight: '600',
-    marginBottom: SIZES.base,
+    fontWeight: '700',
+    marginBottom: 10,
   },
   deviceItem: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: SIZES.radius,
-    borderRadius: SIZES.radius,
-    backgroundColor: COLORS.lightGray1,
+    borderRadius: 14,
     marginBottom: SIZES.base,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   deviceItemConnected: {
-    backgroundColor: COLORS.lightPrimary,
     borderWidth: 2,
-    borderColor: COLORS.primary,
   },
   deviceItemContent: {
     flex: 1,
   },
   deviceItemName: {
     ...FONTS.body3,
-    color: COLORS.black,
     fontWeight: '600',
-    marginBottom: SIZES.base / 2,
+    marginBottom: 4,
   },
   deviceItemAddress: {
     ...FONTS.body5,
-    color: COLORS.gray,
   },
   deviceItemArrow: {
-    ...FONTS.h2,
-    color: COLORS.primary,
+    fontSize: 22,
+    fontWeight: '300',
     marginLeft: SIZES.base,
   },
-  instructionsContainer: {
-    marginTop: SIZES.radius,
-    padding: SIZES.radius,
-    borderRadius: SIZES.radius,
-    backgroundColor: COLORS.lightGray1,
-  },
-  instructionsTitle: {
-    ...FONTS.body4,
-    color: COLORS.black,
-    fontWeight: '600',
+  infoCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     marginBottom: SIZES.base,
   },
-  instructionsText: {
-    ...FONTS.body5,
-    color: COLORS.gray,
-    marginBottom: SIZES.base / 2,
+  infoCardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 8,
   },
-  testButton: {
-    backgroundColor: COLORS.primary,
-    paddingVertical: SIZES.radius,
-    paddingHorizontal: SIZES.padding,
-    borderRadius: SIZES.radius,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: SIZES.base,
-  },
-  testButtonDisabled: {
-    opacity: 0.6,
-  },
-  testButtonText: {
-    ...FONTS.body3,
-    color: COLORS.white,
-    fontWeight: '600',
+  infoCardBody: {
+    fontSize: 15,
+    lineHeight: 22,
   },
   testButtonHelp: {
     ...FONTS.body5,
-    color: COLORS.gray,
     textAlign: 'center',
-  },
-  manualEntryContainer: {
-    marginTop: SIZES.radius,
-    padding: SIZES.radius,
-    borderRadius: SIZES.radius,
-    backgroundColor: COLORS.lightGray1,
-    marginBottom: SIZES.radius,
-  },
-  manualEntryTitle: {
-    ...FONTS.body4,
-    color: COLORS.black,
-    fontWeight: '600',
-    marginBottom: SIZES.base / 2,
-  },
-  manualEntrySubtitle: {
-    ...FONTS.body5,
-    color: COLORS.gray,
-    marginBottom: SIZES.radius,
-  },
-  manualEntryInput: {
-    ...FONTS.body3,
-    backgroundColor: COLORS.white,
-    padding: SIZES.radius,
-    borderRadius: SIZES.base,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray2,
-    marginBottom: SIZES.base,
-    color: COLORS.black,
-  },
-  manualEntryButton: {
-    backgroundColor: COLORS.primary,
-    paddingVertical: SIZES.base,
-    paddingHorizontal: SIZES.radius,
-    borderRadius: SIZES.base,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  manualEntryButtonDisabled: {
-    opacity: 0.6,
-  },
-  manualEntryButtonText: {
-    ...FONTS.body3,
-    color: COLORS.white,
-    fontWeight: '600',
+    lineHeight: 18,
   },
 });
 
 export default PrinterConfig;
-

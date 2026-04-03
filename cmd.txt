@@ -6,3 +6,6 @@ adb reverse tcp:8000 tcp:8000
 adb devices
 adb tcpip 5555
 adb connect 10.10.10.47:5555
+
+adb connect 10.10.10.47:5555
+adb connect 10.157.1.185:5555

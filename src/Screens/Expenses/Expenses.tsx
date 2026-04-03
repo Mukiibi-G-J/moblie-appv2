@@ -9,24 +9,25 @@ import {
   TextInput,
   RefreshControl,
   ActivityIndicator,
-  Modal,
   Platform,
   ScrollView,
   Dimensions,
+  Image,
+  StatusBar,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import Toast from 'react-native-toast-message';
 import ReactNativeModal from 'react-native-modal';
 import { COLORS, FONTS, SIZES, icons } from '../../constants';
 import { usePermissions } from '../../hooks/usePermissions';
 import { PAGE_NAMES } from '../../constants/pageNames';
-import Header from '../../Components/Header';
 import { ExpenseServices } from '../../services/ExpenseServices';
 import { Expense, ExpenseType, PaymentMethod } from '../../@types/expense';
 import ExpenseListItem from './ExpenseListItem';
 import ExpenseFormModal from './ExpenseFormModal';
+import { useTheme } from '../../context/ThemeContext';
 
 type DateFilter =
   | 'today'
@@ -73,16 +74,66 @@ const getDateRangeForFilter = (filter: DateFilter) => {
 
 const Expenses = () => {
   const navigation = useNavigation < any > ();
+  const insets = useSafeAreaInsets();
   const { canRead, canCreate, canEdit, canDelete } = usePermissions();
   const PAGE_NAME = PAGE_NAMES.EXPENSES;
+  const { colors } = useTheme();
+  const t = useMemo(
+    () => ({
+      container: { backgroundColor: colors.background },
+      topHeader: { backgroundColor: colors.background },
+      headerBorder: { borderBottomColor: colors.border },
+      headerRoundButton: {
+        borderColor: colors.border,
+        backgroundColor: colors.surface,
+      },
+      headerRoundIcon: { tintColor: colors.textPrimary },
+      topTitle: { color: colors.textPrimary },
+      searchContainer: { backgroundColor: colors.background },
+      searchPill: {
+        borderColor: colors.border,
+        backgroundColor: colors.screenMuted,
+      },
+      searchIcon: { tintColor: colors.iconMuted },
+      searchInput: { color: colors.textPrimary },
+      filterIconInline: { tintColor: colors.iconMuted },
+      postedExpensesRow: { backgroundColor: colors.background },
+      postedRowLabel: { color: colors.textPrimary },
+      postedRowChevron: { color: colors.textSecondary },
+      rowDivider: { backgroundColor: colors.border },
+      dateChip: { backgroundColor: colors.screenMuted },
+      dateChipText: { color: colors.textSecondary },
+      customDateBtn: { backgroundColor: colors.screenMuted },
+      bottomSheetContent: { backgroundColor: colors.surface },
+      sheetHandle: { backgroundColor: colors.iconMuted },
+      sheetHeader: { borderBottomColor: colors.border },
+      sheetTitle: { color: colors.textPrimary },
+      clearFiltersBtn: { backgroundColor: colors.screenMuted },
+      sheetCloseBtn: { backgroundColor: colors.backButtonBg },
+      sheetCloseText: { color: colors.textSecondary },
+      sheetSection: { borderBottomColor: colors.border },
+      sheetSectionTitle: { color: colors.textPrimary },
+      filterChip: { backgroundColor: colors.screenMuted },
+      filterChipText: { color: colors.textSecondary },
+      loadingText: { color: colors.textSecondary },
+      emptyIconWrap: { backgroundColor: colors.screenMuted },
+      emptyIcon: { tintColor: colors.iconMuted },
+      emptyTitle: { color: colors.textPrimary },
+      emptySubtext: { color: colors.textSecondary },
+      accessWrap: { backgroundColor: colors.background },
+      accessCard: { backgroundColor: colors.card },
+      accessMessage: { color: colors.textSecondary },
+    }),
+    [colors],
+  );
 
   // Early return if no read permission
   if (!canRead(PAGE_NAME)) {
     return (
-      <View style={styles.container}>
-        <View style={styles.accessDeniedContainer}>
+      <View style={[styles.container, t.accessWrap]}>
+        <View style={[styles.accessDeniedContainer, t.accessCard]}>
           <Text style={styles.accessDeniedTitle}>Access Denied</Text>
-          <Text style={styles.accessDeniedMessage}>
+          <Text style={[styles.accessDeniedMessage, t.accessMessage]}>
             You don't have permission to view expenses.
           </Text>
         </View>
@@ -389,23 +440,28 @@ const Expenses = () => {
     onRefresh();
   };
 
-  // Calculate summary statistics
-  const summaryStats = useMemo(() => {
-    const totalAmount = expenses.reduce(
-      (sum, exp) => sum + (exp.amount || 0),
-      0,
-    );
-    const openCount = expenses.filter(exp => exp.status === 'Open').length;
-    const averageAmount =
-      expenses.length > 0 ? totalAmount / expenses.length : 0;
-
-    return {
-      totalAmount,
-      openCount,
-      averageAmount,
-      totalCount: expenses.length,
-    };
-  }, [expenses]);
+  const hasActiveFilters = useMemo(() => {
+    if (dateFilter !== DEFAULT_DATE_FILTER) {
+      return true;
+    }
+    if (dateFrom && dateTo) {
+      return true;
+    }
+    if (selectedExpenseType != null || selectedPaymentMethod != null) {
+      return true;
+    }
+    if (statusFilter !== 'Open') {
+      return true;
+    }
+    return false;
+  }, [
+    dateFilter,
+    dateFrom,
+    dateTo,
+    selectedExpenseType,
+    selectedPaymentMethod,
+    statusFilter,
+  ]);
 
   const handleDateFilterChange = (filter: DateFilter) => {
     setDateFilter(filter);
@@ -452,36 +508,19 @@ const Expenses = () => {
     }
   };
 
-  const renderSummaryCards = () => (
-    <View style={styles.summaryContainer}>
-      <View style={[styles.summaryCard, styles.summaryCardPrimary]}>
-        <Text style={styles.summaryLabel}>Total Amount</Text>
-        <Text style={styles.summaryValuePrimary}>
-          UGX {summaryStats.totalAmount.toLocaleString()}
+  const renderPostedExpensesRow = () => (
+    <>
+      <TouchableOpacity
+        style={[styles.postedExpensesRow, t.postedExpensesRow]}
+        onPress={() => navigation.navigate('ExpenseHistory')}
+        activeOpacity={0.65}>
+        <Text style={[styles.postedExpensesRowLabel, t.postedRowLabel]}>
+          View posted expenses
         </Text>
-        <Text style={styles.summarySubtext}>
-          {summaryStats.totalCount} expenses
-        </Text>
-      </View>
-      <View style={[styles.summaryCard, styles.summaryCardSecondary]}>
-        <Text style={styles.summaryLabel}>Open Items</Text>
-        <Text style={styles.summaryValueSecondary}>
-          {summaryStats.openCount}
-        </Text>
-        <Text style={styles.summarySubtext}>
-          Avg {summaryStats.averageAmount.toFixed(0).toLocaleString()} UGX
-        </Text>
-      </View>
-    </View>
-  );
-
-  const renderHistoryLink = () => (
-    <TouchableOpacity
-      style={styles.historyLink}
-      onPress={() => navigation.navigate('ExpenseHistory')}>
-      <Text style={styles.historyLinkTitle}>View Posted Expenses</Text>
-      <Text style={styles.historyLinkChevron}>›</Text>
-    </TouchableOpacity>
+        <Text style={[styles.postedExpensesRowChevron, t.postedRowChevron]}>›</Text>
+      </TouchableOpacity>
+      <View style={[styles.rowDivider, t.rowDivider]} />
+    </>
   );
 
   const renderDateFilters = () => (
@@ -492,12 +531,14 @@ const Expenses = () => {
             key={filter.id}
             style={[
               styles.dateFilterChip,
+              t.dateChip,
               dateFilter === filter.id && styles.dateFilterChipActive,
             ]}
             onPress={() => handleDateFilterChange(filter.id)}>
             <Text
               style={[
                 styles.dateFilterChipText,
+                t.dateChipText,
                 dateFilter === filter.id && styles.dateFilterChipTextActive,
               ]}>
               {filter.label}
@@ -506,66 +547,78 @@ const Expenses = () => {
         ))}
       </View>
       <TouchableOpacity
-        style={styles.customDateButton}
+        style={[styles.customDateButton, t.customDateBtn]}
         onPress={handleCustomDateRange}>
         <Text style={styles.customDateButtonText}>Custom Range</Text>
       </TouchableOpacity>
     </View>
   );
 
-  const activeFilterLabel = useMemo(() => {
-    const parts: string[] = [];
-
-    let dateLabel = 'All time';
-    if (dateFilter !== 'alltime') {
-      const match = DATE_FILTERS.find(filter => filter.id === dateFilter);
-      dateLabel = match ? match.label : 'Custom range';
-    } else if (dateFrom && dateTo) {
-      dateLabel = `${dateFrom} → ${dateTo}`;
-    }
-    parts.push(dateLabel);
-
-    parts.push(`${statusFilter} only`);
-
-    if (selectedExpenseType) {
-      const type = expenseTypes.find(t => t.id === selectedExpenseType);
-      if (type) {
-        parts.push(type.name);
-      }
-    }
-
-    if (selectedPaymentMethod) {
-      const method = paymentMethods.find(m => m.id === selectedPaymentMethod);
-      if (method) {
-        parts.push(method.description || method.code);
-      }
-    }
-
-    return parts.join(' · ');
-  }, [dateFilter, dateFrom, dateTo, statusFilter, selectedExpenseType, selectedPaymentMethod, expenseTypes, paymentMethods]);
-
-  const renderHeader = () => (
-    <View style={styles.headerContainer}>
-      {/* Search Bar with Filter Button */}
-      <View style={styles.searchContainer}>
+  const renderSearchSection = () => (
+    <View style={[styles.searchContainer, t.searchContainer]}>
+      <View style={[styles.searchPill, t.searchPill]}>
+        <Image source={icons.search as any} style={[styles.searchIcon, t.searchIcon]} />
         <TextInput
-          style={styles.searchInput}
-          placeholder="Search expenses..."
-          placeholderTextColor={COLORS.gray}
+          style={[styles.searchInput, t.searchInput]}
+          placeholder="Search expenses"
+          placeholderTextColor={colors.placeholder}
           value={searchQuery}
           onChangeText={setSearchQuery}
         />
         <TouchableOpacity
-          style={styles.filterButton}
-          onPress={() => setShowFilters(true)}>
-          <Text style={styles.filterButtonText}>Filters</Text>
+          style={styles.filterInlineHit}
+          onPress={() => setShowFilters(true)}
+          activeOpacity={0.7}
+          accessibilityRole="button"
+          accessibilityLabel="Filter expenses">
+          <Image
+            source={icons.filter as any}
+            style={[
+              styles.filterIconInline,
+              t.filterIconInline,
+              hasActiveFilters ? styles.filterIconInlineActive : null,
+            ]}
+          />
+          {hasActiveFilters ? <View style={styles.filterBadge} /> : null}
         </TouchableOpacity>
       </View>
+    </View>
+  );
 
-      {/* Filter summary */}
-      <View style={styles.filterSummaryRow}>
-        <Text style={styles.filterSummaryLabel}>Active filters: </Text>
-        <Text style={styles.filterSummaryValue}>{activeFilterLabel}</Text>
+  const renderTopBar = () => (
+    <View
+      style={[
+        styles.topHeader,
+        t.topHeader,
+        {
+          // Match Edit Item header: one top inset (SafeAreaView does not pad top here).
+          paddingTop: Math.max(
+            insets.top,
+            Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0,
+            12,
+          ),
+          borderBottomWidth: StyleSheet.hairlineWidth,
+        },
+        t.headerBorder,
+      ]}>
+      <TouchableOpacity
+        style={[styles.headerRoundButton, t.headerRoundButton]}
+        onPress={() => navigation.goBack()}
+        activeOpacity={0.7}>
+        <Image source={icons.back as any} style={[styles.headerRoundIcon, t.headerRoundIcon]} />
+      </TouchableOpacity>
+      <Text style={[styles.topTitle, t.topTitle]}>Expenses</Text>
+      <View style={styles.headerTrailing}>
+        {canCreate(PAGE_NAME) ? (
+          <TouchableOpacity
+            style={styles.headerActionButton}
+            onPress={handleCreate}
+            activeOpacity={0.8}>
+            <Image source={icons.plus as any} style={styles.headerActionIcon} />
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.headerTrailingSpacer} />
+        )}
       </View>
     </View>
   );
@@ -580,12 +633,12 @@ const Expenses = () => {
       animationOut="slideOutDown"
       useNativeDriver={true}
       backdropOpacity={0.5}>
-      <View style={styles.bottomSheetContent}>
+      <View style={[styles.bottomSheetContent, t.bottomSheetContent]}>
         {/* Drag Handle */}
-        <View style={styles.bottomSheetHandle} />
+        <View style={[styles.bottomSheetHandle, t.sheetHandle]} />
 
-        <View style={styles.bottomSheetHeader}>
-          <Text style={styles.bottomSheetTitle}>Filters</Text>
+        <View style={[styles.bottomSheetHeader, t.sheetHeader]}>
+          <Text style={[styles.bottomSheetTitle, t.sheetTitle]}>Filters</Text>
           <View style={styles.bottomSheetHeaderActions}>
             <TouchableOpacity
               onPress={() => {
@@ -595,13 +648,13 @@ const Expenses = () => {
                 setSelectedPaymentMethod(null);
                 setPage(1);
               }}
-              style={styles.clearFiltersButton}>
+              style={[styles.clearFiltersButton, t.clearFiltersBtn]}>
               <Text style={styles.clearFiltersButtonText}>Clear All</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => setShowFilters(false)}
-              style={styles.bottomSheetCloseButton}>
-              <Text style={styles.bottomSheetCloseText}>✕</Text>
+              style={[styles.bottomSheetCloseButton, t.sheetCloseBtn]}>
+              <Text style={[styles.bottomSheetCloseText, t.sheetCloseText]}>✕</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -612,20 +665,21 @@ const Expenses = () => {
           showsVerticalScrollIndicator={true}
           nestedScrollEnabled={true}>
           {/* Date Range Filters */}
-          <View style={styles.bottomSheetSection}>
-            <Text style={styles.bottomSheetSectionTitle}>Date Range</Text>
+          <View style={[styles.bottomSheetSection, t.sheetSection]}>
+            <Text style={[styles.bottomSheetSectionTitle, t.sheetSectionTitle]}>Date Range</Text>
             {renderDateFilters()}
           </View>
 
           {/* Status Filter Chips */}
-          <View style={styles.bottomSheetSection}>
-            <Text style={styles.bottomSheetSectionTitle}>Status</Text>
+          <View style={[styles.bottomSheetSection, t.sheetSection]}>
+            <Text style={[styles.bottomSheetSectionTitle, t.sheetSectionTitle]}>Status</Text>
             <View style={styles.filterChipsContainer}>
               {STATUS_FILTERS.map(status => (
                 <TouchableOpacity
                   key={status}
                   style={[
                     styles.filterChip,
+                    t.filterChip,
                     statusFilter === status && styles.filterChipActive,
                   ]}
                   onPress={() => {
@@ -635,6 +689,7 @@ const Expenses = () => {
                   <Text
                     style={[
                       styles.filterChipText,
+                      t.filterChipText,
                       statusFilter === status && styles.filterChipTextActive,
                     ]}>
                     {status}
@@ -646,12 +701,13 @@ const Expenses = () => {
 
           {/* Expense Type Filter */}
           {expenseTypes.length > 0 && (
-            <View style={styles.bottomSheetSection}>
-              <Text style={styles.bottomSheetSectionTitle}>Expense Type</Text>
+            <View style={[styles.bottomSheetSection, t.sheetSection]}>
+              <Text style={[styles.bottomSheetSectionTitle, t.sheetSectionTitle]}>Expense Type</Text>
               <View style={styles.filterChipsContainer}>
                 <TouchableOpacity
                   style={[
                     styles.filterChip,
+                    t.filterChip,
                     selectedExpenseType === null && styles.filterChipActive,
                   ]}
                   onPress={() => {
@@ -661,6 +717,7 @@ const Expenses = () => {
                   <Text
                     style={[
                       styles.filterChipText,
+                      t.filterChipText,
                       selectedExpenseType === null && styles.filterChipTextActive,
                     ]}>
                     All Types
@@ -671,6 +728,7 @@ const Expenses = () => {
                     key={type.id}
                     style={[
                       styles.filterChip,
+                      t.filterChip,
                       selectedExpenseType === type.id && styles.filterChipActive,
                     ]}
                     onPress={() => {
@@ -680,6 +738,7 @@ const Expenses = () => {
                     <Text
                       style={[
                         styles.filterChipText,
+                        t.filterChipText,
                         selectedExpenseType === type.id &&
                         styles.filterChipTextActive,
                       ]}>
@@ -693,12 +752,13 @@ const Expenses = () => {
 
           {/* Payment Method Filter */}
           {paymentMethods.length > 0 && (
-            <View style={styles.bottomSheetSection}>
-              <Text style={styles.bottomSheetSectionTitle}>Payment Method</Text>
+            <View style={[styles.bottomSheetSection, t.sheetSection]}>
+              <Text style={[styles.bottomSheetSectionTitle, t.sheetSectionTitle]}>Payment Method</Text>
               <View style={styles.filterChipsContainer}>
                 <TouchableOpacity
                   style={[
                     styles.filterChip,
+                    t.filterChip,
                     selectedPaymentMethod === null && styles.filterChipActive,
                   ]}
                   onPress={() => {
@@ -708,6 +768,7 @@ const Expenses = () => {
                   <Text
                     style={[
                       styles.filterChipText,
+                      t.filterChipText,
                       selectedPaymentMethod === null && styles.filterChipTextActive,
                     ]}>
                     All Methods
@@ -718,6 +779,7 @@ const Expenses = () => {
                     key={method.id}
                     style={[
                       styles.filterChip,
+                      t.filterChip,
                       selectedPaymentMethod === method.id && styles.filterChipActive,
                     ]}
                     onPress={() => {
@@ -727,6 +789,7 @@ const Expenses = () => {
                     <Text
                       style={[
                         styles.filterChipText,
+                        t.filterChipText,
                         selectedPaymentMethod === method.id &&
                         styles.filterChipTextActive,
                       ]}>
@@ -744,12 +807,26 @@ const Expenses = () => {
 
   const renderEmptyState = () => (
     <View style={styles.emptyContainer}>
-      <Text style={styles.emptyText}>No expenses found</Text>
-      {canCreate(PAGE_NAME) && (
+      <View style={[styles.emptyIconContainer, t.emptyIconWrap]}>
+        <Image
+          source={icons.coupon as any}
+          style={[styles.emptyIconImage, t.emptyIcon]}
+          resizeMode="contain"
+        />
+      </View>
+      <Text style={[styles.emptyTitle, t.emptyTitle]}>No expenses found</Text>
+      <Text style={[styles.emptySubtext, t.emptySubtext]}>
+        {searchQuery.trim()
+          ? 'Try adjusting your search or filters.'
+          : canCreate(PAGE_NAME)
+            ? 'Create your first expense to get started.'
+            : 'No expenses available.'}
+      </Text>
+      {canCreate(PAGE_NAME) && !searchQuery.trim() ? (
         <TouchableOpacity style={styles.emptyButton} onPress={handleCreate}>
-          <Text style={styles.emptyButtonText}>Create Your First Expense</Text>
+          <Text style={styles.emptyButtonText}>Create expense</Text>
         </TouchableOpacity>
-      )}
+      ) : null}
     </View>
   );
 
@@ -757,59 +834,54 @@ const Expenses = () => {
     if (!loading) return null;
     return (
       <View style={styles.footerLoader}>
-        <ActivityIndicator size="small" color={COLORS.primary} />
+        <ActivityIndicator size="small" color={COLORS.primary2} />
       </View>
     );
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      <Header
-        title="EXPENSES"
-        showBack={true}
-        onBackPress={() => navigation.goBack()}
-      // containerStyle={{ zIndex: -1 }}
-
-      />
-      {renderHeader()}
-      {renderSummaryCards()}
-      {renderHistoryLink()}
+    <SafeAreaView style={[styles.container, t.container]} edges={['left', 'right', 'bottom']}>
+      {renderTopBar()}
+      {renderSearchSection()}
+      {renderPostedExpensesRow()}
 
       {loading && page === 1 ? (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={COLORS.primary} />
-          <Text style={styles.loadingText}>Loading expenses...</Text>
+          <ActivityIndicator size="large" color={COLORS.primary2} />
+          <Text style={[styles.loadingText, t.loadingText]}>Loading expenses...</Text>
         </View>
       ) : (
-        <FlatList
-          data={expenses}
-          keyExtractor={item => item.id.toString()}
-          renderItem={({ item }) => (
-            <ExpenseListItem
-              expense={item}
-              onEdit={canEdit(PAGE_NAME) ? handleEdit : undefined}
-              onDelete={canDelete(PAGE_NAME) ? handleDelete : undefined}
-              onPost={canEdit(PAGE_NAME) ? handlePost : undefined}
-            />
-          )}
-          ListEmptyComponent={renderEmptyState}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-          }
-          onEndReached={handleLoadMore}
-          onEndReachedThreshold={0.5}
-          ListFooterComponent={renderFooter}
-          contentContainerStyle={
-            expenses.length === 0 ? styles.emptyListContainer : undefined
-          }
-        />
-      )}
-
-      {/* Floating Action Button */}
-      {canCreate(PAGE_NAME) && (
-        <TouchableOpacity style={styles.fab} onPress={handleCreate}>
-          <Text style={styles.fabText}>+</Text>
-        </TouchableOpacity>
+        <View style={styles.listFlex}>
+          <FlatList
+            style={styles.listFlex}
+            data={expenses}
+            keyExtractor={item => item.id.toString()}
+            renderItem={({ item }) => (
+              <ExpenseListItem
+                expense={item}
+                onEdit={canEdit(PAGE_NAME) ? handleEdit : undefined}
+                onDelete={canDelete(PAGE_NAME) ? handleDelete : undefined}
+                onPost={canEdit(PAGE_NAME) ? handlePost : undefined}
+              />
+            )}
+            ListEmptyComponent={renderEmptyState}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={onRefresh}
+                colors={[COLORS.primary2]}
+                tintColor={COLORS.primary2}
+              />
+            }
+            onEndReached={handleLoadMore}
+            onEndReachedThreshold={0.5}
+            ListFooterComponent={renderFooter}
+            contentContainerStyle={
+              expenses.length === 0 ? styles.emptyListContainer : undefined
+            }
+            showsVerticalScrollIndicator={false}
+          />
+        </View>
       )}
 
       {/* Form Modal */}
@@ -857,62 +929,140 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: COLORS.white,
   },
-  headerContainer: {
-    backgroundColor: COLORS.white,
-    paddingHorizontal: SIZES.padding,
-    paddingTop: SIZES.base,
-    paddingBottom: SIZES.base,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray2,
-  },
-  searchContainer: {
+  topHeader: {
     flexDirection: 'row',
-    marginBottom: SIZES.base / 2,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: SIZES.padding,
+    paddingBottom: 14,
+    backgroundColor: COLORS.white,
   },
-  searchInput: {
+  headerRoundButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.lightGray1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.white,
+  },
+  headerRoundIcon: {
+    width: 20,
+    height: 20,
+    tintColor: COLORS.black,
+  },
+  topTitle: {
     flex: 1,
-    height: 40,
-    backgroundColor: COLORS.lightGray1,
-    borderRadius: SIZES.radius,
-    paddingHorizontal: SIZES.base,
-    ...FONTS.body3,
+    textAlign: 'center',
+    ...FONTS.h3,
+    fontSize: 17,
+    fontWeight: '700',
     color: COLORS.black,
-    marginRight: SIZES.base,
+    letterSpacing: -0.2,
   },
-  filterButton: {
-    paddingHorizontal: SIZES.radius,
+  headerTrailing: {
+    width: 40,
     height: 40,
-    backgroundColor: COLORS.primary,
-    borderRadius: SIZES.radius,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  headerTrailingSpacer: {
+    width: 40,
+    height: 40,
+  },
+  headerActionButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.primary2,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  filterButtonText: {
-    ...FONTS.body3,
-    color: COLORS.white,
+  headerActionIcon: {
+    width: 18,
+    height: 18,
+    tintColor: COLORS.white,
   },
-  filterSummaryRow: {
+  searchContainer: {
+    paddingHorizontal: SIZES.padding,
+    paddingTop: 4,
+    paddingBottom: 12,
+    backgroundColor: COLORS.white,
+  },
+  searchPill: {
     flexDirection: 'row',
     alignItems: 'center',
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    minHeight: 48,
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderColor: COLORS.lightGray2,
     backgroundColor: COLORS.lightGray1,
-    borderRadius: SIZES.radius,
-    paddingHorizontal: SIZES.base,
-    paddingVertical: SIZES.base / 2,
-    marginTop: SIZES.base / 2,
   },
-  filterSummaryTextWrapper: {
+  searchIcon: {
+    width: 20,
+    height: 20,
+    marginRight: 10,
+    tintColor: COLORS.gray,
+  },
+  searchInput: {
     flex: 1,
-    marginRight: SIZES.base,
-  },
-  filterSummaryLabel: {
-    ...FONTS.body5,
-    color: COLORS.gray,
-    fontSize: 11,
-  },
-  filterSummaryValue: {
-    ...FONTS.body4,
+    ...FONTS.body3,
     color: COLORS.black,
-    fontSize: 11,
+    minHeight: 48,
+    paddingVertical: 12,
+  },
+  filterInlineHit: {
+    position: 'relative',
+    padding: 8,
+    marginRight: -4,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  filterIconInline: {
+    width: 20,
+    height: 20,
+    tintColor: COLORS.gray,
+  },
+  filterIconInlineActive: {
+    tintColor: COLORS.primary2,
+  },
+  filterBadge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.error,
+  },
+  postedExpensesRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: SIZES.padding,
+    backgroundColor: COLORS.white,
+  },
+  postedExpensesRowLabel: {
+    ...FONTS.body3,
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.black,
+    flex: 1,
+  },
+  postedExpensesRowChevron: {
+    ...FONTS.h3,
+    color: COLORS.gray2,
+    fontSize: 22,
+    fontWeight: '300',
+  },
+  rowDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: COLORS.lightGray1,
+    marginLeft: SIZES.padding,
+  },
+  listFlex: {
     flex: 1,
   },
   filterToggleButton: {
@@ -956,7 +1106,7 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     ...FONTS.body3,
-    color: COLORS.gray,
+    color: COLORS.gray2,
     marginTop: SIZES.base,
   },
   emptyListContainer: {
@@ -966,49 +1116,56 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: SIZES.padding * 2,
+    paddingVertical: SIZES.padding * 2,
+    paddingHorizontal: SIZES.padding,
   },
-  emptyText: {
+  emptyIconContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: COLORS.lightGray2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: SIZES.base * 2,
+  },
+  emptyIconImage: {
+    width: 36,
+    height: 36,
+    tintColor: COLORS.gray2,
+  },
+  emptyTitle: {
     ...FONTS.h3,
-    color: COLORS.gray,
-    marginBottom: SIZES.radius,
+    color: COLORS.black,
+    marginBottom: SIZES.base,
     textAlign: 'center',
   },
+  emptySubtext: {
+    ...FONTS.body3,
+    color: COLORS.gray2,
+    textAlign: 'center',
+    maxWidth: 280,
+  },
   emptyButton: {
-    paddingHorizontal: SIZES.radius * 2,
-    paddingVertical: SIZES.base,
+    marginTop: SIZES.base * 2,
+    paddingHorizontal: SIZES.base * 3,
+    paddingVertical: SIZES.base * 1.5,
     backgroundColor: COLORS.primary,
     borderRadius: SIZES.radius,
-    marginTop: SIZES.base,
+    shadowColor: COLORS.primary,
+    shadowOffset: {width: 0, height: 2},
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
   },
   emptyButtonText: {
-    ...FONTS.body3,
+    ...FONTS.button,
     color: COLORS.white,
+    fontSize: 15,
+    fontWeight: '600',
   },
   footerLoader: {
     paddingVertical: SIZES.base,
     alignItems: 'center',
-  },
-  fab: {
-    position: 'absolute',
-    right: SIZES.padding,
-    bottom: SIZES.padding,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: COLORS.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-  },
-  fabText: {
-    fontSize: 28,
-    color: COLORS.white,
-    fontWeight: 'bold',
   },
   accessDeniedContainer: {
     flex: 1,
@@ -1065,95 +1222,6 @@ const styles = StyleSheet.create({
   },
   customDateButtonText: {
     ...FONTS.body4,
-    color: COLORS.primary,
-  },
-  summaryContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: SIZES.padding,
-    paddingVertical: SIZES.base,
-    backgroundColor: COLORS.white,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  summaryCard: {
-    flex: 1,
-    padding: SIZES.base / 2,
-    marginHorizontal: SIZES.base / 2,
-    borderRadius: SIZES.radius,
-    borderWidth: 1,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  summaryCardPrimary: {
-    backgroundColor: '#F0FFF7',
-    borderColor: '#C7F1DA',
-  },
-  summaryCardSecondary: {
-    backgroundColor: '#F2F5FF',
-    borderColor: '#D3DBFF',
-  },
-  summaryLabel: {
-    ...FONTS.body5,
-    color: COLORS.gray,
-    fontSize: 10,
-    marginBottom: 2,
-  },
-  summaryValuePrimary: {
-    ...FONTS.h3,
-    color: '#099268',
-    fontSize: 16,
-    marginBottom: 2,
-  },
-  summaryValueSecondary: {
-    ...FONTS.h3,
-    color: '#2F53D8',
-    fontSize: 16,
-    marginBottom: 2,
-  },
-  summarySubtext: {
-    ...FONTS.body5,
-    color: COLORS.gray,
-    fontSize: 10,
-  },
-  historyLink: {
-    marginHorizontal: SIZES.padding,
-    marginBottom: SIZES.base / 2,
-    backgroundColor: COLORS.white,
-    borderRadius: SIZES.radius,
-    paddingVertical: SIZES.base / 2,
-    paddingHorizontal: SIZES.base,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderColor: COLORS.lightGray2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  historyLinkTitle: {
-    ...FONTS.body4,
-    color: COLORS.primary,
-    fontWeight: '600',
-    fontSize: 12,
-  },
-  historyLinkSubtitle: {
-    ...FONTS.body5,
-    color: COLORS.gray,
-    fontSize: 10,
-  },
-  historyLinkChevron: {
-    ...FONTS.h2,
     color: COLORS.primary,
   },
   bottomSheet: {

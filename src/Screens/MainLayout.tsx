@@ -22,7 +22,6 @@ import Header from '../Components/Header';
 import MainBottomTabBar from '../Components/MainBottomTabBar';
 import Home from './Home/Home';
 import Cart from './Cart/Cart';
-import SalesHistory from './Sales/SalesHistory';
 import MoreMenu from './More/MoreMenu';
 
 type MainLayoutProps = {
@@ -33,7 +32,6 @@ type MainLayoutProps = {
 
 const MemoHome = React.memo(Home);
 const MemoCart = React.memo(Cart);
-const MemoSalesHistory = React.memo(SalesHistory);
 const MemoMoreMenu = React.memo(MoreMenu);
 
 const MainLayout: React.FC<MainLayoutProps> = ({
@@ -79,10 +77,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({
     );
   }, [selectedTab]);
 
-  const openSalesTab = useCallback(() => {
-    setSelectedTab(constants.screens.makeSale);
-  }, [setSelectedTab]);
-
   const renderTabScreen = useCallback(
     (tabLabel: string) => {
       switch (tabLabel) {
@@ -90,20 +84,13 @@ const MainLayout: React.FC<MainLayoutProps> = ({
           return <MemoHome />;
         case constants.screens.makeSale:
           return <MemoCart navigation={navigation} isTabMode />;
-        case constants.screens.sales:
-          return <MemoSalesHistory />;
         case constants.screens.more:
-          return (
-            <MemoMoreMenu
-              navigation={navigation}
-              onOpenSalesTab={openSalesTab}
-            />
-          );
+          return <MemoMoreMenu navigation={navigation} />;
         default:
           return null;
       }
     },
-    [navigation, openSalesTab],
+    [navigation],
   );
 
   return (
@@ -117,7 +104,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({
         animatedStyle,
       ]}>
       <View style={{ flex: 1, backgroundColor: colors.background }}>
-        {selectedTab !== constants.screens.more &&
+        {selectedTab !== constants.screens.home &&
+        selectedTab !== constants.screens.more &&
         selectedTab !== constants.screens.makeSale ? (
           <Header
             title={selectedTab.toUpperCase()}

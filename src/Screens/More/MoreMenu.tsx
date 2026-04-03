@@ -22,7 +22,6 @@ import {getCompanyInfo} from '../../services/app.services';
 
 export type MoreMenuProps = {
   navigation: DrawerNavigationProp<any, any>;
-  onOpenSalesTab: () => void;
 };
 
 type MenuRow = {
@@ -45,7 +44,7 @@ function formatTenantLabel(slug: string | null): string {
     .join(' ');
 }
 
-const MoreMenu: React.FC<MoreMenuProps> = ({navigation, onOpenSalesTab}) => {
+const MoreMenu: React.FC<MoreMenuProps> = ({navigation}) => {
   const {colors} = useTheme();
   const insets = useSafeAreaInsets();
   const {auth} = useAuth();
@@ -85,12 +84,12 @@ const MoreMenu: React.FC<MoreMenuProps> = ({navigation, onOpenSalesTab}) => {
   const rows: MenuRow[] = useMemo(
     () => [
       {
-        key: 'orders',
-        label: 'Orders',
-        icon: icons.cart,
+        key: 'salesHistory',
+        label: 'Sales History',
+        icon: icons.reports,
         visible:
           isModuleVisible('sales') && hasAnyPageAccess(PAGE_NAMES.SALES_HISTORY),
-        onPress: () => onOpenSalesTab(),
+        onPress: () => navigate('SalesHistory', undefined),
       },
       {
         key: 'reports',
@@ -105,6 +104,15 @@ const MoreMenu: React.FC<MoreMenuProps> = ({navigation, onOpenSalesTab}) => {
         icon: icons.product,
         visible: isModuleVisible('items') && hasAnyPageAccess(PAGE_NAMES.ITEMS),
         onPress: () => navigate('Items', undefined),
+      },
+      {
+        key: 'stockAdjustments',
+        label: 'Stock adjustments',
+        icon: icons.itemJournal,
+        visible:
+          isModuleVisible('inventory') &&
+          hasAnyPageAccess(PAGE_NAMES.ITEM_JOURNAL),
+        onPress: () => navigate('ItemJournal', undefined),
       },
       {
         key: 'customers',
@@ -123,6 +131,30 @@ const MoreMenu: React.FC<MoreMenuProps> = ({navigation, onOpenSalesTab}) => {
           isModuleVisible('suppliers') &&
           hasAnyPageAccess(PAGE_NAMES.SUPPLIERS),
         onPress: () => navigate('Suppliers', undefined),
+      },
+      {
+        key: 'purchases',
+        label: 'Purchases',
+        icon: icons.cart,
+        visible:
+          isModuleVisible('purchases') &&
+          hasAnyPageAccess(PAGE_NAMES.PURCHASES),
+        onPress: () => navigate('Purchases', undefined),
+      },
+      {
+        key: 'expenses',
+        label: 'Expenses',
+        icon: icons.coupon,
+        visible:
+          isModuleVisible('expenses') && hasAnyPageAccess(PAGE_NAMES.EXPENSES),
+        onPress: () => navigate('Expenses', undefined),
+      },
+      {
+        key: 'settings',
+        label: 'Settings',
+        icon: icons.setting,
+        visible: hasAnyPageAccess(PAGE_NAMES.PROFILE_SETTINGS),
+        onPress: () => navigate('Settings', undefined),
       },
       {
         key: 'addons',
@@ -146,13 +178,19 @@ const MoreMenu: React.FC<MoreMenuProps> = ({navigation, onOpenSalesTab}) => {
       },
       {
         key: 'support',
-        label: 'Support',
+        label: 'Help & Support',
         icon: icons.help,
         visible: true,
-        onPress: () => navigate('Settings', undefined),
+        onPress: () => {
+          Toast.show({
+            type: 'info',
+            text1: 'Help & Support',
+            text2: 'Coming soon.',
+          });
+        },
       },
     ],
-    [isModuleVisible, hasAnyPageAccess, onOpenSalesTab],
+    [isModuleVisible, hasAnyPageAccess],
   );
 
   const visibleRows = rows.filter(r => r.visible);

@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   CartItem,
-  ItemJournalData,
+  ItemJournalUpsertPayload,
   SalesItem,
   SalesPostData,
   SalesInvoiceData,
@@ -543,20 +543,6 @@ export const updateSalesInvoice = async (
   }
 };
 
-export const postItemJournal = async (itemJournalData: ItemJournalData) => {
-  try {
-    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const axiosInstance = createAxiosInstance(tenant) || undefined;
-    const response = await axiosInstance.post(
-      '/api/item-journals/',
-      itemJournalData,
-    );
-    return response;
-  } catch (error) {
-    return {error: error};
-  }
-};
-
 // items list api
 export const fetchItems = async (
   page: number = 1,
@@ -794,6 +780,29 @@ export const fetchExpenseBreakdownReport = async (params?: {
   }
 };
 
+/**
+ * Web parity: `ReportService.exportToPDF` → POST `/api/reports/export-pdf/`
+ * Body: `{ report_type, filters }`. Returns raw PDF bytes when the backend implements this route.
+ */
+export const exportReportPdfFromApi = async (
+  reportType: string,
+  filters: Record<string, unknown>,
+): Promise<ArrayBuffer> => {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant) || undefined;
+  const response = await axiosInstance.post(
+    '/api/reports/export-pdf/',
+    {report_type: reportType, filters},
+    {
+      responseType: 'arraybuffer',
+      headers: {
+        Accept: 'application/pdf, application/json, application/octet-stream, */*',
+      },
+    },
+  );
+  return response.data as ArrayBuffer;
+};
+
 export const fetchProfitLossStatement = async (params?: {
   startDate?: string;
   endDate?: string;
@@ -801,14 +810,18 @@ export const fetchProfitLossStatement = async (params?: {
   try {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
     const axiosInstance = createAxiosInstance(tenant) || undefined;
+    const query: Record<string, string> = {};
+    const sd = params?.startDate?.trim();
+    const ed = params?.endDate?.trim();
+    if (sd) {
+      query.start_date = sd;
+    }
+    if (ed) {
+      query.end_date = ed;
+    }
     const response = await axiosInstance.get(
       '/api/sales-dashboard/profit_loss_statement/',
-      {
-        params: {
-          start_date: params?.startDate,
-          end_date: params?.endDate,
-        },
-      },
+      {params: query},
     );
     return response?.data;
   } catch (error) {
@@ -821,13 +834,14 @@ export const fetchBalanceSheetReport = async (asOfDate?: string) => {
   try {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
     const axiosInstance = createAxiosInstance(tenant) || undefined;
+    const query: Record<string, string> = {};
+    const d = asOfDate?.trim();
+    if (d) {
+      query.as_of_date = d;
+    }
     const response = await axiosInstance.get(
       '/api/sales-dashboard/balance_sheet_report/',
-      {
-        params: {
-          as_of_date: asOfDate,
-        },
-      },
+      {params: query},
     );
     return response?.data;
   } catch (error) {
@@ -989,6 +1003,24 @@ const getAxiosInstance = async () => {
   return tenant ? createAxiosInstance(tenant) : axiosInstance;
 };
 
+export type PostItemJournalLinesResult = {
+  message?: string;
+  error?: string;
+  invalid_journals?: Array<{document_no?: string; errors?: string[]}>;
+};
+
+/** Post open item journal lines (backend: POST /api/item-journal/post, body `{ ids }`). */
+export const postItemJournalLines = async (
+  ids: number[],
+): Promise<PostItemJournalLinesResult> => {
+  const api = await getAxiosInstance();
+  const response = await api.post<PostItemJournalLinesResult>(
+    '/api/item-journal/post',
+    {ids},
+  );
+  return response.data;
+};
+
 // Get company information
 export const getCompanyInfo = async () => {
   try {
@@ -1002,44 +1034,60 @@ export const getCompanyInfo = async () => {
   }
 };
 
-// Update fetchItemJournal to accept pagination parameters
+export type FetchItemJournalParams = {
+  page?: number;
+  q?: string;
+  /** e.g. Open, Posted */
+  status?: string;
+  entry_type?: string;
+};
+
+export interface ItemJournalListResponse {
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: unknown[];
+}
+
 export const fetchItemJournal = async (
   page: number = 1,
   searchQuery: string = '',
-) => {
-  try {
-    const api = await getAxiosInstance();
-    const response = await api.get('/api/item-journals/', {
-      params: {
-        page,
-        q: searchQuery.trim(),
-      },
-    });
-    console.log('request url', response.config.url);
-    return response.data;
-  } catch (error: any) {
-    console.log('error', error.response?.data);
-    throw error;
+  extra?: Omit<FetchItemJournalParams, 'page' | 'q'>,
+): Promise<ItemJournalListResponse> => {
+  const api = await getAxiosInstance();
+  const params: Record<string, string | number> = {
+    page,
+    q: searchQuery.trim(),
+  };
+  if (extra?.status) {
+    params.status = extra.status;
   }
+  if (extra?.entry_type) {
+    params.entry_type = extra.entry_type;
+  }
+  const response = await api.get<ItemJournalListResponse | unknown[]>(
+    '/api/item-journals/',
+    {params},
+  );
+  const data = response.data;
+  if (Array.isArray(data)) {
+    return {
+      count: data.length,
+      next: null,
+      previous: null,
+      results: data,
+    };
+  }
+  return data as ItemJournalListResponse;
 };
 
-// Update updateItemJournal similarly
-export const updateItemJournal = async (
-  itemJournalId: number,
-  itemJournalData: ItemJournalData,
+/** Create or update a journal line (parity with web upsert). */
+export const upsertItemJournal = async (
+  payload: ItemJournalUpsertPayload,
 ) => {
-  try {
-    const api = await getAxiosInstance();
-    const response = await api.put(
-      `/api/item-journals/${itemJournalId}/`,
-      itemJournalData,
-    );
-    console.log('request url', response.config.url);
-    return response;
-  } catch (error: any) {
-    console.log('error', error.response?.data);
-    throw error;
-  }
+  const api = await getAxiosInstance();
+  const response = await api.post('/api/item-journals/upsert/', payload);
+  return response;
 };
 
 // Customer types

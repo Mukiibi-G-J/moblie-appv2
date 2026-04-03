@@ -100,12 +100,6 @@ const MainBottomTabBar: React.FC<MainBottomTabBarProps> = ({
           onPress={() => onSelectTab(constants.screens.makeSale)}
         />
         <TabButton
-          label={constants.screens.sales}
-          icon={icons.reports}
-          isFocused={selectedTab === constants.screens.sales}
-          onPress={() => onSelectTab(constants.screens.sales)}
-        />
-        <TabButton
           label={constants.screens.more}
           icon={icons.menu}
           isFocused={selectedTab === constants.screens.more}

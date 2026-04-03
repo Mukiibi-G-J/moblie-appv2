@@ -1,4 +1,12 @@
-import React, {createContext, useReducer, useContext} from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useReducer,
+  useRef,
+} from 'react';
+import {InteractionManager} from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {CartItem, CartState, CartAction} from '../@types/types.dto';
 
@@ -82,28 +90,57 @@ function cartReducer(state: CartState, action: CartAction): CartState {
   }
 }
 
+const CART_PERSIST_DEBOUNCE_MS = 450;
+
 export function CartProvider({children}: {children: React.ReactNode}) {
   const [state, dispatchSync] = useReducer(cartReducer, initialState);
+  const hasPersistedInitialStateRef = useRef(false);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestCartItemsRef = useRef(state.cartItems);
+  latestCartItemsRef.current = state.cartItems;
 
-  const dispatch = async (action: CartAction) => {
-    dispatchSync(action);
-    const newState = cartReducer(state, action);
-
-    switch (action.type) {
-      case 'CART_ADD_ITEM':
-      case 'REMOVE_FROM_CART':
-      case 'UPDATE_CART_ITEM_QUANTITY':
-      case 'CART_UPDATE_ITEM':
-        await AsyncStorage.setItem(
-          'cartItems',
-          JSON.stringify(newState.cartItems),
-        );
-        break;
-      case 'CLEAR_CART':
-        await AsyncStorage.removeItem('cartItems');
-        break;
+  useEffect(() => {
+    if (!hasPersistedInitialStateRef.current) {
+      hasPersistedInitialStateRef.current = true;
+      return;
     }
-  };
+
+    if (persistTimerRef.current) {
+      clearTimeout(persistTimerRef.current);
+    }
+
+    persistTimerRef.current = setTimeout(() => {
+      persistTimerRef.current = null;
+      const items = latestCartItemsRef.current;
+
+      InteractionManager.runAfterInteractions(() => {
+        void (async () => {
+          try {
+            if (items.length === 0) {
+              await AsyncStorage.removeItem('cartItems');
+              return;
+            }
+
+            await AsyncStorage.setItem('cartItems', JSON.stringify(items));
+          } catch (error) {
+            console.error('Failed to persist cart items:', error);
+          }
+        })();
+      });
+    }, CART_PERSIST_DEBOUNCE_MS);
+
+    return () => {
+      if (persistTimerRef.current) {
+        clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = null;
+      }
+    };
+  }, [state.cartItems]);
+
+  const dispatch = useCallback((action: CartAction) => {
+    dispatchSync(action);
+    return Promise.resolve();
+  }, []);
 
   return (
     <CartContext.Provider value={{state, dispatch}}>
@@ -125,7 +162,6 @@ export async function initializeCart(dispatch: React.Dispatch<CartAction>) {
   if (storedCartItems) {
     const cartItems = JSON.parse(storedCartItems);
     cartItems.forEach((item: CartItem) => {
-      console.log(item);
       dispatch({type: 'CART_ADD_ITEM', payload: item});
     });
   }

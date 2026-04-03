@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -55,6 +55,8 @@ export interface Item {
     id: number;
   }[];
   inventory: number;
+  /** Backend item kind — matches web (`Inventory`, `Service`, `Non-Inventory`). */
+  type?: string;
   category_id?: number | string | null;
   item_category?: any;
   description?: string;
@@ -98,6 +100,7 @@ const createEmptyItemDraft = (): Item => ({
   item_images: [],
   inventory: 0,
   description: '',
+  type: 'Inventory',
 });
 
 const EditItemModal = ({
@@ -136,6 +139,67 @@ const EditItemModal = ({
   const [inventoryEntriesError, setInventoryEntriesError] = useState<string | null>(null);
   const [inventoryEntries, setInventoryEntries] = useState<InventoryEntry[]>([]);
   // Removed in-app gallery states since we're using native gallery
+
+  const { colors } = useTheme();
+  const editTheme = useMemo(
+    () => ({
+      root: { backgroundColor: colors.background },
+      flex: { backgroundColor: colors.background },
+      header: {
+        backgroundColor: colors.background,
+        borderBottomColor: colors.border,
+      },
+      headerTitle: { color: colors.textPrimary },
+      closeCircle: { backgroundColor: colors.backButtonBg },
+      closeIcon: { tintColor: colors.textPrimary },
+      loadingText: { color: colors.textSecondary },
+      scrollBg: { backgroundColor: colors.background },
+      tileOuter: { backgroundColor: colors.surface },
+      tileInner: { backgroundColor: colors.card },
+      tileInitials: { color: colors.textPrimary },
+      tileName: { color: colors.textSecondary },
+      tileImage: { backgroundColor: colors.screenMuted },
+      changePill: { backgroundColor: colors.screenMuted },
+      changePillText: { color: colors.textSecondary },
+      outlineField: {
+        borderColor: colors.border,
+        backgroundColor: colors.inputBackground,
+      },
+      outlineLabel: { color: colors.textSecondary },
+      outlineInput: { color: colors.textPrimary },
+      staticValue: { color: colors.textPrimary },
+      staticChevron: { color: colors.textSecondary },
+      thickBar: { backgroundColor: colors.border },
+      sectionHeading: { color: colors.textPrimary },
+      folderWrap: { borderColor: colors.border },
+      folderIcon: { tintColor: colors.iconMuted },
+      catTitle: { color: colors.textPrimary },
+      catSubtitle: { color: colors.textSecondary },
+      optionsCopy: { color: colors.textSecondary },
+      learnMore: { color: colors.textPrimary },
+      addOptionsPill: { backgroundColor: colors.inputBackground },
+      addOptionsPillText: { color: colors.textPrimary },
+      priceInput: { color: colors.textPrimary },
+      settingsChevron: { tintColor: colors.iconMuted },
+      invSheet: { backgroundColor: colors.surface },
+      invTitle: { color: colors.textPrimary },
+      invSubtitle: { color: colors.textSecondary },
+      invCloseBtn: { backgroundColor: colors.backButtonBg },
+      invCloseText: { color: colors.textPrimary },
+      invSummaryCard: { backgroundColor: colors.screenMuted },
+      invSummaryLabel: { color: colors.textSecondary },
+      invSummaryValue: { color: colors.textPrimary },
+      invStateText: { color: colors.textSecondary },
+      invEntryCard: {
+        borderColor: colors.border,
+        backgroundColor: colors.inputBackground,
+      },
+      invEntryType: { color: colors.textPrimary },
+      invEntryDate: { color: colors.textSecondary },
+      invMeta: { color: colors.textSecondary },
+    }),
+    [colors],
+  );
 
   const formatAmountWithCommas = (value: number | string | undefined | null) => {
     const numericValue =
@@ -755,15 +819,17 @@ const EditItemModal = ({
         animationType="slide"
         transparent={false}
         onRequestClose={onClose}>
-        <View style={styles.editItemModalRoot}>
+        <View style={[styles.editItemModalRoot, editTheme.root]}>
           <KeyboardAvoidingView
-            style={styles.editItemModalFlex}
+            style={[styles.editItemModalFlex, editTheme.flex]}
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
             {!editedItem ? (
               <View style={styles.editItemLoadingWrap}>
                 <ActivityIndicator size="large" color={COLORS.primary2} />
-                <Text style={styles.editItemLoadingText}>Loading item…</Text>
+                <Text style={[styles.editItemLoadingText, editTheme.loadingText]}>
+                  Loading item…
+                </Text>
                 <TouchableOpacity
                   style={styles.editItemLoadingClose}
                   onPress={onClose}
@@ -776,27 +842,29 @@ const EditItemModal = ({
                 <View
                   style={[
                     styles.editItemHeader,
-                    {
-                      paddingTop: Math.max(insets.top, 12),
-                      borderBottomColor: COLORS.lightGray1,
-                    },
+                    editTheme.header,
+                    { paddingTop: Math.max(insets.top, 12) },
                   ]}>
                   <View style={styles.editItemHeaderSide}>
                     <TouchableOpacity
                       onPress={onClose}
-                      style={styles.editItemCloseCircle}
+                      style={[styles.editItemCloseCircle, editTheme.closeCircle]}
                       activeOpacity={0.7}
                       accessibilityRole="button"
                       accessibilityLabel="Close">
                       <Image
                         source={icons.cross as any}
-                        style={styles.editItemCloseIcon}
+                        style={[styles.editItemCloseIcon, editTheme.closeIcon]}
                         resizeMode="contain"
                       />
                     </TouchableOpacity>
                   </View>
-                  <Text style={styles.editItemHeaderTitle}>
-                    {isCreateMode ? 'Create Item' : 'Edit Item'}
+                  <Text style={[styles.editItemHeaderTitle, editTheme.headerTitle]}>
+                    {isCreateMode
+                      ? editedItem?.type === 'Service'
+                        ? 'Create Service'
+                        : 'Create Item'
+                      : 'Edit Item'}
                   </Text>
                   <View style={[styles.editItemHeaderSide, styles.editItemHeaderSideEnd]}>
                     {(isCreateMode ? canCreate : canEdit) ? (
@@ -815,7 +883,7 @@ const EditItemModal = ({
                 </View>
 
                 <ScrollView
-                  style={styles.modalScrollView}
+                  style={[styles.modalScrollView, editTheme.scrollBg]}
                   contentContainerStyle={[
                     styles.editItemScrollContent,
                     { paddingBottom: Math.max(insets.bottom, 20) + 24 },
@@ -848,22 +916,22 @@ const EditItemModal = ({
                     </View>
                   ) : null}
 
-                  <View style={styles.squareTileOuter}>
-                    <View style={styles.squareTileInner}>
+                  <View style={[styles.squareTileOuter, editTheme.tileOuter]}>
+                    <View style={[styles.squareTileInner, editTheme.tileInner]}>
                       {previewUri ? (
                         <Image
                           source={{ uri: previewUri }}
-                          style={styles.squareTileImage}
+                          style={[styles.squareTileImage, editTheme.tileImage]}
                           resizeMode="cover"
                         />
                       ) : (
                         <>
-                          <Text style={styles.squareTileInitials}>
+                          <Text style={[styles.squareTileInitials, editTheme.tileInitials]}>
                             {getItemInitials(
                               editedItem.item_name || (isCreateMode ? 'New Item' : 'Item'),
                             )}
                           </Text>
-                          <Text style={styles.squareTileName} numberOfLines={2}>
+                          <Text style={[styles.squareTileName, editTheme.tileName]} numberOfLines={2}>
                             {editedItem.item_name || (isCreateMode ? 'New Item' : 'Item')}
                           </Text>
                         </>
@@ -874,15 +942,16 @@ const EditItemModal = ({
                   <TouchableOpacity
                     style={[
                       styles.squareChangeImagePill,
+                      editTheme.changePill,
                       imageUploadLoading && { opacity: 0.6 },
                     ]}
                     onPress={handleImagePick}
                     disabled={imageUploadLoading}
                     activeOpacity={0.7}>
                     {imageUploadLoading ? (
-                      <ActivityIndicator size="small" color={COLORS.gray2} />
+                      <ActivityIndicator size="small" color={colors.textSecondary} />
                     ) : (
-                      <Text style={styles.squareChangeImagePillText}>
+                      <Text style={[styles.squareChangeImagePillText, editTheme.changePillText]}>
                         {isCreateMode ? 'Add image later' : 'Change image'}
                       </Text>
                     )}
@@ -902,52 +971,112 @@ const EditItemModal = ({
                     </TouchableOpacity>
                   ) : null}
 
-                  <View style={styles.squareOutlineField}>
-                    <Text style={styles.squareOutlineLabel}>Name</Text>
+                  <View style={[styles.squareOutlineField, editTheme.outlineField]}>
+                    <Text style={[styles.squareOutlineLabel, editTheme.outlineLabel]}>Name</Text>
                     <TextInput
-                      style={styles.squareOutlineInput}
+                      style={[styles.squareOutlineInput, editTheme.outlineInput]}
                       value={editedItem.item_name}
                       onChangeText={text =>
                         setEditedItem({ ...editedItem, item_name: text })
                       }
                       placeholder="Item name"
-                      placeholderTextColor={COLORS.gray3}
+                      placeholderTextColor={colors.placeholder}
                     />
                   </View>
 
-                  <View style={[styles.squareOutlineField, styles.squareOutlineFieldTall]}>
-                    <Text style={styles.squareOutlineLabel}>Description</Text>
+                  <View
+                    style={[
+                      styles.squareOutlineField,
+                      styles.squareOutlineFieldTall,
+                      editTheme.outlineField,
+                    ]}>
+                    <Text style={[styles.squareOutlineLabel, editTheme.outlineLabel]}>Description</Text>
                     <TextInput
-                      style={[styles.squareOutlineInput, styles.squareOutlineMultiline]}
+                      style={[
+                        styles.squareOutlineInput,
+                        styles.squareOutlineMultiline,
+                        editTheme.outlineInput,
+                      ]}
                       value={editedItem.description ?? ''}
                       onChangeText={text =>
                         setEditedItem({ ...editedItem, description: text })
                       }
                       placeholder="Description"
-                      placeholderTextColor={COLORS.gray3}
+                      placeholderTextColor={colors.placeholder}
                       multiline
                       textAlignVertical="top"
                     />
                   </View>
 
-                  <View style={styles.editItemThickBar} />
+                  {isCreateMode ? (
+                    <>
+                      <View style={[styles.editItemThickBar, editTheme.thickBar]} />
+                      <Text style={[styles.editItemSectionHeading, editTheme.sectionHeading]}>
+                        Type
+                      </Text>
+                      <Text style={[styles.editItemOptionsCopy, editTheme.optionsCopy]}>
+                        Services are sold without stock tracking. Inventory items use your stock levels.
+                      </Text>
+                      <View style={styles.itemTypeChipRow}>
+                        {(
+                          [
+                            {value: 'Inventory' as const, label: 'Inventory'},
+                            {value: 'Service' as const, label: 'Service'},
+                          ] as const
+                        ).map(opt => {
+                          const selected = (editedItem.type || 'Inventory') === opt.value;
+                          return (
+                            <TouchableOpacity
+                              key={opt.value}
+                              style={[
+                                styles.itemTypeChip,
+                                {
+                                  borderColor: colors.border,
+                                  backgroundColor: selected
+                                    ? COLORS.primary2
+                                    : colors.inputBackground,
+                                },
+                              ]}
+                              onPress={() =>
+                                setEditedItem({...editedItem, type: opt.value})
+                              }
+                              activeOpacity={0.75}>
+                              <Text
+                                style={[
+                                  styles.itemTypeChipText,
+                                  {color: selected ? COLORS.white : colors.textPrimary},
+                                ]}>
+                                {opt.label}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    </>
+                  ) : null}
 
-                  <Text style={styles.editItemSectionHeading}>Categorization</Text>
+                  <View style={[styles.editItemThickBar, editTheme.thickBar]} />
+
+                  <Text style={[styles.editItemSectionHeading, editTheme.sectionHeading]}>
+                    Categorization
+                  </Text>
                   <TouchableOpacity
                     style={styles.editItemCategoryRow}
                     onPress={openCategoriesPicker}
                     disabled={categoriesLoading}
                     activeOpacity={0.65}>
-                    <View style={styles.editItemFolderIconWrap}>
+                    <View style={[styles.editItemFolderIconWrap, editTheme.folderWrap]}>
                       <Image
                         source={icons.product as any}
-                        style={styles.editItemFolderIcon}
+                        style={[styles.editItemFolderIcon, editTheme.folderIcon]}
                         resizeMode="contain"
                       />
                     </View>
                     <View style={styles.editItemCategoryRowText}>
-                      <Text style={styles.editItemCategoryRowTitle}>Categories</Text>
-                      <Text style={styles.editItemCategoryRowSubtitle}>
+                      <Text style={[styles.editItemCategoryRowTitle, editTheme.catTitle]}>
+                        Categories
+                      </Text>
+                      <Text style={[styles.editItemCategoryRowSubtitle, editTheme.catSubtitle]}>
                         {categoriesLoading
                           ? 'Loading…'
                           : editedItem.category_id
@@ -957,15 +1086,15 @@ const EditItemModal = ({
                     </View>
                     <Image
                       source={icons.down_arrow as any}
-                      style={styles.squareSettingsChevron}
+                      style={[styles.squareSettingsChevron, editTheme.settingsChevron]}
                       resizeMode="contain"
                     />
                   </TouchableOpacity>
 
-                  <View style={styles.editItemThickBar} />
+                  <View style={[styles.editItemThickBar, editTheme.thickBar]} />
 
-                  <Text style={styles.editItemSectionHeading}>Options</Text>
-                  <Text style={styles.editItemOptionsCopy}>
+                  <Text style={[styles.editItemSectionHeading, editTheme.sectionHeading]}>Options</Text>
+                  <Text style={[styles.editItemOptionsCopy, editTheme.optionsCopy]}>
                     Add a custom set of options to create variations for an item. For
                     example, add a size option set to create variations for small,
                     medium, and large.
@@ -979,10 +1108,10 @@ const EditItemModal = ({
                       })
                     }
                     activeOpacity={0.7}>
-                    <Text style={styles.editItemLearnMore}>Learn more</Text>
+                    <Text style={[styles.editItemLearnMore, editTheme.learnMore]}>Learn more</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={styles.editItemAddOptionsPill}
+                    style={[styles.editItemAddOptionsPill, editTheme.addOptionsPill]}
                     onPress={() =>
                       Toast.show({
                         type: 'info',
@@ -991,18 +1120,22 @@ const EditItemModal = ({
                       })
                     }
                     activeOpacity={0.7}>
-                    <Text style={styles.editItemAddOptionsPillText}>Add options</Text>
+                    <Text style={[styles.editItemAddOptionsPillText, editTheme.addOptionsPillText]}>
+                      Add options
+                    </Text>
                   </TouchableOpacity>
 
-                  <View style={styles.editItemThickBar} />
+                  <View style={[styles.editItemThickBar, editTheme.thickBar]} />
 
-                  <Text style={styles.editItemSectionHeading}>Price and inventory</Text>
-                  <View style={styles.squareOutlineField}>
-                    <Text style={styles.squareOutlineLabel}>Price (UGX)</Text>
+                  <Text style={[styles.editItemSectionHeading, editTheme.sectionHeading]}>
+                    Price and inventory
+                  </Text>
+                  <View style={[styles.squareOutlineField, editTheme.outlineField]}>
+                    <Text style={[styles.squareOutlineLabel, editTheme.outlineLabel]}>Price (UGX)</Text>
                     <View style={styles.squarePriceRow}>
                       <Text style={styles.squarePricePrefix}>UGX</Text>
                       <TextInput
-                        style={styles.squarePriceInput}
+                        style={[styles.squarePriceInput, editTheme.priceInput]}
                         value={formatAmountWithCommas(editedItem.unit_price)}
                         onChangeText={text => {
                           const numericValue =
@@ -1014,14 +1147,14 @@ const EditItemModal = ({
                         }}
                         keyboardType="numeric"
                         placeholder="0"
-                        placeholderTextColor={COLORS.gray3}
+                        placeholderTextColor={colors.placeholder}
                       />
                     </View>
                   </View>
 
                   {!isCreateMode ? (
-                    <View style={styles.squareOutlineField}>
-                      <Text style={styles.squareOutlineLabel}>Quantity</Text>
+                    <View style={[styles.squareOutlineField, editTheme.outlineField]}>
+                      <Text style={[styles.squareOutlineLabel, editTheme.outlineLabel]}>Quantity</Text>
                       <TouchableOpacity
                         style={styles.squareOutlineStaticRow}
                         activeOpacity={0.7}
@@ -1030,12 +1163,15 @@ const EditItemModal = ({
                           style={[
                             styles.squareOutlineStaticValue,
                             styles.squareOutlineLinkValue,
+                            editTheme.staticValue,
                           ]}>
                           {String(
                             Math.max(0, Math.floor(Number(editedItem.inventory) || 0)),
                           )}
                         </Text>
-                        <Text style={styles.squareOutlineStaticChevron}>v</Text>
+                        <Text style={[styles.squareOutlineStaticChevron, editTheme.staticChevron]}>
+                          v
+                        </Text>
                       </TouchableOpacity>
                     </View>
                   ) : null}
@@ -1053,25 +1189,33 @@ const EditItemModal = ({
         animationType="slide"
         onRequestClose={() => setInventoryEntriesVisible(false)}>
         <View style={styles.inventoryEntriesOverlay}>
-          <View style={styles.inventoryEntriesSheet}>
+          <View style={[styles.inventoryEntriesSheet, editTheme.invSheet]}>
             <View style={styles.inventoryEntriesHeader}>
               <View style={styles.inventoryEntriesHeaderTextWrap}>
-                <Text style={styles.inventoryEntriesTitle}>Inventory Details</Text>
-                <Text style={styles.inventoryEntriesSubtitle} numberOfLines={1}>
+                <Text style={[styles.inventoryEntriesTitle, editTheme.invTitle]}>
+                  Inventory Details
+                </Text>
+                <Text
+                  style={[styles.inventoryEntriesSubtitle, editTheme.invSubtitle]}
+                  numberOfLines={1}>
                   {editedItem?.item_name || 'Item'}
                 </Text>
               </View>
               <TouchableOpacity
                 onPress={() => setInventoryEntriesVisible(false)}
                 activeOpacity={0.7}
-                style={styles.inventoryEntriesCloseButton}>
-                <Text style={styles.inventoryEntriesCloseText}>Close</Text>
+                style={[styles.inventoryEntriesCloseButton, editTheme.invCloseBtn]}>
+                <Text style={[styles.inventoryEntriesCloseText, editTheme.invCloseText]}>
+                  Close
+                </Text>
               </TouchableOpacity>
             </View>
 
-            <View style={styles.inventoryEntriesSummaryCard}>
-              <Text style={styles.inventoryEntriesSummaryLabel}>Current Quantity</Text>
-              <Text style={styles.inventoryEntriesSummaryValue}>
+            <View style={[styles.inventoryEntriesSummaryCard, editTheme.invSummaryCard]}>
+              <Text style={[styles.inventoryEntriesSummaryLabel, editTheme.invSummaryLabel]}>
+                Current Quantity
+              </Text>
+              <Text style={[styles.inventoryEntriesSummaryValue, editTheme.invSummaryValue]}>
                 {String(Math.max(0, Math.floor(Number(editedItem?.inventory) || 0)))}
               </Text>
             </View>
@@ -1079,7 +1223,7 @@ const EditItemModal = ({
             {inventoryEntriesLoading ? (
               <View style={styles.inventoryEntriesStateWrap}>
                 <ActivityIndicator size="small" color={COLORS.primary2} />
-                <Text style={styles.inventoryEntriesStateText}>
+                <Text style={[styles.inventoryEntriesStateText, editTheme.invStateText]}>
                   Loading ledger entries...
                 </Text>
               </View>
@@ -1097,12 +1241,12 @@ const EditItemModal = ({
                   inventoryEntries.map((entry, index) => (
                     <View
                       key={`${entry.document_no || 'entry'}-${entry.lot_no || index}-${index}`}
-                      style={styles.inventoryEntryCard}>
+                      style={[styles.inventoryEntryCard, editTheme.invEntryCard]}>
                       <View style={styles.inventoryEntryTopRow}>
-                        <Text style={styles.inventoryEntryType}>
+                        <Text style={[styles.inventoryEntryType, editTheme.invEntryType]}>
                           {entry.entry_type || entry.document_type || 'Entry'}
                         </Text>
-                        <Text style={styles.inventoryEntryDate}>
+                        <Text style={[styles.inventoryEntryDate, editTheme.invEntryDate]}>
                           {formatInventoryEntryDate(
                             entry.posting_date || entry.date || entry.expiry_date,
                           )}
@@ -1114,19 +1258,19 @@ const EditItemModal = ({
                       </Text>
 
                       <View style={styles.inventoryEntryMetaRow}>
-                        <Text style={styles.inventoryEntryMetaText}>
+                        <Text style={[styles.inventoryEntryMetaText, editTheme.invMeta]}>
                           Qty: {Number(entry.quantity ?? entry.remaining_quantity ?? 0)}
                         </Text>
-                        <Text style={styles.inventoryEntryMetaText}>
+                        <Text style={[styles.inventoryEntryMetaText, editTheme.invMeta]}>
                           Remaining: {Number(entry.remaining_quantity ?? 0)}
                         </Text>
                       </View>
 
                       <View style={styles.inventoryEntryMetaRow}>
-                        <Text style={styles.inventoryEntryMetaText}>
+                        <Text style={[styles.inventoryEntryMetaText, editTheme.invMeta]}>
                           Lot: {entry.lot_no || '-'}
                         </Text>
-                        <Text style={styles.inventoryEntryMetaText}>
+                        <Text style={[styles.inventoryEntryMetaText, editTheme.invMeta]}>
                           Location: {entry.location_name || '-'}
                         </Text>
                       </View>
@@ -1134,7 +1278,7 @@ const EditItemModal = ({
                   ))
                 ) : (
                   <View style={styles.inventoryEntriesStateWrap}>
-                    <Text style={styles.inventoryEntriesStateText}>
+                    <Text style={[styles.inventoryEntriesStateText, editTheme.invStateText]}>
                       No ledger entries found.
                     </Text>
                   </View>
@@ -1430,9 +1574,9 @@ const Items = () => {
     const numericValue =
       typeof value === 'number' ? value : parseFloat(String(value || 0));
     if (!Number.isFinite(numericValue)) {
-      return 'USh0.00';
+      return 'UGX 0.00';
     }
-    return `USh${numericValue.toLocaleString('en-US', {
+    return `UGX ${numericValue.toLocaleString('en-US', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}`;
@@ -1591,9 +1735,16 @@ const Items = () => {
         }
       }
 
+      const itemType = draftItem.type?.trim() || 'Inventory';
+      itemToCreate.type = itemType;
+
       const response = await createItem(itemToCreate);
       if (response.status === 200 || response.status === 201) {
-        setSuccessMessage('Item created successfully');
+        setSuccessMessage(
+          itemType === 'Service'
+            ? 'Service created successfully'
+            : 'Item created successfully',
+        );
         setShowSuccessModal(true);
         setCreateModal(false);
         setCreateDraftItem(null);
@@ -1759,8 +1910,21 @@ const Items = () => {
                   style={[
                     styles.emptyIconContainer,
                     { backgroundColor: colors.screenMuted },
-                  ]}>
-                  <Text style={styles.emptyIcon}>📦</Text>
+                  ]}
+                  accessibilityRole="image"
+                  accessibilityLabel="No items">
+                  {searchQuery.trim() ? (
+                    <Text style={styles.emptyEmojiLarge}>🔍</Text>
+                  ) : (
+                    <Image
+                      source={icons.product as any}
+                      style={[
+                        styles.emptyStateIcon,
+                        { tintColor: colors.iconMuted },
+                      ]}
+                      resizeMode="contain"
+                    />
+                  )}
                 </View>
                 <Text style={[styles.emptyTitle, { color: colors.textPrimary }]}>
                   No items found
@@ -2154,8 +2318,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: SIZES.base * 2,
   },
-  emptyIcon: {
+  emptyStateIcon: {
+    width: 40,
+    height: 40,
+  },
+  emptyEmojiLarge: {
     fontSize: 40,
+    lineHeight: 44,
   },
   emptyTitle: {
     ...FONTS.h3,
@@ -2641,6 +2810,25 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     color: COLORS.gray2,
     marginBottom: 10,
+  },
+  itemTypeChipRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 4,
+  },
+  itemTypeChip: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  itemTypeChipText: {
+    ...FONTS.body3,
+    fontSize: 15,
+    fontWeight: '600',
   },
   editItemLearnMore: {
     ...FONTS.body4,
