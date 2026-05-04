@@ -3,6 +3,7 @@ import Toast from 'react-native-toast-message';
 import PrinterSunmi from 'react-native-printer-sunmi';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BluetoothPrinterService from './BluetoothPrinterService';
+import UsbPrinterService from './UsbPrinterService';
 
 // Types for printing
 export interface PrintItem {
@@ -20,7 +21,8 @@ export interface CompanyInfo {
   phone: string;
   email: string;
   tin: string;
-  vatNo: string;
+  /** Not returned by GET /api/sales/company-info/; optional for receipts until backend adds it. */
+  vatNo?: string;
 }
 
 export interface PrintReceiptData {
@@ -46,7 +48,7 @@ export interface ItemLabelPrintData {
   copies?: number;
 }
 
-export type PrinterType = 'sunmi' | 'bluetooth' | 'auto';
+export type PrinterType = 'sunmi' | 'bluetooth' | 'usb' | 'auto';
 
 class PrintService {
   private static instance: PrintService;
@@ -54,9 +56,11 @@ class PrintService {
   private isInitialized: boolean = false;
   private printerType: PrinterType = 'auto';
   private bluetoothService: BluetoothPrinterService;
+  private usbService: UsbPrinterService;
 
   private constructor() {
     this.bluetoothService = BluetoothPrinterService.getInstance();
+    this.usbService = UsbPrinterService.getInstance();
   }
 
   public static getInstance(): PrintService {
@@ -72,7 +76,13 @@ class PrintService {
   private async getSavedPrinterType(): Promise<PrinterType> {
     try {
       const saved = await AsyncStorage.getItem('printer_type');
-      if (saved && (saved === 'sunmi' || saved === 'bluetooth' || saved === 'auto')) {
+      if (
+        saved &&
+        (saved === 'sunmi' ||
+          saved === 'bluetooth' ||
+          saved === 'usb' ||
+          saved === 'auto')
+      ) {
         return saved as PrinterType;
       }
     } catch (error) {
@@ -113,7 +123,11 @@ class PrintService {
    * Resolve logical printer: explicit Sunmi/Bluetooth, or Auto (Sunmi if available).
    */
   private async resolvePrinterType(savedType: PrinterType): Promise<PrinterType> {
-    if (savedType === 'sunmi' || savedType === 'bluetooth') {
+    if (
+      savedType === 'sunmi' ||
+      savedType === 'bluetooth' ||
+      savedType === 'usb'
+    ) {
       return savedType;
     }
     const sunmiOk = await this.isSunmiDevice();
@@ -144,6 +158,20 @@ class PrintService {
 
     try {
       const savedType = await this.getSavedPrinterType();
+      if (savedType === 'usb') {
+        if (Platform.OS !== 'android') {
+          return false;
+        }
+        this.printerType = 'usb';
+        if (!this.usbService.isConnected()) {
+          await this.usbService.reconnectFromStorage();
+        }
+        const ok = this.usbService.isConnected();
+        this.isInitialized = ok;
+        this.isConnected = ok;
+        return ok;
+      }
+
       const resolved = await this.resolvePrinterType(savedType);
       this.printerType = resolved;
 
@@ -219,6 +247,20 @@ class PrintService {
   public async checkConnection(): Promise<boolean> {
     try {
       const savedType = await this.getSavedPrinterType();
+      if (savedType === 'usb') {
+        this.printerType = 'usb';
+        if (Platform.OS !== 'android') {
+          this.isConnected = false;
+          return false;
+        }
+        if (!this.usbService.isConnected()) {
+          await this.usbService.reconnectFromStorage();
+        }
+        const ok = this.usbService.isConnected();
+        this.isConnected = ok;
+        return ok;
+      }
+
       let resolved = await this.resolvePrinterType(savedType);
       this.printerType = resolved;
 
@@ -277,6 +319,19 @@ class PrintService {
   public async printReceipt(data: PrintReceiptData): Promise<boolean> {
     try {
       const savedType = await this.getSavedPrinterType();
+
+      if (savedType === 'usb') {
+        if (Platform.OS !== 'android') {
+          Toast.show({
+            type: 'info',
+            text1: 'Printing',
+            text2: 'USB receipt printing is available on Android only.',
+          });
+          return false;
+        }
+        return await this.printReceiptUsb(data);
+      }
+
       const resolved = await this.resolvePrinterType(savedType);
       this.printerType = resolved;
 
@@ -373,6 +428,16 @@ class PrintService {
       }
 
       const savedType = await this.getSavedPrinterType();
+      if (savedType === 'usb') {
+        Toast.show({
+          type: 'info',
+          text1: 'Labels',
+          text2:
+            'Shelf labels need Bluetooth or Sunmi. Switch printer type in Settings.',
+        });
+        return false;
+      }
+
       const resolved = await this.resolvePrinterType(savedType);
       this.printerType = resolved;
 
@@ -820,6 +885,18 @@ class PrintService {
     })}`;
   }
 
+  private async printReceiptUsb(data: PrintReceiptData): Promise<boolean> {
+    if (!this.usbService.isConnected()) {
+      Toast.show({
+        type: 'error',
+        text1: 'USB Printer not connected',
+        text2: 'Go to Printer Configuration and connect a USB printer.',
+      });
+      return false;
+    }
+    return await this.usbService.printReceipt(data);
+  }
+
   /**
    * Generate a unique receipt ID
    */
@@ -833,8 +910,24 @@ class PrintService {
    * Test printer functionality
    */
   public async testPrinter(): Promise<boolean> {
+    const savedType = await this.getSavedPrinterType();
+
+    if (savedType === 'usb') {
+      if (Platform.OS !== 'android') {
+        return false;
+      }
+      if (!this.usbService.isConnected()) {
+        Toast.show({
+          type: 'error',
+          text1: 'USB Printer not connected',
+          text2: 'Please connect a USB printer in Printer Configuration.',
+        });
+        return false;
+      }
+      return await this.usbService.testPrint();
+    }
+
     try {
-      const savedType = await this.getSavedPrinterType();
       const resolved = await this.resolvePrinterType(savedType);
       this.printerType = resolved;
 
@@ -880,6 +973,10 @@ class PrintService {
    */
   public getBluetoothService(): BluetoothPrinterService {
     return this.bluetoothService;
+  }
+
+  public getUsbService(): UsbPrinterService {
+    return this.usbService;
   }
 
   /**

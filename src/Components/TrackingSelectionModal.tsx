@@ -6,10 +6,12 @@ import {
   TouchableOpacity,
   FlatList,
   ActivityIndicator,
+  Pressable,
 } from 'react-native';
 import ReactNativeModal from 'react-native-modal';
 import {SafeAreaView} from 'react-native-safe-area-context';
-import {COLORS, FONTS} from '../constants';
+import {COLORS, FONTS, ICON_BUTTON_HIT_SLOP, ICON_BUTTON_QUICK_PRESS} from '../constants';
+import {QuickIconPressable} from './QuickIconPressable';
 import type {TrackingLotOption} from '../utils/salesTracking';
 
 type Props = {
@@ -19,6 +21,11 @@ type Props = {
   options: TrackingLotOption[];
   onClose: () => void;
   onSelect: (option: TrackingLotOption) => void;
+  /**
+   * When true, render as an in-panel overlay (same window as parent).
+   * Use inside "Current sale" so the sheet stacks above the cart editor on Android.
+   */
+  embedded?: boolean;
 };
 
 const TrackingSelectionModal: React.FC<Props> = ({
@@ -28,7 +35,87 @@ const TrackingSelectionModal: React.FC<Props> = ({
   options,
   onClose,
   onSelect,
+  embedded = false,
 }) => {
+  const sheetBody = (
+    <>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle} numberOfLines={2}>
+          {title}
+        </Text>
+        <QuickIconPressable
+          onPress={onClose}
+          hitSlop={ICON_BUTTON_HIT_SLOP}
+          accessibilityLabel="Close">
+          <Text style={styles.close}>✕</Text>
+        </QuickIconPressable>
+      </View>
+      <Text style={styles.hint}>
+        Lots with remaining quantity (first expiry first). Same as web POS.
+      </Text>
+
+      {loading ? (
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={COLORS.primary} />
+          <Text style={styles.loadingText}>Loading lots…</Text>
+        </View>
+      ) : options.length === 0 ? (
+        <View style={styles.centered}>
+          <Text style={styles.emptyText}>
+            No available lots for this item. Receive stock with lot tracking or
+            check inventory postings.
+          </Text>
+        </View>
+      ) : (
+        <FlatList
+          data={options}
+          keyExtractor={item => item.lot_no}
+          contentContainerStyle={styles.list}
+          keyboardShouldPersistTaps="handled"
+          renderItem={({item}) => (
+            <TouchableOpacity
+              style={styles.row}
+              onPress={() => onSelect(item)}>
+              <View style={{flex: 1}}>
+                <Text style={styles.lotLabel}>{item.lot_no}</Text>
+                <Text style={styles.meta}>
+                  Qty: {item.remaining_quantity}
+                  {item.expiry_date ? ` · Exp: ${item.expiry_date}` : ''}
+                </Text>
+                {item.document_no ? (
+                  <Text style={styles.doc}>{item.document_no}</Text>
+                ) : null}
+              </View>
+              <Text style={styles.chev}>›</Text>
+            </TouchableOpacity>
+          )}
+        />
+      )}
+    </>
+  );
+
+  if (embedded) {
+    if (!visible) {
+      return null;
+    }
+    return (
+      <View style={styles.embeddedRoot} pointerEvents="box-none">
+        <Pressable
+          {...ICON_BUTTON_QUICK_PRESS}
+          accessibilityRole="button"
+          accessibilityLabel="Close lot picker"
+          style={styles.embeddedBackdrop}
+          onPress={onClose}
+        />
+        <View style={styles.embeddedSheetOuter} pointerEvents="box-none">
+          <SafeAreaView style={styles.sheet} edges={['bottom']}>
+            {sheetBody}
+          </SafeAreaView>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <ReactNativeModal
       isVisible={visible}
@@ -40,63 +127,27 @@ const TrackingSelectionModal: React.FC<Props> = ({
       useNativeDriver
       statusBarTranslucent>
       <SafeAreaView style={styles.sheet} edges={['bottom']}>
-        <View style={styles.header}>
-          <Text style={styles.headerTitle} numberOfLines={2}>
-            {title}
-          </Text>
-          <TouchableOpacity onPress={onClose} hitSlop={12}>
-            <Text style={styles.close}>✕</Text>
-          </TouchableOpacity>
-        </View>
-        <Text style={styles.hint}>
-          Lots with remaining quantity (first expiry first). Same as web POS.
-        </Text>
-
-        {loading ? (
-          <View style={styles.centered}>
-            <ActivityIndicator size="large" color={COLORS.primary} />
-            <Text style={styles.loadingText}>Loading lots…</Text>
-          </View>
-        ) : options.length === 0 ? (
-          <View style={styles.centered}>
-            <Text style={styles.emptyText}>
-              No available lots for this item. Receive stock with lot tracking
-              or check inventory postings.
-            </Text>
-          </View>
-        ) : (
-          <FlatList
-            data={options}
-            keyExtractor={item => item.lot_no}
-            contentContainerStyle={styles.list}
-            keyboardShouldPersistTaps="handled"
-            renderItem={({item}) => (
-              <TouchableOpacity
-                style={styles.row}
-                onPress={() => onSelect(item)}>
-                <View style={{flex: 1}}>
-                  <Text style={styles.lotLabel}>{item.lot_no}</Text>
-                  <Text style={styles.meta}>
-                    Qty: {item.remaining_quantity}
-                    {item.expiry_date
-                      ? ` · Exp: ${item.expiry_date}`
-                      : ''}
-                  </Text>
-                  {item.document_no ? (
-                    <Text style={styles.doc}>{item.document_no}</Text>
-                  ) : null}
-                </View>
-                <Text style={styles.chev}>›</Text>
-              </TouchableOpacity>
-            )}
-          />
-        )}
+        {sheetBody}
       </SafeAreaView>
     </ReactNativeModal>
   );
 };
 
 const styles = StyleSheet.create({
+  embeddedRoot: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 800,
+    elevation: 800,
+    justifyContent: 'flex-end',
+  },
+  embeddedBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  embeddedSheetOuter: {
+    maxHeight: '88%',
+    width: '100%',
+  },
   modal: {
     justifyContent: 'flex-end',
     margin: 0,

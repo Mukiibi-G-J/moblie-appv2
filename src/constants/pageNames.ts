@@ -111,12 +111,43 @@ export const PAGE_NAMES = {
   LOAN_REGISTRATION: 'Loan Registration',
   LOAN_REPAYMENT: 'Loan Repayment',
   PREPAYMENTS: 'Prepayments',
+
+  // ============================================
+  // RESTAURANT MODULE (populate_page_objects 10710–10722)
+  // ============================================
+  RESTAURANT_DASHBOARD: 'Restaurant Dashboard',
+  RESTAURANT_TABLE_MANAGEMENT: 'Table Management',
+  RESTAURANT_RESERVATIONS: 'Reservations',
+  RESTAURANT_ORDERS: 'Orders',
+  RESTAURANT_MENU_MANAGEMENT: 'Menu Management',
+  RESTAURANT_KITCHEN_DISPLAY: 'Kitchen Display',
+  RESTAURANT_SETTINGS: 'Restaurant Settings',
+  RESTAURANT_POS: 'Restaurant POS',
+  RESTAURANT_MENU_LAYOUT_EDITOR: 'Menu Layout Editor',
+  RESTAURANT_MENUS: 'Restaurant Menus',
 } as const;
 
 /**
  * Type for page names - ensures type safety
  */
 export type PageName = (typeof PAGE_NAMES)[keyof typeof PAGE_NAMES];
+
+/**
+ * Restaurant module enabled + any of these pages => show Restaurant hub entry (mobile Home / More).
+ * Matches tiles in RestaurantHub.tsx.
+ */
+export const RESTAURANT_MODULE_ENTRY_PAGE_NAMES: readonly PageName[] = [
+  PAGE_NAMES.RESTAURANT_DASHBOARD,
+  PAGE_NAMES.RESTAURANT_POS,
+  PAGE_NAMES.RESTAURANT_ORDERS,
+  PAGE_NAMES.RESTAURANT_KITCHEN_DISPLAY,
+  PAGE_NAMES.RESTAURANT_TABLE_MANAGEMENT,
+  PAGE_NAMES.RESTAURANT_RESERVATIONS,
+  PAGE_NAMES.RESTAURANT_MENUS,
+  PAGE_NAMES.RESTAURANT_MENU_MANAGEMENT,
+  PAGE_NAMES.RESTAURANT_MENU_LAYOUT_EDITOR,
+  PAGE_NAMES.RESTAURANT_SETTINGS,
+];
 
 /**
  * Helper function to get page name by key

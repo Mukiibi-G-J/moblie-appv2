@@ -16,12 +16,14 @@ import Toast from 'react-native-toast-message';
 import { COLORS, FONTS, SIZES } from '../../constants/theme';
 import icons from '../../constants/icons';
 import { usePermissions } from '../../hooks/usePermissions';
+import { safeGoBack } from '../../hooks/NavigationService';
 import { PAGE_NAMES } from '../../constants/pageNames';
 import {
   getItemCategories,
   deleteItemCategory,
   ItemCategory,
 } from '../../services/app.services';
+import { QuickIconPressable } from '../../Components';
 import ItemCategoryFormModal from './ItemCategoryFormModal';
 
 const getCategoryInitials = (name: string) => {
@@ -193,7 +195,7 @@ const ItemCategories = () => {
 
   const returnToItemFlow = (code?: string | null) => {
     if (!pickerMode) {
-      navigation.goBack();
+      safeGoBack(navigation, 'Items');
       return;
     }
 
@@ -219,7 +221,7 @@ const ItemCategories = () => {
       returnToItemFlow(code);
       return;
     }
-    navigation.goBack();
+    safeGoBack(navigation, 'Items');
   };
 
   const displayName = (item: ItemCategory) =>
@@ -345,18 +347,16 @@ const ItemCategories = () => {
             borderBottomColor: COLORS.lightGray1,
           },
         ]}>
-        <TouchableOpacity
+        <QuickIconPressable
           style={styles.headerCircleBtn}
           onPress={handleHeaderClose}
-          activeOpacity={0.7}
-          accessibilityRole="button"
           accessibilityLabel="Close">
           <Image
             source={icons.cross}
             style={styles.headerCircleIcon}
             resizeMode="contain"
           />
-        </TouchableOpacity>
+        </QuickIconPressable>
         <Text style={styles.headerTitle}>Categories</Text>
         <TouchableOpacity
           style={styles.donePill}

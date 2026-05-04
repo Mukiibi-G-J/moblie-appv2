@@ -15,16 +15,20 @@ import {
 } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import {useNavigation} from '@react-navigation/native';
+import {safeGoBack} from '../../hooks/NavigationService';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
+import {QuickIconPressable} from '../../Components';
 import {COLORS, FONTS, SIZES, icons} from '../../constants';
 import {useTheme} from '../../context/ThemeContext';
+import {useAppContext} from '../../context/Store';
 import {
   exportReportPdfFromApi,
   fetchBalanceSheetReport,
   fetchProfitLossStatement,
 } from '../../services/app.services';
 import {savePdfBufferAndShare} from '../../utils/reportPdfDownload';
+import {BranchFilterSelect} from '../../Components/BranchFilterSelect';
 
 type ReportVariant = 'profit-loss' | 'balance-sheet';
 
@@ -226,6 +230,7 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const {colors} = useTheme();
+  const app = useAppContext();
   const pendingCustomPlFrom = useRef<string | null>(null);
   const latestFetchId = useRef(0);
 
@@ -251,6 +256,9 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
   const [bsAsOf, setBsAsOf] = useState(() =>
     balanceSheetAsOfForPreset('as_of_today', getTodayDate())!,
   );
+  const [branchFilter, setBranchFilter] = useState<number | null | undefined>(
+    undefined,
+  );
 
   const [isDatePickerVisible, setIsDatePickerVisible] = useState(false);
   const [datePickerMode, setDatePickerMode] = useState<
@@ -266,6 +274,22 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
       reportType === 'profit-loss' ? PROFIT_LOSS_MENU : BALANCE_SHEET_MENU,
     [reportType],
   );
+
+  // Default report branch to the global working branch once known.
+  useEffect(() => {
+    if (branchFilter !== undefined) return;
+    const activeId = app?.branchSession?.active_branch_id ?? null;
+    if (activeId != null) {
+      setBranchFilter(activeId);
+    }
+  }, [app?.branchSession?.active_branch_id, branchFilter]);
+
+  const branchRequestConfig = useMemo(() => {
+    if (branchFilter === null) return {headers: {'X-Branch-Scope': 'all'}};
+    if (typeof branchFilter === 'number')
+      return {headers: {'X-Branch-Id': String(branchFilter)}};
+    return undefined;
+  }, [branchFilter]);
 
   const performFetch = useCallback(
     async (mode: 'full' | 'refresh') => {
@@ -283,8 +307,14 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
             ? await fetchProfitLossStatement({
                 startDate: plRange.startDate,
                 endDate: plRange.endDate,
+                branch: branchFilter === undefined ? undefined : branchFilter,
+                requestConfig: branchRequestConfig,
               })
-            : await fetchBalanceSheetReport(bsAsOf);
+            : await fetchBalanceSheetReport(
+                bsAsOf,
+                branchFilter === undefined ? undefined : branchFilter,
+                branchRequestConfig,
+              );
         if (fetchId !== latestFetchId.current) {
           return;
         }
@@ -315,7 +345,14 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
         }
       }
     },
-    [reportType, plRange.startDate, plRange.endDate, bsAsOf],
+    [
+      reportType,
+      plRange.startDate,
+      plRange.endDate,
+      bsAsOf,
+      branchFilter,
+      branchRequestConfig,
+    ],
   );
 
   useEffect(() => {
@@ -814,11 +851,12 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
             borderBottomColor: colors.border,
           },
         ]}>
-        <TouchableOpacity
+        <QuickIconPressable
           style={[styles.backButton, {backgroundColor: colors.card, borderColor: colors.border}]}
-          onPress={() => navigation.goBack()}>
+          onPress={() => safeGoBack(navigation, 'Home')}
+          accessibilityLabel="Go back">
           <Image source={icons.back} style={styles.backIcon} />
-        </TouchableOpacity>
+        </QuickIconPressable>
 
         <View style={styles.headerTextWrap}>
           <Text style={[styles.headerTitle, {color: colors.textPrimary}]}>
@@ -828,6 +866,11 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
             {periodLabel}
           </Text>
         </View>
+
+        <BranchFilterSelect
+          value={branchFilter}
+          onChange={(v) => setBranchFilter(v)}
+        />
 
         <TouchableOpacity
           style={[

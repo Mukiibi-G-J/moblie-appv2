@@ -10,22 +10,20 @@ import {
   Image,
 } from 'react-native';
 import React from 'react';
-import {useNavigation} from '@react-navigation/native';
-import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
-import {COLORS, FONTS, SIZES, icons} from '../../constants';
-import {useTheme} from '../../context/ThemeContext';
-import type {ThemePreference} from '../../context/ThemeContext';
-import {useSearchMode} from '../../context/SearchModeStore';
-import {usePermissions} from '../../hooks/usePermissions';
-import {PAGE_NAMES} from '../../constants/pageNames';
+import { useNavigation } from '@react-navigation/native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { QuickIconPressable } from '../../Components';
+import { COLORS, FONTS, SIZES, icons } from '../../constants';
+import { useTheme } from '../../context/ThemeContext';
+import type { ThemePreference } from '../../context/ThemeContext';
+import { useSearchMode } from '../../context/SearchModeStore';
+import { safeGoBack } from '../../hooks/NavigationService';
 
 const Settings = () => {
-  const navigation = useNavigation<any>();
+  const navigation = useNavigation < any > ();
   const insets = useSafeAreaInsets();
-  const {canRead} = usePermissions();
-  const PAGE_NAME = PAGE_NAMES.PROFILE_SETTINGS;
-  const {colors, preference, setPreference} = useTheme();
-  const {state, dispatch} = useSearchMode();
+  const { colors, preference, setPreference } = useTheme();
+  const { state, dispatch } = useSearchMode();
 
   const headerPaddingTop = Math.max(
     insets.top,
@@ -35,73 +33,20 @@ const Settings = () => {
 
   const toggleSearchMode = () => {
     const newMode = state.searchMode === 'barcode' ? 'realtime' : 'barcode';
-    dispatch({type: 'SET_SEARCH_MODE', payload: newMode});
+    dispatch({ type: 'SET_SEARCH_MODE', payload: newMode });
   };
 
-  const themeOptions: {key: ThemePreference; label: string}[] = [
-    {key: 'system', label: 'System'},
-    {key: 'light', label: 'Light'},
-    {key: 'dark', label: 'Dark'},
+  const themeOptions: { key: ThemePreference; label: string }[] = [
+    { key: 'system', label: 'System' },
+    { key: 'light', label: 'Light' },
+    { key: 'dark', label: 'Dark' },
   ];
-
-  if (!canRead(PAGE_NAME)) {
-    return (
-      <SafeAreaView
-        style={[styles.safeOuter, {backgroundColor: colors.background}]}
-        edges={['left', 'right', 'bottom']}>
-        <View style={[styles.root, {backgroundColor: colors.background}]}>
-          <View
-            style={[
-              styles.topHeader,
-              {
-                paddingTop: headerPaddingTop,
-                borderBottomColor: colors.border,
-              },
-            ]}>
-            <TouchableOpacity
-              style={[
-                styles.headerRoundButton,
-                {
-                  borderColor: colors.border,
-                  backgroundColor: colors.card,
-                },
-              ]}
-              onPress={() => navigation.goBack()}
-              activeOpacity={0.7}>
-              <Image
-                source={icons.back as any}
-                style={[styles.headerRoundIcon, {tintColor: colors.textPrimary}]}
-                resizeMode="contain"
-              />
-            </TouchableOpacity>
-            <Text style={[styles.topTitle, {color: colors.textPrimary}]}>
-              Settings
-            </Text>
-            <View style={styles.headerTrailingSpacer} />
-          </View>
-          <View
-            style={[
-              styles.accessDeniedContainer,
-              {backgroundColor: colors.card},
-            ]}>
-            <Text style={[styles.accessDeniedTitle, {color: COLORS.error}]}>
-              Access Denied
-            </Text>
-            <Text
-              style={[styles.accessDeniedMessage, {color: colors.textSecondary}]}>
-              You don't have permission to view settings.
-            </Text>
-          </View>
-        </View>
-      </SafeAreaView>
-    );
-  }
 
   return (
     <SafeAreaView
-      style={[styles.safeOuter, {backgroundColor: colors.background}]}
+      style={[styles.safeOuter, { backgroundColor: colors.background }]}
       edges={['left', 'right', 'bottom']}>
-      <View style={[styles.root, {backgroundColor: colors.background}]}>
+      <View style={[styles.root, { backgroundColor: colors.background }]}>
         <View
           style={[
             styles.topHeader,
@@ -110,7 +55,7 @@ const Settings = () => {
               borderBottomColor: colors.border,
             },
           ]}>
-          <TouchableOpacity
+          <QuickIconPressable
             style={[
               styles.headerRoundButton,
               {
@@ -118,17 +63,15 @@ const Settings = () => {
                 backgroundColor: colors.card,
               },
             ]}
-            onPress={() => navigation.goBack()}
-            activeOpacity={0.7}
-            accessibilityRole="button"
+            onPress={() => safeGoBack(navigation, 'Home')}
             accessibilityLabel="Go back">
             <Image
               source={icons.back as any}
-              style={[styles.headerRoundIcon, {tintColor: colors.textPrimary}]}
+              style={[styles.headerRoundIcon, { tintColor: colors.textPrimary }]}
               resizeMode="contain"
             />
-          </TouchableOpacity>
-          <Text style={[styles.topTitle, {color: colors.textPrimary}]}>
+          </QuickIconPressable>
+          <Text style={[styles.topTitle, { color: colors.textPrimary }]}>
             Settings
           </Text>
           <View style={styles.headerTrailingSpacer} />
@@ -139,15 +82,15 @@ const Settings = () => {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled">
-          <View style={[styles.menuItem, {backgroundColor: colors.card}]}>
+          <View style={[styles.menuItem, { backgroundColor: colors.card }]}>
             <View style={styles.menuItemContent}>
               <View style={styles.settingHeader}>
-                <Text style={[styles.menuItemTitle, {color: colors.textPrimary}]}>
+                <Text style={[styles.menuItemTitle, { color: colors.textPrimary }]}>
                   Appearance
                 </Text>
               </View>
               <Text
-                style={[styles.menuItemSubtitle, {color: colors.textSecondary}]}>
+                style={[styles.menuItemSubtitle, { color: colors.textSecondary }]}>
                 Match system or choose light or dark
               </Text>
               <View style={styles.themeChips}>
@@ -182,19 +125,19 @@ const Settings = () => {
             </View>
           </View>
 
-          <View style={[styles.menuItem, {backgroundColor: colors.card}]}>
+          <View style={[styles.menuItem, { backgroundColor: colors.card }]}>
             <View style={styles.menuItemContent}>
               <View style={styles.settingHeader}>
                 <Image
                   source={icons.search}
-                  style={[styles.settingIcon, {tintColor: COLORS.primary2}]}
+                  style={[styles.settingIcon, { tintColor: COLORS.primary2 }]}
                 />
-                <Text style={[styles.menuItemTitle, {color: colors.textPrimary}]}>
+                <Text style={[styles.menuItemTitle, { color: colors.textPrimary }]}>
                   Search mode
                 </Text>
               </View>
               <Text
-                style={[styles.menuItemSubtitle, {color: colors.textSecondary}]}>
+                style={[styles.menuItemSubtitle, { color: colors.textSecondary }]}>
                 {state.searchMode === 'barcode'
                   ? 'Manual barcode entry with submit button'
                   : 'Real-time search as you type'}
@@ -203,101 +146,101 @@ const Settings = () => {
             <Switch
               value={state.searchMode === 'realtime'}
               onValueChange={toggleSearchMode}
-              trackColor={{false: COLORS.lightGray2, true: COLORS.primary}}
+              trackColor={{ false: COLORS.lightGray2, true: COLORS.primary }}
               thumbColor={COLORS.white}
               ios_backgroundColor={COLORS.lightGray2}
             />
           </View>
 
-          <View style={[styles.menuItem, {backgroundColor: colors.card}]}>
+          <View style={[styles.menuItem, { backgroundColor: colors.card }]}>
             <View style={styles.menuItemContent}>
               <View style={styles.settingHeader}>
                 <Image
                   source={icons.focus}
-                  style={[styles.settingIcon, {tintColor: COLORS.primary2}]}
+                  style={[styles.settingIcon, { tintColor: COLORS.primary2 }]}
                 />
-                <Text style={[styles.menuItemTitle, {color: colors.textPrimary}]}>
+                <Text style={[styles.menuItemTitle, { color: colors.textPrimary }]}>
                   Enable barcode scanner
                 </Text>
               </View>
               <Text
-                style={[styles.menuItemSubtitle, {color: colors.textSecondary}]}>
+                style={[styles.menuItemSubtitle, { color: colors.textSecondary }]}>
                 Allow camera scanning in sales and item search screens
               </Text>
             </View>
             <Switch
               value={state.barcodeScannerEnabled}
               onValueChange={value =>
-                dispatch({type: 'SET_BARCODE_SCANNER_ENABLED', payload: value})
+                dispatch({ type: 'SET_BARCODE_SCANNER_ENABLED', payload: value })
               }
-              trackColor={{false: COLORS.lightGray2, true: COLORS.primary}}
+              trackColor={{ false: COLORS.lightGray2, true: COLORS.primary }}
               thumbColor={COLORS.white}
               ios_backgroundColor={COLORS.lightGray2}
             />
           </View>
 
-          <View style={[styles.menuItem, {backgroundColor: colors.card}]}>
+          <View style={[styles.menuItem, { backgroundColor: colors.card }]}>
             <View style={styles.menuItemContent}>
               <View style={styles.settingHeader}>
                 <Image
                   source={icons.notification}
-                  style={[styles.settingIcon, {tintColor: COLORS.primary2}]}
+                  style={[styles.settingIcon, { tintColor: COLORS.primary2 }]}
                 />
-                <Text style={[styles.menuItemTitle, {color: colors.textPrimary}]}>
+                <Text style={[styles.menuItemTitle, { color: colors.textPrimary }]}>
                   Barcode beep sound
                 </Text>
               </View>
               <Text
-                style={[styles.menuItemSubtitle, {color: colors.textSecondary}]}>
+                style={[styles.menuItemSubtitle, { color: colors.textSecondary }]}>
                 Play a sound when a barcode is detected
               </Text>
             </View>
             <Switch
               value={state.barcodeBeepEnabled}
               onValueChange={value =>
-                dispatch({type: 'SET_BARCODE_BEEP_ENABLED', payload: value})
+                dispatch({ type: 'SET_BARCODE_BEEP_ENABLED', payload: value })
               }
-              trackColor={{false: COLORS.lightGray2, true: COLORS.primary}}
+              trackColor={{ false: COLORS.lightGray2, true: COLORS.primary }}
               thumbColor={COLORS.white}
               ios_backgroundColor={COLORS.lightGray2}
             />
           </View>
 
           <TouchableOpacity
-            style={[styles.menuItem, {backgroundColor: colors.card}]}
+            style={[styles.menuItem, { backgroundColor: colors.card }]}
             onPress={() => navigation.navigate('PrinterConfig' as never)}
             activeOpacity={0.65}>
             <View style={styles.menuItemContent}>
               <View style={styles.settingHeader}>
                 <Image
                   source={icons.printer}
-                  style={[styles.settingIcon, {tintColor: COLORS.primary2}]}
+                  style={[styles.settingIcon, { tintColor: COLORS.primary2 }]}
                 />
-                <Text style={[styles.menuItemTitle, {color: colors.textPrimary}]}>
+                <Text style={[styles.menuItemTitle, { color: colors.textPrimary }]}>
                   Printer configuration
                 </Text>
               </View>
               <Text
-                style={[styles.menuItemSubtitle, {color: colors.textSecondary}]}>
+                style={[styles.menuItemSubtitle, { color: colors.textSecondary }]}>
                 Configure and test Sunmi and Bluetooth printers
               </Text>
             </View>
-            <Text style={[styles.arrow, {color: colors.textSecondary}]}>›</Text>
+            <Text style={[styles.arrow, { color: colors.textSecondary }]}>›</Text>
           </TouchableOpacity>
 
-          <View style={[styles.menuItem, {backgroundColor: colors.card}]}>
+          <View style={[styles.menuItem, { backgroundColor: colors.card }]}>
             <View style={styles.menuItemContent}>
               <View style={styles.settingHeader}>
                 <Image
                   source={icons.info}
-                  style={[styles.settingIcon, {tintColor: COLORS.primary2}]}
+                  style={[styles.settingIcon, { tintColor: COLORS.primary2 }]}
                 />
-                <Text style={[styles.menuItemTitle, {color: colors.textPrimary}]}>
+                <Text style={[styles.menuItemTitle, { color: colors.textPrimary }]}>
                   App version
                 </Text>
               </View>
               <Text
-                style={[styles.menuItemSubtitle, {color: colors.textSecondary}]}>
+                style={[styles.menuItemSubtitle, { color: colors.textSecondary }]}>
                 Version 1.0.0
               </Text>
             </View>
@@ -379,7 +322,7 @@ const styles = StyleSheet.create({
     borderRadius: SIZES.radius,
     marginBottom: SIZES.base,
     shadowColor: '#000',
-    shadowOffset: {width: 0, height: 1},
+    shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
     shadowRadius: 2,
     elevation: 2,
@@ -408,23 +351,6 @@ const styles = StyleSheet.create({
     width: 20,
     height: 20,
     marginRight: 8,
-  },
-  accessDeniedContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-    margin: SIZES.padding,
-    borderRadius: SIZES.radius,
-  },
-  accessDeniedTitle: {
-    ...FONTS.h2,
-    marginBottom: SIZES.base,
-    textAlign: 'center',
-  },
-  accessDeniedMessage: {
-    ...FONTS.body3,
-    textAlign: 'center',
   },
 });
 

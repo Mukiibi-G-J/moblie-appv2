@@ -16,11 +16,20 @@ import {
   StatusBar,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { safeGoBack } from '../../hooks/NavigationService';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import Toast from 'react-native-toast-message';
 import ReactNativeModal from 'react-native-modal';
-import { COLORS, FONTS, SIZES, icons } from '../../constants';
+import { QuickIconPressable } from '../../Components';
+import {
+  COLORS,
+  FONTS,
+  SIZES,
+  icons,
+  ICON_BUTTON_ACTIVE_OPACITY,
+  ICON_BUTTON_HIT_SLOP,
+} from '../../constants';
 import { usePermissions } from '../../hooks/usePermissions';
 import { PAGE_NAMES } from '../../constants/pageNames';
 import { ExpenseServices } from '../../services/ExpenseServices';
@@ -601,12 +610,12 @@ const Expenses = () => {
         },
         t.headerBorder,
       ]}>
-      <TouchableOpacity
+      <QuickIconPressable
         style={[styles.headerRoundButton, t.headerRoundButton]}
-        onPress={() => navigation.goBack()}
-        activeOpacity={0.7}>
+        onPress={() => safeGoBack(navigation, 'Home')}
+        accessibilityLabel="Go back">
         <Image source={icons.back as any} style={[styles.headerRoundIcon, t.headerRoundIcon]} />
-      </TouchableOpacity>
+      </QuickIconPressable>
       <Text style={[styles.topTitle, t.topTitle]}>Expenses</Text>
       <View style={styles.headerTrailing}>
         {canCreate(PAGE_NAME) ? (
@@ -653,6 +662,10 @@ const Expenses = () => {
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => setShowFilters(false)}
+              activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}
+              hitSlop={ICON_BUTTON_HIT_SLOP}
+              accessibilityRole="button"
+              accessibilityLabel="Close filters"
               style={[styles.bottomSheetCloseButton, t.sheetCloseBtn]}>
               <Text style={[styles.bottomSheetCloseText, t.sheetCloseText]}>✕</Text>
             </TouchableOpacity>

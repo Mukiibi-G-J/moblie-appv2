@@ -15,6 +15,12 @@ function scoreBuiltinPrinterName(name: string): number {
   let score = 0;
   const hints = [
     /inner\s*printer/i,
+    /aocom/i,
+    /pos[\s-]?m\d{4}/i,
+    /m1106/i,
+    /posmicro/i,
+    /inner.*print|print.*inner/i,
+    /btp[\s-]?\d+/i,
     /builtin|built[-\s]?in/i,
     /内置|内建/,
     /handheld/i,

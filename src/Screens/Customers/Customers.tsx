@@ -25,6 +25,7 @@ import {
   PaymentMethod,
 } from '../../@types/customer';
 import {CustomerLedgerEntry} from '../../@types/paymentJournal';
+import {QuickIconPressable} from '../../Components';
 import CustomerListItem from './CustomerListItem';
 import CustomerFormModal from './CustomerFormModal';
 
@@ -446,15 +447,16 @@ const Customers = () => {
           <View style={styles.filterModalContent}>
             <View style={styles.filterModalHeader}>
               <Text style={styles.filterModalTitle}>Filter Customers</Text>
-              <TouchableOpacity
+              <QuickIconPressable
                 onPress={() => setFilterModalVisible(false)}
-                style={styles.filterCloseButton}>
+                style={styles.filterCloseButton}
+                accessibilityLabel="Close">
                 <Image
                   source={icons.cross}
                   style={styles.filterCloseIcon}
                   resizeMode="contain"
                 />
-              </TouchableOpacity>
+              </QuickIconPressable>
             </View>
 
             <ScrollView
@@ -500,15 +502,16 @@ const Customers = () => {
               <Text style={styles.filterModalTitle}>
                 {selectedLedgerCustomer?.name || 'Customer'} balance
               </Text>
-              <TouchableOpacity
+              <QuickIconPressable
                 onPress={() => setLedgerModalVisible(false)}
-                style={styles.filterCloseButton}>
+                style={styles.filterCloseButton}
+                accessibilityLabel="Close">
                 <Image
                   source={icons.cross}
                   style={styles.filterCloseIcon}
                   resizeMode="contain"
                 />
-              </TouchableOpacity>
+              </QuickIconPressable>
             </View>
 
             <View style={styles.ledgerSummaryCard}>

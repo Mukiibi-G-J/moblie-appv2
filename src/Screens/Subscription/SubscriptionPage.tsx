@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   ScrollView,
@@ -7,7 +7,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import {useNavigation, useRoute} from '@react-navigation/native';
+import { useNavigation, useRoute } from '@react-navigation/native';
 import Picker from '@react-native-picker/picker';
 import RNModal from 'react-native-modal';
 import {
@@ -21,19 +21,19 @@ import {
 type BillingCycle = 'monthly' | 'yearly';
 
 export default function SubscriptionPage() {
-  const navigation = useNavigation<any>();
-  const route = useRoute<any>();
+  const navigation = useNavigation < any > ();
+  const route = useRoute < any > ();
 
   const fromExpiredModal = !!route.params?.fromExpiredModal;
 
   const [isLoading, setIsLoading] = useState(true);
-  const [plans, setPlans] = useState<PricingPlan[]>([]);
-  const [addOns, setAddOnsState] = useState<AddOn[]>([]);
+  const [plans, setPlans] = useState < PricingPlan[] > ([]);
+  const [addOns, setAddOnsState] = useState < AddOn[] > ([]);
 
-  const [billingCycle, setBillingCycle] = useState<BillingCycle>('monthly');
-  const [selectedPlanId, setSelectedPlanId] = useState<number | null>(null);
-  const [selectedAddOnIds, setSelectedAddOnIds] = useState<number[]>([]);
-  const [months, setMonths] = useState<number>(1);
+  const [billingCycle, setBillingCycle] = useState < BillingCycle > ('monthly');
+  const [selectedPlanId, setSelectedPlanId] = useState < number | null > (null);
+  const [selectedAddOnIds, setSelectedAddOnIds] = useState < number[] > ([]);
+  const [months, setMonths] = useState < number > (1);
 
   const [expiredModalVisible, setExpiredModalVisible] = useState(
     fromExpiredModal,
@@ -106,7 +106,7 @@ export default function SubscriptionPage() {
   }, [billingCycle, selectedPlan]);
 
   const addOnTotal = useMemo(() => {
-    const byId = new Map<number, AddOn>(addOns.map(a => [a.id, a]));
+    const byId = new Map < number, AddOn> (addOns.map(a => [a.id, a]));
     return selectedAddOnIds.reduce((sum, id) => {
       const addon = byId.get(id);
       if (!addon) return sum;
@@ -237,7 +237,7 @@ export default function SubscriptionPage() {
               selectedValue={months}
               onValueChange={val => setMonths(Number(val))}
               mode="dropdown">
-              {Array.from({length: 24}).map((_, idx) => {
+              {Array.from({ length: 24 }).map((_, idx) => {
                 const m = idx + 1;
                 return (
                   <Picker.Item key={m} label={`${m}`} value={m} />
@@ -330,7 +330,7 @@ const styles = StyleSheet.create({
     paddingVertical: 40,
     gap: 10,
   },
-  loadingText: {color: '#6B7280'},
+  loadingText: { color: '#6B7280' },
   title: {
     fontSize: 24,
     fontWeight: '800',
@@ -371,8 +371,8 @@ const styles = StyleSheet.create({
     color: '#374151',
     fontWeight: '700',
   },
-  toggleBtnTextActive: {color: '#1D4ED8'},
-  cardList: {gap: 10},
+  toggleBtnTextActive: { color: '#1D4ED8' },
+  cardList: { gap: 10 },
   card: {
     backgroundColor: '#fff',
     borderRadius: 14,
@@ -384,9 +384,9 @@ const styles = StyleSheet.create({
     borderColor: '#2563eb',
     backgroundColor: '#EFF6FF',
   },
-  cardTitle: {fontWeight: '800', color: '#111827', marginBottom: 6},
-  cardPrice: {color: '#374151'},
-  emptyText: {color: '#6B7280', textAlign: 'center', paddingVertical: 10},
+  cardTitle: { fontWeight: '800', color: '#111827', marginBottom: 6 },
+  cardPrice: { color: '#374151' },
+  emptyText: { color: '#6B7280', textAlign: 'center', paddingVertical: 10 },
   pickerWrap: {
     backgroundColor: '#fff',
     borderRadius: 14,
@@ -403,9 +403,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  addOnRowActive: {borderColor: '#16a34a', backgroundColor: '#ECFDF3'},
-  addOnName: {fontWeight: '700', color: '#111827', flex: 1},
-  addOnPrice: {color: '#16a34a', fontWeight: '800'},
+  addOnRowActive: { borderColor: '#16a34a', backgroundColor: '#ECFDF3' },
+  addOnName: { fontWeight: '700', color: '#111827', flex: 1 },
+  addOnPrice: { color: '#16a34a', fontWeight: '800' },
   footerTotal: {
     marginTop: 18,
     backgroundColor: '#fff',
@@ -417,8 +417,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  footerTotalLabel: {color: '#6B7280'},
-  footerTotalValue: {fontWeight: '900', color: '#111827', fontSize: 16},
+  footerTotalLabel: { color: '#6B7280' },
+  footerTotalValue: { fontWeight: '900', color: '#111827', fontSize: 16 },
   primaryButton: {
     marginTop: 14,
     backgroundColor: '#2563eb',
@@ -426,21 +426,21 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     alignItems: 'center',
   },
-  primaryButtonDisabled: {backgroundColor: '#93C5FD'},
-  primaryButtonText: {color: '#fff', fontWeight: '900'},
+  primaryButtonDisabled: { backgroundColor: '#93C5FD' },
+  primaryButtonText: { color: '#fff', fontWeight: '900' },
   modalCard: {
     backgroundColor: '#fff',
     padding: 18,
     borderRadius: 16,
   },
-  modalTitle: {fontSize: 18, fontWeight: '900', marginBottom: 10, color: '#111827'},
-  modalText: {color: '#4B5563', marginBottom: 16},
+  modalTitle: { fontSize: 18, fontWeight: '900', marginBottom: 10, color: '#111827' },
+  modalText: { color: '#4B5563', marginBottom: 16 },
   modalPrimary: {
     backgroundColor: '#2563eb',
     borderRadius: 14,
     paddingVertical: 12,
     alignItems: 'center',
   },
-  modalPrimaryText: {color: '#fff', fontWeight: '900'},
+  modalPrimaryText: { color: '#fff', fontWeight: '900' },
 });
 

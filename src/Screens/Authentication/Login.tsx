@@ -15,9 +15,24 @@ import AuthLayout from '../../Components/layouts/AuthLayout';
 import FormInput from '../../Components/FormInput2';
 import {COLORS} from '../../constants';
 import {authService} from '../../services/auth.services';
+import {restaurantCompanyLookup} from '../../services/restaurantPinApi';
 import Toast from 'react-native-toast-message';
+import {jwtDecode} from 'jwt-decode';
 import {RootStackParamList} from '../../@types/types.dto';
 import {useAppContext, AppContextType} from '../../context/Store';
+import {DecodedToken} from '../../types/auth';
+import {shouldOfferRestaurantPinFromToken} from '../../utils/restaurantPinOffer';
+import {getRestaurantPinStatus} from '../../services/restaurantPinApi';
+import {
+  setPinSetupPending,
+  RESTAURANT_SHOW_PIN_SETUP_IMMEDIATE_KEY,
+} from '../../storage/restaurantDeviceStorage';
+import {
+  getEmail,
+  getTenant,
+  getVerifiedEmail,
+  setVerifiedEmail,
+} from '../../utils/tenant';
 import {radii} from '../../design-system/theme';
 import {authOnboarding} from '../../design-system/authOnboardingTokens';
 import {useTheme} from '../../context/ThemeContext';
@@ -35,6 +50,7 @@ const emailLooksValid = (value: string) => /\S+@\S+\.\S+/.test(value.trim());
 const LOGIN_DRAFT_TENANT = '@zentro_login_draft_tenant';
 const LOGIN_DRAFT_EMAIL = '@zentro_login_draft_email';
 const LOGIN_DRAFT_PASSWORD = '@zentro_login_draft_password';
+const LOGIN_DRAFT_COMPANY_DISPLAY = '@zentro_login_draft_company_display';
 
 const Login = () => {
   const {colors} = useTheme();
@@ -114,6 +130,28 @@ const Login = () => {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const verifiedFlag = await getVerifiedEmail();
+        const storedEmail = await getEmail();
+        const t = await getTenant();
+        if (cancelled || !storedEmail?.trim() || !t?.trim()) {
+          return;
+        }
+        if (verifiedFlag === 'false') {
+          navigation.navigate('Otp', {email: storedEmail.trim()});
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [navigation]);
+
   const goBackToCredentials = useCallback(() => {
     setPassword('');
     setPasswordError('');
@@ -131,17 +169,88 @@ const Login = () => {
       return;
     }
 
+    const schemaTenant =
+      ((await AsyncStorage.getItem('tenant')) || '').trim().toLowerCase() ||
+      tenant.trim().toLowerCase();
+
     setLoading(true);
     try {
-      const response = await authService.login({tenant, email, password});
+      const response = await authService.login({
+        tenant: schemaTenant,
+        email,
+        password,
+      });
       if (response) {
+        await context?.login({email, password, tenant: schemaTenant});
+
+        const access = await AsyncStorage.getItem('accessToken');
+        if (!access) {
+          setLoading(false);
+          await saveLoginDraft(true);
+          Toast.show({
+            type: 'error',
+            text1: 'Login failed',
+            text2: 'Could not complete sign-in. Try again.',
+          });
+          return;
+        }
+
+        const dec = jwtDecode(access) as DecodedToken;
+        if (dec.verified === false) {
+          await setVerifiedEmail(false);
+          await AsyncStorage.setItem('email', email.trim());
+          setLoading(false);
+          Toast.show({
+            type: 'info',
+            text1: 'Verify your account',
+            text2: 'Enter the code sent to your phone.',
+          });
+          navigation.reset({
+            index: 0,
+            routes: [{name: 'Otp', params: {email: email.trim()}}],
+          });
+          return;
+        }
+
+        await setVerifiedEmail(true);
+
         Toast.show({
           type: 'success',
           text1: 'Login successful',
           text2: 'Redirecting to dashboard...',
         });
 
-        await context?.login({email, password, tenant});
+        try {
+          if (
+            shouldOfferRestaurantPinFromToken(
+              dec.role_center_modules,
+              dec.enabled_modules,
+              dec.authority,
+            )
+          ) {
+            const status = await getRestaurantPinStatus(access);
+            if (status.eligible && (!status.has_pin || status.pin_expired)) {
+              const willShowBranchPicker =
+                dec.enable_multiple_branches === true &&
+                dec.can_switch_branch !== false;
+              const branchPendingRaw = await AsyncStorage.getItem(
+                'branch.branchSelectionPending',
+              );
+              const branchPending = branchPendingRaw === '1';
+              if (willShowBranchPicker && branchPending) {
+                await setPinSetupPending(true);
+              } else {
+                await AsyncStorage.setItem(
+                  RESTAURANT_SHOW_PIN_SETUP_IMMEDIATE_KEY,
+                  '1',
+                );
+              }
+            }
+          }
+        } catch {
+          /* non-fatal */
+        }
+
         await clearStoredLoginPassword();
         await saveLoginDraft(false);
 
@@ -181,20 +290,27 @@ const Login = () => {
   };
 
   const validateTenantLive = async (value: string) => {
-    if (value.length >= 3) {
-      setIsCheckingTenant(true);
-      try {
-        const response = await authService.isCompanyExists(value);
-        if (response) {
-          setTenantError('');
-        } else {
-          setTenantError('Company not found');
-        }
-      } catch (error) {
-        setTenantError('Error verifying company');
-      } finally {
-        setIsCheckingTenant(false);
+    const v = value.trim();
+    if (v.length < 3) {
+      setTenantError('');
+      return;
+    }
+    setIsCheckingTenant(true);
+    try {
+      await restaurantCompanyLookup(v);
+      setTenantError('');
+    } catch (e: any) {
+      const st = e?.response?.status;
+      const code = e?.response?.data?.code;
+      if (st === 404) {
+        setTenantError('Company not found');
+      } else if (st === 400 && code === 'ambiguous_company_name') {
+        setTenantError('Multiple matches — use exact company name');
+      } else {
+        setTenantError('');
       }
+    } finally {
+      setIsCheckingTenant(false);
     }
   };
 
@@ -231,23 +347,42 @@ const Login = () => {
 
     setContinuing(true);
     try {
-      const exists = await authService.isCompanyExists(t);
-      if (!exists) {
+      const result = await restaurantCompanyLookup(t);
+      const schema = result.schema_name.trim().toLowerCase();
+      await AsyncStorage.setItem('tenant', schema);
+      try {
+        await AsyncStorage.setItem(
+          LOGIN_DRAFT_COMPANY_DISPLAY,
+          result.display_name || result.name || '',
+        );
+      } catch {
+        /* ignore */
+      }
+      setTenantError('');
+    } catch (e: any) {
+      const st = e?.response?.status;
+      const code = e?.response?.data?.code;
+      if (st === 404) {
         setTenantError('Company not found');
         Toast.show({
           type: 'error',
           text1: 'Company not found',
           text2: 'Check the name or sign up',
         });
-        return;
+      } else if (st === 400 && code === 'ambiguous_company_name') {
+        setTenantError('Multiple matches — use exact company name');
+        Toast.show({
+          type: 'error',
+          text1: 'Company name',
+          text2: 'Use the exact name your administrator gave you.',
+        });
+      } else {
+        Toast.show({
+          type: 'error',
+          text1: 'Could not verify company',
+          text2: 'Check your connection and try again',
+        });
       }
-      setTenantError('');
-    } catch {
-      Toast.show({
-        type: 'error',
-        text1: 'Could not verify company',
-        text2: 'Check your connection and try again',
-      });
       return;
     } finally {
       setContinuing(false);

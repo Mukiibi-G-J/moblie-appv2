@@ -25,6 +25,8 @@ const favourite = require("../assets/icons/favourite.png")
 const fb = require("../assets/icons/fb.png")
 const google = require("../assets/icons/google.png")
 const burger = require("../assets/icons/burger.png")
+/** Restaurant module branding (Home quick action, More menu). */
+const tray = require("../assets/icons/tray.png")
 const cherry = require("../assets/icons/cherry.png")
 const clock = require("../assets/icons/clock.png")
 const correct = require("../assets/icons/correct.png")
@@ -105,6 +107,7 @@ export default {
     fb,
     google,
     burger,
+    tray,
     cherry,
     clock,
     correct,

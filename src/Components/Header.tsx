@@ -1,15 +1,8 @@
 import React from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  Image,
-  StyleSheet,
-  ViewStyle,
-  TextStyle,
-} from 'react-native';
-import {COLORS, FONTS, SIZES, icons} from '../constants';
+import {View, Text, Image, StyleSheet, ViewStyle, TextStyle} from 'react-native';
+import {FONTS, SIZES, icons} from '../constants';
 import {useTheme} from '../context/ThemeContext';
+import {QuickIconPressable} from './QuickIconPressable';
 
 interface HeaderProps {
   title: string;
@@ -43,17 +36,18 @@ const Header: React.FC<HeaderProps> = ({
           {/* Left Component */}
           <View style={styles.leftComponent}>
             {showBack ? (
-              <TouchableOpacity
+              <QuickIconPressable
                 style={[
                   styles.menuButton,
                   {backgroundColor: colors.card, borderColor: colors.border},
                 ]}
-                onPress={onBackPress}>
+                onPress={onBackPress}
+                accessibilityLabel="Go back">
                 <Image
                   source={icons.back}
                   style={[styles.menuIcon, {tintColor: colors.textPrimary}]}
                 />
-              </TouchableOpacity>
+              </QuickIconPressable>
             ) : (
               leftComponent
             )}

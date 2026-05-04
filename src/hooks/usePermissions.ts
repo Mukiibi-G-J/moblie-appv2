@@ -24,6 +24,10 @@ import {PagePermissions} from '../types/auth';
 export const usePermissions = () => {
   const {auth} = useAuth();
 
+  /** Matches web: superuser or Admin role bypasses page-level permission checks */
+  const hasFullPageAccess = (): boolean =>
+    !!auth && (auth.is_superuser || !!auth.roles?.includes('Admin'));
+
   /**
    * Layer 1: Check if a module should be visible based on Role Center configuration
    * @param moduleCode - Module code (e.g., 'sales', 'customers', 'items')
@@ -53,8 +57,7 @@ export const usePermissions = () => {
   const hasAnyPageAccess = (pageName: string): boolean => {
     if (!auth) return false;
 
-    // Superuser and Admin have access to everything
-    if (auth.is_superuser) return true;
+    if (hasFullPageAccess()) return true;
 
     // Check if user has page_permissions for this page
     const pagePerms = auth.page_permissions?.[pageName];
@@ -78,8 +81,7 @@ export const usePermissions = () => {
   ): boolean => {
     if (!auth) return false;
 
-    // Superuser has access to everything
-    if (auth.is_superuser) return true;
+    if (hasFullPageAccess()) return true;
 
     // Check if user has page_permissions for this page
     const pagePerms = auth.page_permissions?.[pageName];
@@ -99,8 +101,7 @@ export const usePermissions = () => {
       return {read: false, insert: false, modify: false, delete: false};
     }
 
-    // Superuser has full access
-    if (auth.is_superuser) {
+    if (hasFullPageAccess()) {
       return {read: true, insert: true, modify: true, delete: true};
     }
 

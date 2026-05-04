@@ -25,6 +25,7 @@ import {
   PaymentMethod,
 } from '../../@types/vendor';
 import {VendorLedgerEntry} from '../../@types/paymentJournal';
+import {QuickIconPressable} from '../../Components';
 import SupplierListItem from './SupplierListItem';
 import VendorFormModal from './VendorFormModal';
 
@@ -440,15 +441,16 @@ const Suppliers: React.FC = () => {
           <View style={styles.filterModalContent}>
             <View style={styles.filterModalHeader}>
               <Text style={styles.filterModalTitle}>Filter Suppliers</Text>
-              <TouchableOpacity
+              <QuickIconPressable
                 onPress={() => setFilterModalVisible(false)}
-                style={styles.filterCloseButton}>
+                style={styles.filterCloseButton}
+                accessibilityLabel="Close">
                 <Image
                   source={icons.cross}
                   style={styles.filterCloseIcon}
                   resizeMode="contain"
                 />
-              </TouchableOpacity>
+              </QuickIconPressable>
             </View>
 
             <ScrollView
@@ -495,15 +497,16 @@ const Suppliers: React.FC = () => {
               <Text style={styles.filterModalTitle}>
                 {selectedLedgerVendor?.name || 'Supplier'} balance
               </Text>
-              <TouchableOpacity
+              <QuickIconPressable
                 onPress={() => setLedgerModalVisible(false)}
-                style={styles.filterCloseButton}>
+                style={styles.filterCloseButton}
+                accessibilityLabel="Close">
                 <Image
                   source={icons.cross}
                   style={styles.filterCloseIcon}
                   resizeMode="contain"
                 />
-              </TouchableOpacity>
+              </QuickIconPressable>
             </View>
 
             <View style={styles.ledgerSummaryCard}>

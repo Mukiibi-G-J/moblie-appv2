@@ -13,10 +13,11 @@ import {
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {useNavigation} from '@react-navigation/native';
+import {safeGoBack} from '../../hooks/NavigationService';
 import Toast from 'react-native-toast-message';
 
 import {FONTS, SIZES, COLORS, icons} from '../../constants';
-import {Header, IconButton} from '../../Components';
+import {Header, IconButton, QuickIconPressable} from '../../Components';
 import {useCart} from '../../context/CartStore';
 import {useSearchMode} from '../../context/SearchModeStore';
 import {searchItems} from '../../services/app.services';
@@ -123,7 +124,7 @@ const SearchPage = () => {
       setSearchQuery('');
       setSearchResults([]);
       setHasSearched(false);
-      navigation.goBack();
+      safeGoBack(navigation, 'Home');
     }, 0);
   };
 
@@ -220,7 +221,7 @@ const SearchPage = () => {
         <Header
           title="Search Items"
           showBack={true}
-          onBackPress={() => navigation.goBack()}
+          onBackPress={() => safeGoBack(navigation, 'Home')}
           containerStyle={styles.header}
         />
 
@@ -260,15 +261,16 @@ const SearchPage = () => {
               autoFocus={true}
             />
             {searchQuery.length > 0 && (
-              <TouchableOpacity
+              <QuickIconPressable
                 style={styles.clearButton}
                 onPress={() => {
                   setSearchQuery('');
                   setSearchResults([]);
                   setHasSearched(false);
-                }}>
+                }}
+                accessibilityLabel="Clear search">
                 <Image source={icons.cross} style={styles.clearIcon} />
-              </TouchableOpacity>
+              </QuickIconPressable>
             )}
           </View>
 

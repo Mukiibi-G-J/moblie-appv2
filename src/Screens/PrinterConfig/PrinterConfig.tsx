@@ -13,13 +13,16 @@ import {
 } from 'react-native';
 import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useNavigation} from '@react-navigation/native';
+import {safeGoBack} from '../../hooks/NavigationService';
 import {COLORS, FONTS, SIZES, icons} from '../../constants';
 import {useTheme} from '../../context/ThemeContext';
 import Toast from 'react-native-toast-message';
+import {QuickIconPressable} from '../../Components';
 import PrintService, {PrinterType} from '../../services/PrintService';
 import BluetoothPrinterService, {
   BluetoothDevice,
 } from '../../services/BluetoothPrinterService';
+import UsbPrinterService, {UsbDevice} from '../../services/UsbPrinterService';
 
 const PrinterConfig: React.FC = () => {
   const navigation = useNavigation<any>();
@@ -35,9 +38,16 @@ const PrinterConfig: React.FC = () => {
     useState<BluetoothDevice | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
+  const [usbDevices, setUsbDevices] = useState<UsbDevice[]>([]);
+  const [connectedUsbDevice, setConnectedUsbDevice] = useState<UsbDevice | null>(
+    null,
+  );
+  const [isUsbScanning, setIsUsbScanning] = useState(false);
+  const [isUsbConnecting, setIsUsbConnecting] = useState(false);
 
   const printService = PrintService.getInstance();
   const bluetoothService = BluetoothPrinterService.getInstance();
+  const usbService = UsbPrinterService.getInstance();
 
   const headerPaddingTop = Math.max(
     insets.top,
@@ -66,6 +76,12 @@ const PrinterConfig: React.FC = () => {
           await bluetoothService.tryAutoConnectPosBuiltin();
         }
         checkBluetoothConnection();
+        if (savedType === 'usb') {
+          const reconnected = await usbService.reconnectFromStorage();
+          if (reconnected) {
+            setConnectedUsbDevice(usbService.getConnectedDevice());
+          }
+        }
       }
     } catch (error) {
       console.error('Failed to load printer settings:', error);
@@ -186,11 +202,100 @@ const PrinterConfig: React.FC = () => {
     }
   };
 
+  const scanForUsbPrinters = async () => {
+    if (Platform.OS !== 'android') {
+      Toast.show({
+        type: 'info',
+        text1: 'Not supported',
+        text2: 'USB printing is only available on Android',
+      });
+      return;
+    }
+    try {
+      setIsUsbScanning(true);
+      setUsbDevices([]);
+      const devices = await usbService.getDeviceList();
+      setUsbDevices(devices);
+      if (devices.length === 0) {
+        Toast.show({
+          type: 'info',
+          text1: 'No USB printers found',
+          text2:
+            'Make sure the printer is powered on and the USB cable is connected',
+        });
+      }
+    } catch (error: any) {
+      Toast.show({
+        type: 'error',
+        text1: 'Scan failed',
+        text2: error?.message || 'Failed to scan for USB printers',
+      });
+    } finally {
+      setIsUsbScanning(false);
+    }
+  };
+
+  const connectToUsbPrinter = async (device: UsbDevice) => {
+    try {
+      setIsUsbConnecting(true);
+      if (connectedUsbDevice) {
+        await usbService.disconnect();
+      }
+      const success = await usbService.connect(device);
+      if (success) {
+        setConnectedUsbDevice(device);
+        await printService.setPrinterType('usb');
+        setPrinterType('usb');
+        Toast.show({
+          type: 'success',
+          text1: 'USB printer connected',
+          text2: device.device_name,
+        });
+      } else {
+        Toast.show({
+          type: 'error',
+          text1: 'Connection failed',
+          text2:
+            'Could not connect to USB printer. Grant USB permission when prompted.',
+        });
+      }
+    } catch (error: any) {
+      Toast.show({
+        type: 'error',
+        text1: 'Connection failed',
+        text2: error?.message || 'Failed to connect to USB printer',
+      });
+    } finally {
+      setIsUsbConnecting(false);
+    }
+  };
+
+  const disconnectUsbPrinter = async () => {
+    try {
+      await usbService.disconnect();
+      setConnectedUsbDevice(null);
+      Toast.show({type: 'success', text1: 'USB printer disconnected'});
+    } catch {}
+  };
+
   const testPrinter = async () => {
     try {
       setIsTesting(true);
 
-      if (printerType === 'bluetooth') {
+      if (printerType === 'usb') {
+        if (!usbService.isConnected()) {
+          Alert.alert(
+            'Printer not connected',
+            'Please connect to a USB printer first before testing.',
+            [{text: 'OK'}],
+          );
+          return;
+        }
+        const success = await usbService.testPrint();
+        if (!success) {
+          throw new Error('USB printer test failed');
+        }
+      } else if (printerType === 'bluetooth') {
         if (!bluetoothService.isPrinterConnected()) {
           await bluetoothService.ensureConnectedFromStorage();
         }
@@ -230,7 +335,7 @@ const PrinterConfig: React.FC = () => {
   const showHelpInfo = () => {
     Alert.alert(
       'Printer setup',
-      '1. Choose Auto detect (recommended) or Bluetooth.\n2. Pair your printer in Android Bluetooth settings (many handheld POS units list the internal printer there).\n3. Tap "Scan for printers" and select it, or rely on Auto after pairing.\n4. Use "Test printer" to verify.',
+      '1. Choose Auto detect, Bluetooth, or USB (AOCOM built-in).\n2. Bluetooth: pair your printer in Android Bluetooth settings, then tap "Scan for printers".\n3. USB: plug the printer in via USB, tap "Scan for USB printers", select the printer and grant USB permission when Android asks — prints directly, no dialog.\n4. Use Test printer to verify.',
       [{text: 'OK'}],
     );
   };
@@ -289,7 +394,7 @@ const PrinterConfig: React.FC = () => {
               borderBottomColor: colors.border,
             },
           ]}>
-          <TouchableOpacity
+          <QuickIconPressable
             style={[
               styles.headerRoundButton,
               {
@@ -297,16 +402,14 @@ const PrinterConfig: React.FC = () => {
                 backgroundColor: colors.card,
               },
             ]}
-            onPress={() => navigation.goBack()}
-            activeOpacity={0.7}
-            accessibilityRole="button"
+            onPress={() => safeGoBack(navigation, 'Home')}
             accessibilityLabel="Go back">
             <Image
               source={icons.back as any}
               style={[styles.headerRoundIcon, {tintColor: colors.textPrimary}]}
               resizeMode="contain"
             />
-          </TouchableOpacity>
+          </QuickIconPressable>
           <Text
             style={[styles.topTitle, {color: colors.textPrimary}]}
             numberOfLines={1}
@@ -358,6 +461,11 @@ const PrinterConfig: React.FC = () => {
                 'bluetooth',
                 'Bluetooth printer',
                 'Bluetooth thermal printer (e.g. PT-210)',
+              )}
+              {renderTypeOption(
+                'usb',
+                'USB Printer (AOCOM built-in)',
+                '58mm internal USB printer — prints directly via USB, no dialog',
               )}
             </View>
           </View>
@@ -491,6 +599,142 @@ const PrinterConfig: React.FC = () => {
                   Bluetooth device: pair it in Android Bluetooth settings, then scan
                   and select it here (or use Auto detect). Use Test printer when
                   connected.
+                </Text>
+              </View>
+            </>
+          ) : null}
+
+          {printerType === 'usb' ? (
+            <>
+              <Text
+                style={[
+                  styles.sectionTitle,
+                  styles.sectionTitleSpaced,
+                  {color: COLORS.primary3},
+                ]}>
+                AOCOM built‑in USB printer
+              </Text>
+              <Text style={[styles.sectionSubtitle, {color: colors.textSecondary}]}>
+                Prints directly to the 58mm thermal printer via USB — no system dialog
+              </Text>
+
+              {connectedUsbDevice ? (
+                <View
+                  style={[
+                    styles.connectedCard,
+                    {
+                      backgroundColor: COLORS.transparentPrimary,
+                      borderColor: COLORS.transparentPrimary2,
+                    },
+                  ]}>
+                  <View style={styles.connectedDeviceInfo}>
+                    <Text
+                      style={[styles.connectedDeviceLabel, {color: colors.textSecondary}]}>
+                      Connected
+                    </Text>
+                    <Text
+                      style={[styles.connectedDeviceName, {color: colors.textPrimary}]}>
+                      {connectedUsbDevice.device_name}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.connectedDeviceAddress,
+                        {color: colors.textTertiary},
+                      ]}>
+                      Vendor: {connectedUsbDevice.vendor_id} · Product:{' '}
+                      {connectedUsbDevice.product_id}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.disconnectButton}
+                    onPress={disconnectUsbPrinter}
+                    activeOpacity={0.85}>
+                    <Text style={styles.disconnectButtonText}>Disconnect</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+
+              <TouchableOpacity
+                style={[
+                  styles.primaryButton,
+                  isUsbScanning && styles.primaryButtonDisabled,
+                ]}
+                onPress={scanForUsbPrinters}
+                disabled={isUsbScanning}
+                activeOpacity={0.85}>
+                {isUsbScanning ? (
+                  <ActivityIndicator color={COLORS.white} size="small" />
+                ) : (
+                  <Text style={styles.primaryButtonText}>Scan for USB printers</Text>
+                )}
+              </TouchableOpacity>
+
+              {usbDevices.length > 0 ? (
+                <View style={styles.deviceList}>
+                  <Text style={[styles.deviceListTitle, {color: colors.textPrimary}]}>
+                    Available USB printers
+                  </Text>
+                  {usbDevices.map((device, index) => (
+                    <TouchableOpacity
+                      key={`${device.vendor_id}-${device.product_id}-${index}`}
+                      style={[
+                        styles.deviceItem,
+                        {
+                          backgroundColor: colors.screenMuted,
+                          borderColor:
+                            connectedUsbDevice?.vendor_id === device.vendor_id &&
+                            connectedUsbDevice?.product_id === device.product_id
+                              ? COLORS.primary2
+                              : colors.border,
+                        },
+                        connectedUsbDevice?.vendor_id === device.vendor_id &&
+                          connectedUsbDevice?.product_id === device.product_id &&
+                          styles.deviceItemConnected,
+                      ]}
+                      onPress={() => connectToUsbPrinter(device)}
+                      disabled={isUsbConnecting}
+                      activeOpacity={0.65}>
+                      <View style={styles.deviceItemContent}>
+                        <Text
+                          style={[styles.deviceItemName, {color: colors.textPrimary}]}>
+                          {device.device_name}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.deviceItemAddress,
+                            {color: colors.textSecondary},
+                          ]}>
+                          Vendor: {device.vendor_id} · Product: {device.product_id}
+                        </Text>
+                      </View>
+                      {isUsbConnecting ? (
+                        <ActivityIndicator size="small" color={COLORS.primary2} />
+                      ) : (
+                        <Text style={[styles.deviceItemArrow, {color: COLORS.primary2}]}>
+                          ›
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              ) : null}
+
+              <View
+                style={[
+                  styles.infoCard,
+                  {
+                    borderColor: COLORS.transparentPrimary2,
+                    backgroundColor: COLORS.transparentPrimary,
+                  },
+                ]}>
+                <Text style={[styles.infoCardTitle, {color: COLORS.primary3}]}>
+                  Setup tips
+                </Text>
+                <Text style={[styles.infoCardBody, {color: colors.textSecondary}]}>
+                  Plug the USB cable into the AOCOM machine, power the printer on, then tap
+                  "Scan for USB printers". Tap the printer in the list. When Android asks for
+                  USB permission, tap Allow. The printer will appear as Connected above.
+                  Tap Test printer to verify.
                 </Text>
               </View>
             </>

@@ -17,6 +17,7 @@ import {
 import {SafeAreaView} from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import {Picker} from '@react-native-picker/picker';
+import {QuickIconPressable} from '../../Components';
 import {COLORS, FONTS, icons} from '../../constants';
 import {
   Expense,
@@ -342,17 +343,17 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
           edges={['top', 'left', 'right']}>
           <View style={[styles.page, expTheme.page]}>
             <View style={[styles.pageHeader, expTheme.pageHeader]}>
-              <TouchableOpacity
+              <QuickIconPressable
                 onPress={onClose}
                 style={styles.headerIconButton}
                 hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
-                activeOpacity={0.7}>
+                accessibilityLabel="Close">
                 <Image
                   source={icons.cross as ImageSourcePropType}
                   style={[styles.headerIcon, expTheme.headerIcon]}
                   resizeMode="contain"
                 />
-              </TouchableOpacity>
+              </QuickIconPressable>
 
               <View style={styles.headerRightActions}>
                 {canPost && isEditMode && expense?.status === 'Open' ? (

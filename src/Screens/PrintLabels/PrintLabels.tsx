@@ -18,7 +18,9 @@ import Toast from 'react-native-toast-message';
 import {COLORS, FONTS, SIZES, icons} from '../../constants';
 import {useTheme} from '../../context/ThemeContext';
 import {usePermissions} from '../../hooks/usePermissions';
+import {safeGoBack} from '../../hooks/NavigationService';
 import {PAGE_NAMES} from '../../constants/pageNames';
+import {QuickIconPressable} from '../../Components';
 import {fetchItems} from '../../services/app.services';
 import PrintService from '../../services/PrintService';
 
@@ -255,15 +257,15 @@ const PrintLabels = () => {
         },
         t.headerBorder,
       ]}>
-      <TouchableOpacity
+      <QuickIconPressable
         style={[styles.headerRoundButton, t.headerRoundButton]}
-        onPress={() => navigation.goBack()}
-        activeOpacity={0.7}>
+        onPress={() => safeGoBack(navigation, 'Home')}
+        accessibilityLabel="Go back">
         <Image
           source={icons.back as any}
           style={[styles.headerRoundIcon, t.headerRoundIcon]}
         />
-      </TouchableOpacity>
+      </QuickIconPressable>
       <Text style={[styles.topTitle, t.topTitle]}>Print labels</Text>
       <TouchableOpacity
         style={[styles.headerRoundButton, t.headerActionBtn]}

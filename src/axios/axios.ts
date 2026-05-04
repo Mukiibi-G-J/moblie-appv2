@@ -10,7 +10,6 @@ import {
   USE_TEST_ENV,
   TEST_API_BASE_URL,
   TEST_TENANT_SCHEMA,
-  PROD_BASE_URL,
 } from '../config/api.config';
 import {forceLogout} from '../utils/authEvents';
 
@@ -33,6 +32,7 @@ const PUBLIC_SCHEMA_PATH_MARKERS = [
   '/api/company/validate-company-name',
   '/api/company/check-company-exists',
   '/api/home/on-boarding',
+  '/api/auth/restaurant-app/company-lookup/',
 ];
 
 function shouldSendTestTenantHeader(url: string | undefined): boolean {
@@ -42,7 +42,117 @@ function shouldSendTestTenantHeader(url: string | undefined): boolean {
   return !PUBLIC_SCHEMA_PATH_MARKERS.some(marker => url.includes(marker));
 }
 
+/** Single-host / dev: X-Tenant from saved company schema, else config fallback. */
+async function resolveTestXTenantHeader(): Promise<string | undefined> {
+  const stored = await AsyncStorage.getItem('tenant');
+  const fromStored = stored?.trim().toLowerCase();
+  if (fromStored) {
+    return fromStored;
+  }
+  const fromConfig = TEST_TENANT_SCHEMA?.trim().toLowerCase();
+  return fromConfig || undefined;
+}
+
+function isRestaurantPinLoginPost(
+  config: InternalAxiosRequestConfig | undefined,
+): boolean {
+  const url = config?.url || '';
+  const method = (config?.method || 'get').toLowerCase();
+  return method === 'post' && url.includes('/api/auth/pin/');
+}
+
 let lastSubscriptionRedirectAt = 0;
+
+const BRANCH_SESSION_STORAGE_KEYS = {
+  activeBranchId: 'branch.active_branch_id',
+} as const;
+
+function normalizeHeaderName(name: string): string {
+  return name.toLowerCase();
+}
+
+function getHeaderValue(
+  headers: Record<string, any> | undefined,
+  name: string,
+): unknown {
+  if (!headers) return undefined;
+  const target = normalizeHeaderName(name);
+  // Axios v1 can use AxiosHeaders with .get() method.
+  if (typeof (headers as any).get === 'function') {
+    return (headers as any).get(name);
+  }
+  const keys = Object.keys(headers);
+  for (const k of keys) {
+    if (normalizeHeaderName(k) === target) {
+      return headers[k];
+    }
+  }
+  return undefined;
+}
+
+function setHeaderValue(
+  headers: Record<string, any> | undefined,
+  name: string,
+  value: string,
+) {
+  if (!headers) return;
+  if (typeof (headers as any).set === 'function') {
+    (headers as any).set(name, value);
+    return;
+  }
+  headers[name] = value;
+}
+
+async function maybeInjectBranchHeaders(config: InternalAxiosRequestConfig) {
+  const headers = (config.headers ?? {}) as any;
+  if (!config.headers) config.headers = headers;
+
+  // Never overwrite explicit per-request overrides.
+  const hasScopeOverride = getHeaderValue(headers, 'X-Branch-Scope') != null;
+  const hasBranchOverride = getHeaderValue(headers, 'X-Branch-Id') != null;
+  if (hasScopeOverride || hasBranchOverride) {
+    return;
+  }
+
+  const rawId = await AsyncStorage.getItem(BRANCH_SESSION_STORAGE_KEYS.activeBranchId);
+  const id = rawId != null && rawId.trim() !== '' ? Number(rawId) : null;
+  if (id != null && Number.isFinite(id)) {
+    setHeaderValue(headers, 'X-Branch-Id', String(id));
+  }
+}
+
+/**
+ * Requests that must not attach the stored access token (e.g. PIN login, device-context).
+ * Still applies branch + X-Tenant rules in test mode. No global 401 logout.
+ */
+export function createAnonymousAxiosInstance(tenant?: string) {
+  const cleanTenant = tenant?.trim();
+  const baseURL = USE_TEST_ENV
+    ? TEST_API_BASE_URL
+    : cleanTenant
+    ? `https://${cleanTenant}.zentroapp-backend.com`
+    : 'https://zentroapp-backend.com';
+
+  const instance = axios.create({baseURL});
+  instance.interceptors.request.use(
+    async config => {
+      await maybeInjectBranchHeaders(config);
+      if (USE_TEST_ENV && shouldSendTestTenantHeader(config.url)) {
+        const xTenant = await resolveTestXTenantHeader();
+        if (xTenant) {
+          setHeaderValue(config.headers as any, 'X-Tenant', xTenant);
+        }
+      }
+      return config;
+    },
+    error => Promise.reject(error),
+  );
+  instance.interceptors.response.use(
+    response => response,
+    error => Promise.reject(error),
+  );
+  return instance;
+}
 
 const createAxiosInstance = (tenant?: string) => {
   // Use test environment if enabled, otherwise use production
@@ -65,12 +175,14 @@ const createAxiosInstance = (tenant?: string) => {
         config.headers['Authorization'] = `Bearer ${accessToken}`;
       }
 
-      if (
-        USE_TEST_ENV &&
-        TEST_TENANT_SCHEMA &&
-        shouldSendTestTenantHeader(config.url)
-      ) {
-        config.headers['X-Tenant'] = TEST_TENANT_SCHEMA;
+      // Branch context (web parity): default X-Branch-Id unless request overrides.
+      await maybeInjectBranchHeaders(config);
+
+      if (USE_TEST_ENV && shouldSendTestTenantHeader(config.url)) {
+        const xTenant = await resolveTestXTenantHeader();
+        if (xTenant) {
+          setHeaderValue(config.headers as any, 'X-Tenant', xTenant);
+        }
       }
 
       return config;
@@ -167,9 +279,10 @@ const createAxiosInstance = (tenant?: string) => {
 
       // Handle 401 (Unauthorized) - Authentication error
       if (error.response && error.response.status === 401) {
-        console.log('Token expired or invalid - logging out user');
-        // Clear auth state through Store provider.
-        forceLogout();
+        if (!isRestaurantPinLoginPost(error.config)) {
+          console.log('Token expired or invalid - logging out user');
+          forceLogout();
+        }
 
         // Preserve caller error context; do not convert to string too early.
         return Promise.reject(error);
@@ -177,6 +290,9 @@ const createAxiosInstance = (tenant?: string) => {
 
       // Handle 403 (Forbidden) - Permission error (don't log out)
       if (error.response && error.response.status === 403) {
+        if (isRestaurantPinLoginPost(error.config)) {
+          return Promise.reject(error);
+        }
         const errorMessage =
           error.response?.data?.detail ||
           'You do not have permission to perform this action.';
@@ -300,19 +416,21 @@ class ApiService {
           config.headers.Authorization = `Bearer ${token}`;
         }
 
-        if (
-          USE_TEST_ENV &&
-          TEST_TENANT_SCHEMA &&
-          config.headers &&
-          shouldSendTestTenantHeader(config.url)
-        ) {
-          config.headers['X-Tenant'] = TEST_TENANT_SCHEMA;
+        // Branch context (web parity): default X-Branch-Id unless request overrides.
+        await maybeInjectBranchHeaders(config);
+
+        if (USE_TEST_ENV && config.headers && shouldSendTestTenantHeader(config.url)) {
+          const xTenant = await resolveTestXTenantHeader();
+          if (xTenant) {
+            config.headers['X-Tenant'] = xTenant;
+          }
         }
 
         // Add logging for the full URL
         console.log('Making request to:', `${config.baseURL}${config.url}`);
         if (USE_TEST_ENV) {
-          console.log('Test Environment - X-Tenant:', TEST_TENANT_SCHEMA);
+          const x = await resolveTestXTenantHeader();
+          console.log('Test Environment - X-Tenant:', x ?? '(none)');
         }
         return config;
       },
@@ -389,7 +507,9 @@ class ApiService {
 
     // Handle 401 (Unauthorized) - Authentication error
     if (error.response?.status === 401) {
-      await this.handleAuthenticationError();
+      if (!isRestaurantPinLoginPost(error.config)) {
+        await this.handleAuthenticationError();
+      }
 
       // Preserve error context after logout.
       return Promise.reject(error);
@@ -397,6 +517,9 @@ class ApiService {
 
     // Handle 403 (Forbidden) - Permission error (don't log out)
     if (error.response?.status === 403) {
+      if (isRestaurantPinLoginPost(error.config)) {
+        return Promise.reject(error);
+      }
       const errorData = error.response?.data as any;
       const errorMessage =
         errorData?.detail ||

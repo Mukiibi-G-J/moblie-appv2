@@ -18,10 +18,11 @@ import React from 'react';
 import {View, Text, StyleSheet} from 'react-native';
 import {usePermissions} from '../hooks/usePermissions';
 import {COLORS, FONTS, SIZES} from '../constants';
-import {PAGE_NAMES, PageName} from '../constants/pageNames';
+import {PageName} from '../constants/pageNames';
 
 interface ProtectedScreenProps {
-  pageName: PageName;
+  /** Single page or any-of (e.g. menus hub: Restaurant Menus | Menu Management | Layout Editor). */
+  pageName: PageName | PageName[];
   requiredAction?: 'read' | 'insert' | 'modify' | 'delete';
   children: React.ReactNode;
   fallback?: React.ReactNode;
@@ -35,11 +36,15 @@ export const ProtectedScreen: React.FC<ProtectedScreenProps> = ({
 }) => {
   const {canAccessPage, hasAnyPageAccess} = usePermissions();
 
-  // First check if user has any access to the page (Layer 2)
-  const hasPageAccess = hasAnyPageAccess(pageName);
+  const pageNames = Array.isArray(pageName) ? pageName : [pageName];
 
-  // Then check if user has the specific action permission (Layer 3)
-  const hasActionPermission = canAccessPage(pageName, requiredAction);
+  // First check if user has any access to at least one page (Layer 2)
+  const hasPageAccess = pageNames.some(p => hasAnyPageAccess(p));
+
+  // Then check if user has the specific action on at least one page (Layer 3)
+  const hasActionPermission = pageNames.some(p =>
+    canAccessPage(p, requiredAction),
+  );
 
   // User needs both page access and the specific action permission
   const hasAccess = hasPageAccess && hasActionPermission;
@@ -59,7 +64,8 @@ export const ProtectedScreen: React.FC<ProtectedScreenProps> = ({
             You don't have permission to access this page.
           </Text>
           <Text style={styles.detail}>
-            Required: {requiredAction} permission for {pageName}
+            Required: {requiredAction} permission for one of:{' '}
+            {pageNames.join(', ')}
           </Text>
         </View>
       </View>

@@ -217,6 +217,18 @@ export type RootStackParamList = {
   Otp: {email?: string};
   Login: undefined;
   Home: undefined;
+  RestaurantPinSignIn: undefined;
+  RestaurantPinSetup: undefined;
+  SelectBranch: undefined;
+  RestaurantHub: undefined;
+  RestaurantPOS: undefined;
+  RestaurantOrders: undefined;
+  RestaurantKitchen: undefined;
+  RestaurantDashboard: undefined;
+  RestaurantTables: undefined;
+  RestaurantReservations: undefined;
+  RestaurantMenus: undefined;
+  RestaurantSettings: undefined;
 };
 
 export interface MenuItem {

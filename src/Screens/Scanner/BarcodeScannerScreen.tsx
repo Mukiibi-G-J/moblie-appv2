@@ -12,6 +12,7 @@ import {Camera, CameraType} from 'react-native-camera-kit';
 import {COLORS, FONTS, SIZES} from '../../constants';
 import {playBarcodeBeep} from '../../utils/barcodeFeedback';
 import {useSearchMode} from '../../context/SearchModeStore';
+import {safeGoBack} from '../../hooks/NavigationService';
 
 const BarcodeScannerScreen = ({navigation, route}: {navigation: any; route: any}) => {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
@@ -67,7 +68,7 @@ const BarcodeScannerScreen = ({navigation, route}: {navigation: any; route: any}
     if (onScan) {
       onScan(scannedCode);
     }
-    navigation.goBack();
+    safeGoBack(navigation, 'Home');
   };
 
   if (hasPermission === null) {
@@ -85,7 +86,7 @@ const BarcodeScannerScreen = ({navigation, route}: {navigation: any; route: any}
         <Text style={styles.infoText}>
           Enable camera permission to scan product barcodes.
         </Text>
-        <TouchableOpacity style={styles.actionButton} onPress={() => navigation.goBack()}>
+        <TouchableOpacity style={styles.actionButton} onPress={() => safeGoBack(navigation, 'Home')}>
           <Text style={styles.actionButtonText}>Go Back</Text>
         </TouchableOpacity>
       </SafeAreaView>
@@ -95,7 +96,7 @@ const BarcodeScannerScreen = ({navigation, route}: {navigation: any; route: any}
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.topBar}>
-        <TouchableOpacity style={styles.topButton} onPress={() => navigation.goBack()}>
+        <TouchableOpacity style={styles.topButton} onPress={() => safeGoBack(navigation, 'Home')}>
           <Text style={styles.topButtonText}>Back</Text>
         </TouchableOpacity>
         <TouchableOpacity

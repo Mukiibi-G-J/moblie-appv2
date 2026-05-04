@@ -8,9 +8,8 @@ import {
   Platform,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
-import Toast from 'react-native-toast-message';
 import {FONTS, SIZES, icons} from '../../constants';
-import {PAGE_NAMES} from '../../constants/pageNames';
+import {PAGE_NAMES, RESTAURANT_MODULE_ENTRY_PAGE_NAMES} from '../../constants/pageNames';
 import {usePermissions} from '../../hooks/usePermissions';
 import {useTheme} from '../../context/ThemeContext';
 import {navigate} from '../../hooks/NavigationService';
@@ -78,7 +77,11 @@ const Options = () => {
   const showSalesHistory =
     isModuleVisible('sales') && hasAnyPageAccess(PAGE_NAMES.SALES_HISTORY);
   const showPrintLabels =
-    isModuleVisible('items') && canRead('Items');
+    isModuleVisible('items') && canRead(PAGE_NAMES.ITEMS);
+
+  const showRestaurantQuick =
+    isModuleVisible('restaurant') &&
+    RESTAURANT_MODULE_ENTRY_PAGE_NAMES.some(p => hasAnyPageAccess(p));
 
   const primaryDefs: PrimaryAction[] = [];
 
@@ -116,6 +119,15 @@ const Options = () => {
       title: 'Expense history',
       subtitle: 'Posted expenses',
       onPress: () => navigation.navigate('ExpenseHistory' as never),
+    });
+  }
+  if (showRestaurantQuick) {
+    primaryDefs.push({
+      key: 'restaurant',
+      icon: icons.tray,
+      title: 'Restaurant',
+      subtitle: 'POS, floor, kitchen',
+      onPress: () => navigate('RestaurantHub', undefined),
     });
   }
 
@@ -161,46 +173,6 @@ const Options = () => {
         isModuleVisible('suppliers') &&
         hasAnyPageAccess(PAGE_NAMES.SUPPLIERS),
       onPress: () => navigate('Suppliers', undefined),
-    },
-    {
-      key: 'settings',
-      label: 'Settings',
-      icon: icons.setting,
-      visible: hasAnyPageAccess(PAGE_NAMES.PROFILE_SETTINGS),
-      onPress: () => navigate('Settings', undefined),
-    },
-    {
-      key: 'addons',
-      label: 'Add-ons',
-      icon: icons.plus,
-      visible: true,
-      onPress: () => navigate('Subscription', undefined),
-    },
-    {
-      key: 'referrals',
-      label: 'Referrals',
-      icon: icons.star,
-      visible: true,
-      onPress: () => {
-        Toast.show({
-          type: 'info',
-          text1: 'Referrals',
-          text2: 'Coming soon.',
-        });
-      },
-    },
-    {
-      key: 'support',
-      label: 'Help & Support',
-      icon: icons.help,
-      visible: true,
-      onPress: () => {
-        Toast.show({
-          type: 'info',
-          text1: 'Help & Support',
-          text2: 'Coming soon.',
-        });
-      },
     },
   ];
 

@@ -7,6 +7,54 @@
 import {createAxiosInstance} from '../axios/axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+/** GET /api/company/overview/ — same payload as web Company page (CompanyServices.getCompanyOverview). */
+export interface SubscriptionOverview {
+  id: number;
+  plan: string;
+  status: string;
+  subscription_start_date?: string;
+  subscription_end_date?: string;
+  trial_period_end_date?: string;
+  is_paid?: boolean;
+  payment_gateway?: string;
+  billing_cycle?: string;
+  is_trial_active?: boolean;
+  is_active?: boolean;
+  days_remaining: number;
+}
+
+export interface StarterPackOverview {
+  has_starter_pack: boolean;
+  message?: string;
+  offer_name?: string;
+  free_period_active?: boolean;
+  free_period_days_remaining?: number;
+  subscription_active?: boolean;
+  subscription_days_remaining?: number;
+  subscription_end_date?: string | null;
+  free_period_end_date?: string | null;
+  order_status?: string;
+}
+
+export interface CompanyOverview {
+  subscription: SubscriptionOverview | null;
+  starter_pack: StarterPackOverview;
+}
+
+export async function getCompanyOverview(): Promise<CompanyOverview | null> {
+  try {
+    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+    const axiosInstance = createAxiosInstance(tenant);
+    const response = await axiosInstance.get<CompanyOverview>(
+      '/api/company/overview/',
+    );
+    return response.data;
+  } catch (error) {
+    console.warn('getCompanyOverview failed:', error);
+    return null;
+  }
+}
+
 export interface MobileMoneyInstructions {
   mobile_money_number: string;
   mobile_money_numbers?: string[];
@@ -51,7 +99,11 @@ export interface AddOn {
 
 function pickNumber(value: any): number | undefined {
   if (typeof value === 'number') return value;
-  if (typeof value === 'string' && value.trim() !== '' && !Number.isNaN(Number(value))) {
+  if (
+    typeof value === 'string' &&
+    value.trim() !== '' &&
+    !Number.isNaN(Number(value))
+  ) {
     return Number(value);
   }
   return undefined;
@@ -67,7 +119,9 @@ export async function getPricingPlans(): Promise<PricingPlan[]> {
   try {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
     const axiosInstance = createAxiosInstance(tenant);
-    const response = await axiosInstance.get<any>('/api/company/pricing-plans/');
+    const response = await axiosInstance.get<any>(
+      '/api/company/pricing-plans/',
+    );
     return extractList<any>(response.data).map((p: any) => ({
       id: Number(p.id),
       name: p.name ?? p.plan_name ?? p.title,

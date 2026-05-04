@@ -1,4 +1,4 @@
-import React, {useEffect} from 'react';
+import React, { useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View,
@@ -9,13 +9,13 @@ import {
 } from 'react-native';
 
 import TextButton from '../Components/TextButton';
-import {COLORS, constants, FONTS, images, SIZES} from '../constants';
+import { COLORS, constants, FONTS, images, SIZES } from '../constants';
 
 const LARGE_SCREEN_BREAKPOINT = 600;
 const MAX_CONTENT_WIDTH = 900;
 
-const OnBoarding = ({navigation}: {navigation: any}) => {
-  const {width: screenWidth, height: screenHeight} = useWindowDimensions();
+const OnBoarding = ({ navigation }: { navigation: any }) => {
+  const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const isLargeScreen = screenWidth >= LARGE_SCREEN_BREAKPOINT;
   const contentWidth = isLargeScreen
     ? Math.min(screenWidth * 0.88, MAX_CONTENT_WIDTH)
@@ -27,7 +27,7 @@ const OnBoarding = ({navigation}: {navigation: any}) => {
   const [currentIndex, setCurrentIndex] = React.useState(0);
 
   const onViewChangeRef = React.useRef(
-    ({viewableItems, changed}: {viewableItems: any; changed: any}) => {
+    ({ viewableItems, changed }: { viewableItems: any; changed: any }) => {
       setCurrentIndex(viewableItems[0].index);
     },
   );
@@ -91,7 +91,7 @@ const OnBoarding = ({navigation}: {navigation: any}) => {
           justifyContent: 'center',
           zIndex: 1,
           shadowColor: '#000',
-          shadowOffset: {width: 0, height: 2},
+          shadowOffset: { width: 0, height: 2 },
           shadowOpacity: 0.1,
           shadowRadius: 4,
         }}>
@@ -135,7 +135,7 @@ const OnBoarding = ({navigation}: {navigation: any}) => {
   function renderFooter() {
     const footerContent = (
       <>
-        <View style={{flex: 1, justifyContent: 'center'}}>
+        <View style={{ flex: 1, justifyContent: 'center' }}>
           <Dots />
         </View>
 
@@ -166,7 +166,7 @@ const OnBoarding = ({navigation}: {navigation: any}) => {
                 borderRadius: SIZES.radius,
                 backgroundColor: COLORS.primary,
                 shadowColor: '#000',
-                shadowOffset: {width: 0, height: 4},
+                shadowOffset: { width: 0, height: 4 },
                 shadowOpacity: 0.2,
                 shadowRadius: 5,
                 elevation: 5,
@@ -205,7 +205,7 @@ const OnBoarding = ({navigation}: {navigation: any}) => {
     );
 
     return (
-      <View style={{height: 160}}>
+      <View style={{ height: 160 }}>
         {isLargeScreen ? (
           <View
             style={{
@@ -242,18 +242,18 @@ const OnBoarding = ({navigation}: {navigation: any}) => {
         decelerationRate="fast"
         showsHorizontalScrollIndicator={false}
         onScroll={Animated.event(
-          [{nativeEvent: {contentOffset: {x: scrollX}}}],
-          {useNativeDriver: false},
+          [{ nativeEvent: { contentOffset: { x: scrollX } } }],
+          { useNativeDriver: false },
         )}
         onViewableItemsChanged={onViewChangeRef.current}
-        viewabilityConfig={{viewAreaCoveragePercentThreshold: 50}}
+        viewabilityConfig={{ viewAreaCoveragePercentThreshold: 50 }}
         getItemLayout={(_: any, index: number) => ({
           length: screenWidth,
           offset: screenWidth * index,
           index,
         })}
         keyExtractor={item => `${item.id}`}
-        renderItem={({item, index}) => {
+        renderItem={({ item, index }) => {
           const titleSize = isLargeScreen ? 28 : 24;
           const descSize = isLargeScreen ? 16 : 14;
           const lineHeight = isLargeScreen ? 24 : 20;
@@ -333,7 +333,7 @@ const OnBoarding = ({navigation}: {navigation: any}) => {
               style={{
                 width: screenWidth,
               }}>
-              <View style={{flex: 3}}>
+              <View style={{ flex: 3 }}>
                 <View
                   style={{
                     flex: 1,

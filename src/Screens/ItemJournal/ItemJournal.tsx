@@ -17,16 +17,24 @@ import {
 } from 'react-native';
 import {Picker} from '@react-native-picker/picker';
 import {useNavigation} from '@react-navigation/native';
+import {safeGoBack} from '../../hooks/NavigationService';
 import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import Clipboard from '@react-native-clipboard/clipboard';
+import {QuickIconPressable} from '../../Components';
 import {
   fetchItemJournal,
   fetchItems,
   upsertItemJournal,
   postItemJournalLines,
 } from '../../services/app.services';
-import {FONTS, SIZES, icons} from '../../constants';
+import {
+  FONTS,
+  SIZES,
+  icons,
+  ICON_BUTTON_ACTIVE_OPACITY,
+  ICON_BUTTON_HIT_SLOP,
+} from '../../constants';
 import {useTheme} from '../../context/ThemeContext';
 import {useAuth} from '../../context/Store';
 import {usePermissions} from '../../hooks/usePermissions';
@@ -630,15 +638,16 @@ const ItemJournalScreen = () => {
       edges={['left', 'right', 'bottom']}>
       <View style={{paddingTop: Math.max(insets.top, 8)}}>
         <View style={styles.headerRow}>
-          <TouchableOpacity
+          <QuickIconPressable
             style={[styles.headerBtn, {backgroundColor: colors.backButtonBg}]}
-            onPress={() => navigation.goBack()}
-            hitSlop={12}>
+            onPress={() => safeGoBack(navigation, 'Home')}
+            hitSlop={ICON_BUTTON_HIT_SLOP}
+            accessibilityLabel="Go back">
             <Image
               source={icons.back as any}
               style={[styles.headerIcon, {tintColor: colors.textPrimary}]}
             />
-          </TouchableOpacity>
+          </QuickIconPressable>
           <Text style={[styles.headerTitle, {color: colors.textPrimary}]}>
             Stock adjustments
           </Text>
@@ -646,7 +655,10 @@ const ItemJournalScreen = () => {
             <TouchableOpacity
               style={[styles.headerBtn, {backgroundColor: colors.backButtonBg}]}
               onPress={openCreate}
-              hitSlop={12}>
+              activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}
+              hitSlop={ICON_BUTTON_HIT_SLOP}
+              accessibilityRole="button"
+              accessibilityLabel="New adjustment">
               <Image
                 source={icons.plus as any}
                 style={[styles.headerIcon, {tintColor: colors.textPrimary}]}

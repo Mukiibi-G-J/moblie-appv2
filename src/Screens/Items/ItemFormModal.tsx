@@ -15,6 +15,8 @@ import {
 } from 'react-native';
 import {useNavigation, useRoute} from '@react-navigation/native';
 import {COLORS, FONTS, SIZES} from '../../constants/theme';
+import {QuickIconPressable} from '../../Components';
+import {ICON_BUTTON_HIT_SLOP} from '../../constants';
 import {Item} from './Items';
 import icons from '../../constants/icons';
 import {createItem, updateItem, fetchCategories} from '../../services/app.services';
@@ -380,9 +382,13 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
             <Text style={[styles.title, formTheme.title]}>
               {isEditMode ? 'Edit Item' : 'Create Item'}
             </Text>
-            <TouchableOpacity onPress={onClose} style={[styles.closeButton, formTheme.closeButton]}>
+            <QuickIconPressable
+              onPress={onClose}
+              style={[styles.closeButton, formTheme.closeButton]}
+              hitSlop={ICON_BUTTON_HIT_SLOP}
+              accessibilityLabel="Close">
               <Text style={[styles.closeButtonText, formTheme.closeButtonText]}>✕</Text>
-            </TouchableOpacity>
+            </QuickIconPressable>
           </View>
 
           <ScrollView

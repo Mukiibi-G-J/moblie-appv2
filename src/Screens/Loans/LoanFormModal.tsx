@@ -12,7 +12,8 @@ import {
   Platform,
 } from 'react-native';
 import {Picker} from '@react-native-picker/picker';
-import {COLORS, FONTS, SIZES} from '../../constants';
+import {QuickIconPressable} from '../../Components';
+import {COLORS, FONTS, SIZES, ICON_BUTTON_HIT_SLOP} from '../../constants';
 import {Loan, BankAccount} from '../../@types/loans';
 import {LoanServices} from '../../services/LoanServices';
 import Toast from 'react-native-toast-message';
@@ -227,9 +228,13 @@ const LoanFormModal: React.FC<Props> = ({
         <View style={styles.modal}>
           <View style={styles.header}>
             <Text style={styles.title}>{isEdit ? 'Edit Loan' : 'Create Loan'}</Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+            <QuickIconPressable
+              onPress={onClose}
+              style={styles.closeBtn}
+              hitSlop={ICON_BUTTON_HIT_SLOP}
+              accessibilityLabel="Close">
               <Text style={styles.closeText}>✕</Text>
-            </TouchableOpacity>
+            </QuickIconPressable>
           </View>
           <ScrollView style={{maxHeight: '80%'}}>
             {loan?.document_no && (

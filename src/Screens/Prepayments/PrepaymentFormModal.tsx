@@ -10,7 +10,8 @@ import {
   ScrollView,
   Alert,
 } from 'react-native';
-import {COLORS, FONTS, SIZES} from '../../constants';
+import {QuickIconPressable} from '../../Components';
+import {COLORS, FONTS, SIZES, ICON_BUTTON_HIT_SLOP} from '../../constants';
 import {Prepayment, PrepaymentLine} from '../../@types/prepayment';
 import {PrepaymentService} from '../../services/PrepaymentService';
 import Toast from 'react-native-toast-message';
@@ -258,9 +259,13 @@ const PrepaymentFormModal: React.FC<Props> = ({
             <Text style={styles.title}>
               {isEdit ? 'Edit Prepayment' : 'Create Prepayment'}
             </Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+            <QuickIconPressable
+              onPress={onClose}
+              style={styles.closeBtn}
+              hitSlop={ICON_BUTTON_HIT_SLOP}
+              accessibilityLabel="Close">
               <Text style={styles.closeText}>✕</Text>
-            </TouchableOpacity>
+            </QuickIconPressable>
           </View>
           <ScrollView style={{maxHeight: '75%'}}>
             {prepayment?.document_no && (

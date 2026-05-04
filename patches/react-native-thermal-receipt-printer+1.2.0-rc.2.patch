@@ -1,0 +1,14 @@
+diff --git a/node_modules/react-native-thermal-receipt-printer/dist/index.js b/node_modules/react-native-thermal-receipt-printer/dist/index.js
+index 8181db7..bb4a75f 100644
+--- a/node_modules/react-native-thermal-receipt-printer/dist/index.js
++++ b/node_modules/react-native-thermal-receipt-printer/dist/index.js
+@@ -186,6 +186,9 @@ export var NetPrinter = {
+         }
+     },
+ };
++if (RNNetPrinter && typeof RNNetPrinter.removeListeners !== "function") {
++    RNNetPrinter.removeListeners = function () { };
++}
+ export var NetPrinterEventEmitter = new NativeEventEmitter(RNNetPrinter);
+ export var RN_THERMAL_RECEIPT_PRINTER_EVENTS;
+ (function (RN_THERMAL_RECEIPT_PRINTER_EVENTS) {

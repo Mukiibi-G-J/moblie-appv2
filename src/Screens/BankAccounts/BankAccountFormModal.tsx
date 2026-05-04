@@ -10,7 +10,8 @@ import {
   ScrollView,
   Alert,
 } from 'react-native';
-import {COLORS, FONTS, SIZES} from '../../constants';
+import {QuickIconPressable} from '../../Components';
+import {COLORS, FONTS, SIZES, ICON_BUTTON_HIT_SLOP} from '../../constants';
 import {BankAccount} from '../../@types/bankAccount';
 import {BankAccountServices} from '../../services/BankAccountServices';
 import Toast from 'react-native-toast-message';
@@ -162,9 +163,13 @@ const BankAccountFormModal: React.FC<Props> = ({
         <View style={styles.modal}>
           <View style={styles.header}>
             <Text style={styles.title}>{isEdit ? 'Edit Bank Account' : 'Create Bank Account'}</Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+            <QuickIconPressable
+              onPress={onClose}
+              style={styles.closeBtn}
+              hitSlop={ICON_BUTTON_HIT_SLOP}
+              accessibilityLabel="Close">
               <Text style={styles.closeText}>✕</Text>
-            </TouchableOpacity>
+            </QuickIconPressable>
           </View>
           <ScrollView style={{maxHeight: '80%'}}>
             {renderInput(

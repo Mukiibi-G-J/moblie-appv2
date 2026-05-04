@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import {useNavigation} from '@react-navigation/native';
+import {safeGoBack} from '../../hooks/NavigationService';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import ReactNativeModal from 'react-native-modal';
 import {Expense} from '../../@types/expense';
@@ -25,6 +26,7 @@ import {COLORS, FONTS, SIZES} from '../../constants';
 import icons from '../../constants/icons';
 import {usePermissions} from '../../hooks/usePermissions';
 import {PAGE_NAMES} from '../../constants/pageNames';
+import {QuickIconPressable} from '../../Components';
 import {useTheme} from '../../context/ThemeContext';
 
 type DateFilter = 'today' | 'last7days' | 'last30days' | 'last3months' | 'alltime';
@@ -367,6 +369,10 @@ const ExpenseHistory = () => {
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => setShowFilters(false)}
+              activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}
+              hitSlop={ICON_BUTTON_HIT_SLOP}
+              accessibilityRole="button"
+              accessibilityLabel="Close filters"
               style={[styles.bottomSheetCloseButton, t.sheetCloseBtn]}>
               <Text style={[styles.bottomSheetCloseText, t.sheetCloseText]}>✕</Text>
             </TouchableOpacity>
@@ -460,12 +466,12 @@ const ExpenseHistory = () => {
         },
         t.headerBorder,
       ]}>
-      <TouchableOpacity
+      <QuickIconPressable
         style={[styles.headerRoundButton, t.headerRoundButton]}
-        onPress={() => navigation.goBack()}
-        activeOpacity={0.7}>
+        onPress={() => safeGoBack(navigation, 'Home')}
+        accessibilityLabel="Go back">
         <Image source={icons.back as any} style={[styles.headerRoundIcon, t.headerRoundIcon]} />
-      </TouchableOpacity>
+      </QuickIconPressable>
       <Text style={[styles.topTitle, t.topTitle]}>Expense History</Text>
       <View style={styles.headerTrailingSpacer} />
     </View>

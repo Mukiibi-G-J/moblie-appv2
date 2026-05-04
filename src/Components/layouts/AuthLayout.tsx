@@ -3,17 +3,17 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   KeyboardAvoidingView,
   Platform,
   Image,
   ScrollView,
   ViewStyle,
-  TouchableOpacity,
 } from 'react-native';
+import {SafeAreaView} from 'react-native-safe-area-context';
 import {images, icons} from '../../constants';
 import {authOnboarding} from '../../design-system/authOnboardingTokens';
 import {useTheme} from '../../context/ThemeContext';
+import {QuickIconPressable} from '../QuickIconPressable';
 
 interface AuthLayoutProps {
   /** Main heading (e.g. "Sign in") — flat layout, reference-style */
@@ -51,7 +51,10 @@ const AuthLayout = ({
     subtitle !== '' &&
     !(typeof subtitle === 'string' && subtitle.trim() === '');
   return (
-    <SafeAreaView style={[styles.container, {backgroundColor: colors.background}]}>
+    <SafeAreaView
+      style={[styles.container, {backgroundColor: colors.background}]}
+      edges={['top', 'left', 'right']}
+    >
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.keyboardView}>
@@ -63,13 +66,12 @@ const AuthLayout = ({
               <View style={styles.topBar}>
                 <View style={styles.topBarLeft}>
                   {showBackButton && onBackPress ? (
-                    <TouchableOpacity
+                    <QuickIconPressable
                       onPress={onBackPress}
                       style={[
                         styles.backCircle,
                         {backgroundColor: colors.backButtonBg},
                       ]}
-                      accessibilityRole="button"
                       accessibilityLabel="Go back"
                       hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
                       <Image
@@ -77,7 +79,7 @@ const AuthLayout = ({
                         style={[styles.backIcon, {tintColor: colors.textPrimary}]}
                         resizeMode="contain"
                       />
-                    </TouchableOpacity>
+                    </QuickIconPressable>
                   ) : (
                     <View style={styles.backPlaceholder} />
                   )}
@@ -136,7 +138,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    paddingTop: authOnboarding.spacing.lg,
+    paddingTop: authOnboarding.spacing.xl + authOnboarding.spacing.sm,
     paddingBottom: authOnboarding.screenPadding.vertical,
   },
   body: {

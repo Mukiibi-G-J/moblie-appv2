@@ -6,8 +6,10 @@ import {
   SalesPostData,
   SalesInvoiceData,
 } from '../@types/types.dto';
+import {AxiosResponse} from 'axios';
 import {axiosInstance, createAxiosInstance} from '../axios/axios';
 import {Item} from '../Screens/Items/Items';
+import type {AxiosRequestConfig} from 'axios';
 
 // New function to search for items
 export const searchItems = async (searchQuery: string): Promise<CartItem[]> => {
@@ -24,6 +26,153 @@ export const searchItems = async (searchQuery: string): Promise<CartItem[]> => {
   } catch (error) {
     throw error; // Handle errors
   }
+};
+
+/** Item row from GET /api/items/?no= — used for purchase line tracking specs. */
+export type ItemDetailByNo = {
+  id: number;
+  no: string;
+  item_name: string;
+  tracking_code?: {
+    system_id?: string;
+    code?: string;
+    description?: string;
+    require_serial_no?: boolean;
+    require_lot_no?: boolean;
+    require_expiry_date?: boolean;
+  } | null;
+};
+
+export const fetchItemByNo = async (
+  itemNo: string,
+): Promise<ItemDetailByNo | null> => {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant) || undefined;
+  const response = await axiosInstance.get('/api/items/', {
+    params: {no: itemNo},
+  });
+  const results = response?.data?.results;
+  if (!Array.isArray(results) || results.length === 0) {
+    return null;
+  }
+  const row = results[0];
+  const id = row.id ?? row.item_id;
+  if (id == null) {
+    return null;
+  }
+  let tracking = row.tracking_code ?? null;
+  if (Array.isArray(tracking)) {
+    tracking = tracking.length > 0 ? tracking[0] : null;
+  }
+  return {
+    id: Number(id),
+    no: row.no ?? itemNo,
+    item_name: row.item_name ?? '',
+    tracking_code: tracking,
+  };
+};
+
+export type PurchaseTrackingSpecification = {
+  id?: number;
+  serial_no?: string | null;
+  lot_no?: string | null;
+  expiry_date?: string | null;
+  quantity_base?: number;
+  description?: string;
+  item?: number;
+  purchase_invoice?: number;
+  purchase_invoice_line?: number;
+};
+
+export type PurchaseTrackingSummary = {
+  expected_quantity: number;
+  total_quantity: number;
+  remaining_quantity: number;
+  specifications_count: number;
+};
+
+export const getPurchaseLineTrackingSpecifications = async (
+  purchaseInvoiceLineId: number,
+): Promise<PurchaseTrackingSpecification[]> => {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant) || undefined;
+  const {data} = await axiosInstance.get('/api/tracking-specifications/', {
+    params: {purchase_invoice_line: purchaseInvoiceLineId},
+  });
+  if (Array.isArray(data)) {
+    return data;
+  }
+  if (data?.results && Array.isArray(data.results)) {
+    return data.results;
+  }
+  return [];
+};
+
+export const getPurchaseLineTrackingSummary = async (
+  lineId: number,
+): Promise<PurchaseTrackingSummary | null> => {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant) || undefined;
+  const {data} = await axiosInstance.get(
+    `/api/tracking-specifications/summary/${lineId}/`,
+    {params: {context_type: 'purchase'}},
+  );
+  return data ?? null;
+};
+
+export const createPurchaseTrackingSpecification = async (
+  payload: Record<string, unknown>,
+): Promise<PurchaseTrackingSpecification> => {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant) || undefined;
+  const {data} = await axiosInstance.post(
+    '/api/tracking-specifications/',
+    payload,
+  );
+  return data;
+};
+
+export const updatePurchaseTrackingSpecification = async (
+  id: number,
+  payload: Record<string, unknown>,
+): Promise<PurchaseTrackingSpecification> => {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant) || undefined;
+  const {data} = await axiosInstance.put(
+    `/api/tracking-specifications/${id}/`,
+    payload,
+  );
+  return data;
+};
+
+export const deletePurchaseTrackingSpecification = async (
+  id: number,
+): Promise<void> => {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant) || undefined;
+  await axiosInstance.delete(`/api/tracking-specifications/${id}/`);
+};
+
+export type LotCheckResponse = {
+  exists?: boolean;
+  expiry_date?: string;
+  remaining_quantity?: number;
+  location?: string;
+};
+
+export const checkPurchaseTrackingLot = async (
+  lotNo: string,
+  itemId: number | string,
+): Promise<LotCheckResponse> => {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant) || undefined;
+  const {data} = await axiosInstance.get(
+    '/api/tracking-specifications/check_lot/',
+    {
+      params: {lot_no: lotNo, item: itemId},
+    },
+  );
+  return data ?? {};
 };
 
 /** Single page from item ledger API (lot / remaining qty for sales tracking). */
@@ -171,6 +320,120 @@ export const upsertPurchase = async (purchaseData: {
   }
 };
 
+/** PUR-YYYYMMDD-######. With invoice_no, backend also saves on that purchase; without, preview only (form / before create). */
+export const generatePurchaseVendorInvoiceNo = async (payload: {
+  system_id?: string;
+  invoice_no?: string;
+}): Promise<{ vendor_invoice_no: string }> => {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant) || undefined;
+  const body: Record<string, string> = {
+    system_id: payload.system_id ?? '',
+  };
+  const inv = payload.invoice_no?.trim();
+  if (inv) {
+    body.invoice_no = inv;
+  }
+  const response = await axiosInstance.post(
+    '/api/purchases/generate-invoice-no/',
+    body,
+  );
+  return response.data;
+};
+
+/** Same resource as web `POST/GET /api/document-attachments/`. */
+export type DocumentAttachmentDto = {
+  id: number;
+  system_id: string;
+  content_type?: number;
+  object_id?: number;
+  entity?: string;
+  /** Set when entity is a purchase invoice (mirrors web payloads). */
+  purchase_invoice?: number | null;
+  file_url: string | null;
+  original_name: string;
+  created_at: string;
+};
+
+export type PurchaseInvoiceAttachmentDto = DocumentAttachmentDto;
+
+function normalizeDrfList<T>(data: unknown): T[] {
+  if (Array.isArray(data)) {
+    return data as T[];
+  }
+  if (
+    data &&
+    typeof data === 'object' &&
+    'results' in data &&
+    Array.isArray((data as {results: unknown}).results)
+  ) {
+    return (data as {results: T[]}).results;
+  }
+  return [];
+}
+
+const PURCHASE_INVOICE_ENTITY = 'purchases.purchaseinvoice';
+
+export const fetchDocumentAttachments = async (params: {
+  object_id: number | string;
+  entity?: string;
+}): Promise<DocumentAttachmentDto[]> => {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant) || undefined;
+  const response = await axiosInstance.get('/api/document-attachments/', {
+    params: {
+      object_id: params.object_id,
+      entity: params.entity ?? PURCHASE_INVOICE_ENTITY,
+    },
+  });
+  return normalizeDrfList<DocumentAttachmentDto>(response.data);
+};
+
+export const fetchPurchaseAttachments = async (
+  purchaseInvoiceId: number | string,
+): Promise<PurchaseInvoiceAttachmentDto[]> => {
+  return fetchDocumentAttachments({
+    object_id: purchaseInvoiceId,
+    entity: PURCHASE_INVOICE_ENTITY,
+  });
+};
+
+export const uploadPurchaseAttachment = async (
+  purchaseInvoiceId: number | string,
+  fileUri: string,
+  fileName: string,
+  mimeType: string,
+): Promise<PurchaseInvoiceAttachmentDto> => {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant) || undefined;
+  const formData = new FormData();
+  formData.append('entity', PURCHASE_INVOICE_ENTITY);
+  formData.append('purchase_invoice', String(purchaseInvoiceId));
+  formData.append('file', {
+    uri: fileUri,
+    type: mimeType || 'application/octet-stream',
+    name: fileName || 'attachment',
+  } as any);
+  const response = await axiosInstance.post(
+    '/api/document-attachments/',
+    formData,
+    {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    },
+  );
+  return response.data as PurchaseInvoiceAttachmentDto;
+};
+
+export const deletePurchaseAttachment = async (
+  attachmentId: number | string,
+): Promise<void> => {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant) || undefined;
+  await axiosInstance.delete(`/api/document-attachments/${attachmentId}/`);
+};
+
 // Update purchase lines
 export const updatePurchaseLines = async (
   purchaseId: number | string,
@@ -243,6 +506,8 @@ export type SalesHistoryListFilters = {
   page?: number;
   pageSize?: number;
   search?: string;
+  /** When set, GET /api/sales/?user=… filters to that ledger user (Sales History own-sales mode). */
+  user?: number;
 };
 
 function buildSalesHistoryQueryParams(
@@ -266,6 +531,9 @@ function buildSalesHistoryQueryParams(
   if (filters?.search) {
     params.search = filters.search;
   }
+  if (filters?.user != null && Number.isFinite(filters.user)) {
+    params.user = filters.user;
+  }
   if (!options?.omitPagination) {
     if (filters?.page) {
       params.page = filters.page;
@@ -277,6 +545,35 @@ function buildSalesHistoryQueryParams(
 
   return params;
 }
+
+/** Fields used from GET /api/user-setup/my-setup/ (UserSetupSerializer). */
+export type MyUserSetupLite = {
+  canViewOnlyTheirSales?: boolean;
+};
+
+/**
+ * Current user's setup (web parity: UserSetupService.getMySetup).
+ * Returns null on error; callers should default restrict-to-own-sales to true.
+ */
+export const fetchMyUserSetup = async (): Promise<MyUserSetupLite | null> => {
+  try {
+    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+    const axiosInstance = createAxiosInstance(tenant) || undefined;
+    const response = await axiosInstance.get('/api/user-setup/my-setup/');
+    const d = response.data;
+    if (!d || typeof d !== 'object') {
+      return null;
+    }
+    const v = d.canViewOnlyTheirSales;
+    return {
+      canViewOnlyTheirSales:
+        typeof v === 'boolean' ? v : undefined,
+    };
+  } catch (e) {
+    console.warn('fetchMyUserSetup: unavailable', e);
+    return null;
+  }
+};
 
 export type SalesHistorySummary = {
   total_sales: number;
@@ -352,7 +649,10 @@ export const fetchSalesUserSummary = async (
 
 // New function to fetch sales data
 // Matches the web frontend implementation in SalesHistory.tsx
-export const fetchSalesData = async (filters?: SalesHistoryListFilters) => {
+export const fetchSalesData = async (
+  filters?: SalesHistoryListFilters,
+  requestConfig?: AxiosRequestConfig,
+) => {
   try {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
     const axiosInstance = createAxiosInstance(tenant) || undefined;
@@ -360,7 +660,10 @@ export const fetchSalesData = async (filters?: SalesHistoryListFilters) => {
     const params = buildSalesHistoryQueryParams(filters);
 
     console.log('fetchSalesData: Making API call with params:', params);
-    const response = await axiosInstance.get('/api/sales/', {params});
+    const response = await axiosInstance.get('/api/sales/', {
+      params,
+      ...(requestConfig ?? {}),
+    });
     console.log('fetchSalesData: API response:', {
       status: response.status,
       hasData: !!response.data,
@@ -405,6 +708,25 @@ export const fetchSalesData = async (filters?: SalesHistoryListFilters) => {
     });
     throw error;
   }
+};
+
+/**
+ * Branch helpers (web parity):
+ * - null => "All branches" (X-Branch-Scope: all, plus branch=all param when supported)
+ * - number => specific branch id (X-Branch-Id)
+ * - undefined => not initialised; omit overrides so global X-Branch-Id applies
+ */
+const branchParam = (b: number | null | undefined): string | number | undefined => {
+  if (b === null) return 'all';
+  return b ?? undefined;
+};
+
+const branchRequestConfig = (
+  b: number | null | undefined,
+): AxiosRequestConfig | undefined => {
+  if (b === null) return {headers: {'X-Branch-Scope': 'all'}};
+  if (typeof b === 'number') return {headers: {'X-Branch-Id': String(b)}};
+  return undefined;
 };
 
 export const createSales = async (salesData: SalesPostData[]) => {
@@ -678,14 +1000,20 @@ export const deleteItemCategory = async (code: string): Promise<void> => {
   }
 };
 
-export const fetchDailyProfitReport = async (date?: string) => {
+export const fetchDailyProfitReport = async (
+  date?: string,
+  branch?: number | null,
+  requestConfig?: AxiosRequestConfig,
+) => {
   try {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
     const axiosInstance = createAxiosInstance(tenant) || undefined;
     const response = await axiosInstance.get('/api/reports/daily-profit/', {
       params: {
         date,
+        branch: branchParam(branch),
       },
+      ...(requestConfig ?? branchRequestConfig(branch) ?? {}),
     });
     return response?.data;
   } catch (error) {
@@ -697,6 +1025,8 @@ export const fetchDailyProfitReport = async (date?: string) => {
 export const fetchWeeklySummaryReport = async (params?: {
   startDate?: string;
   endDate?: string;
+  branch?: number | null;
+  requestConfig?: AxiosRequestConfig;
 }) => {
   try {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
@@ -705,7 +1035,9 @@ export const fetchWeeklySummaryReport = async (params?: {
       params: {
         start_date: params?.startDate,
         end_date: params?.endDate,
+        branch: branchParam(params?.branch),
       },
+      ...(params?.requestConfig ?? branchRequestConfig(params?.branch) ?? {}),
     });
     return response?.data;
   } catch (error) {
@@ -714,14 +1046,20 @@ export const fetchWeeklySummaryReport = async (params?: {
   }
 };
 
-export const fetchMonthlySummaryReport = async (month?: string) => {
+export const fetchMonthlySummaryReport = async (
+  month?: string,
+  branch?: number | null,
+  requestConfig?: AxiosRequestConfig,
+) => {
   try {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
     const axiosInstance = createAxiosInstance(tenant) || undefined;
     const response = await axiosInstance.get('/api/reports/monthly-summary/', {
       params: {
         month,
+        branch: branchParam(branch),
       },
+      ...(requestConfig ?? branchRequestConfig(branch) ?? {}),
     });
     return response?.data;
   } catch (error) {
@@ -735,6 +1073,8 @@ export const fetchProductProfitabilityReport = async (params?: {
   endDate?: string;
   category?: string;
   productType?: string;
+  branch?: number | null;
+  requestConfig?: AxiosRequestConfig;
 }) => {
   try {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
@@ -747,7 +1087,9 @@ export const fetchProductProfitabilityReport = async (params?: {
           end_date: params?.endDate,
           category: params?.category,
           product_type: params?.productType,
+          branch: branchParam(params?.branch),
         },
+        ...(params?.requestConfig ?? branchRequestConfig(params?.branch) ?? {}),
       },
     );
     return response?.data;
@@ -760,6 +1102,8 @@ export const fetchProductProfitabilityReport = async (params?: {
 export const fetchExpenseBreakdownReport = async (params?: {
   startDate?: string;
   endDate?: string;
+  branch?: number | null;
+  requestConfig?: AxiosRequestConfig;
 }) => {
   try {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
@@ -770,7 +1114,9 @@ export const fetchExpenseBreakdownReport = async (params?: {
         params: {
           start_date: params?.startDate,
           end_date: params?.endDate,
+          branch: branchParam(params?.branch),
         },
+        ...(params?.requestConfig ?? branchRequestConfig(params?.branch) ?? {}),
       },
     );
     return response?.data;
@@ -806,6 +1152,8 @@ export const exportReportPdfFromApi = async (
 export const fetchProfitLossStatement = async (params?: {
   startDate?: string;
   endDate?: string;
+  branch?: number | null;
+  requestConfig?: AxiosRequestConfig;
 }) => {
   try {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
@@ -819,9 +1167,13 @@ export const fetchProfitLossStatement = async (params?: {
     if (ed) {
       query.end_date = ed;
     }
+    const bp = branchParam(params?.branch);
+    if (bp != null) {
+      query.branch = String(bp);
+    }
     const response = await axiosInstance.get(
       '/api/sales-dashboard/profit_loss_statement/',
-      {params: query},
+      {params: query, ...(params?.requestConfig ?? branchRequestConfig(params?.branch) ?? {})},
     );
     return response?.data;
   } catch (error) {
@@ -830,7 +1182,11 @@ export const fetchProfitLossStatement = async (params?: {
   }
 };
 
-export const fetchBalanceSheetReport = async (asOfDate?: string) => {
+export const fetchBalanceSheetReport = async (
+  asOfDate?: string,
+  branch?: number | null,
+  requestConfig?: AxiosRequestConfig,
+) => {
   try {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
     const axiosInstance = createAxiosInstance(tenant) || undefined;
@@ -839,9 +1195,13 @@ export const fetchBalanceSheetReport = async (asOfDate?: string) => {
     if (d) {
       query.as_of_date = d;
     }
+    const bp = branchParam(branch);
+    if (bp != null) {
+      query.branch = String(bp);
+    }
     const response = await axiosInstance.get(
       '/api/sales-dashboard/balance_sheet_report/',
-      {params: query},
+      {params: query, ...(requestConfig ?? branchRequestConfig(branch) ?? {})},
     );
     return response?.data;
   } catch (error) {
@@ -1021,12 +1381,32 @@ export const postItemJournalLines = async (
   return response.data;
 };
 
+/** Shape of `company` from GET /api/sales/company-info/ (see web zentro-backend sales/views get_company_info). */
+export type TenantCompanyApi = {
+  name: string;
+  logo: string | null;
+  address: string;
+  phone: string;
+  email: string;
+  city?: string | null;
+  country?: string | null;
+  tin: string;
+};
+
+export type CompanyInfoApiResponse = {
+  company: TenantCompanyApi;
+};
+
 // Get company information
-export const getCompanyInfo = async () => {
+export const getCompanyInfo = async (): Promise<
+  AxiosResponse<CompanyInfoApiResponse>
+> => {
   try {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
     const axiosInstance = createAxiosInstance(tenant) || undefined;
-    const response = await axiosInstance.get('/api/sales/company-info/');
+    const response = await axiosInstance.get<CompanyInfoApiResponse>(
+      '/api/sales/company-info/',
+    );
     return response;
   } catch (error: any) {
     console.error('Error fetching company info:', error);
@@ -1310,22 +1690,35 @@ export const fetchKPIMetrics = async (): Promise<KPIMetrics | null> => {
   }
 };
 
+export type RecentTransactionsFetchOptions = {
+  /** Same as Sales History own-sales filter (?user=). */
+  userId?: number;
+};
+
 /**
- * Fetch recent sales transactions
+ * Recent posted sales for Home (DRF pagination: page_size, not limit).
  */
-export const fetchRecentTransactions = async (limit: number = 10) => {
+export const fetchRecentTransactions = async (
+  pageSize: number = 10,
+  options?: RecentTransactionsFetchOptions,
+) => {
   try {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
     const api = createAxiosInstance(tenant) || axiosInstance;
-    
-    const response = await api.get('/api/sales/', {
-      params: {
-        limit,
-        ordering: '-created_at',
-        status: 'Posted',
-      },
-    });
-    
+
+    const params: Record<string, string | number> = {
+      page: 1,
+      page_size: pageSize,
+      ordering: '-created_at',
+      status: 'Posted',
+    };
+    const uid = options?.userId;
+    if (uid != null && Number.isFinite(uid)) {
+      params.user = uid;
+    }
+
+    const response = await api.get('/api/sales/', {params});
+
     if (response?.data?.results && Array.isArray(response.data.results)) {
       return response.data.results;
     }

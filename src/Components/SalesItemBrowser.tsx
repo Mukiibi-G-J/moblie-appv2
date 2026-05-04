@@ -16,7 +16,15 @@ import {
   View,
 } from 'react-native';
 import Toast from 'react-native-toast-message';
-import {COLORS, FONTS, SIZES, icons} from '../constants';
+import {
+  COLORS,
+  FONTS,
+  SIZES,
+  icons,
+  ICON_BUTTON_HIT_SLOP,
+  ICON_BUTTON_QUICK_PRESS,
+} from '../constants';
+import {QuickIconPressable} from './QuickIconPressable';
 import {
   fetchCategories,
   fetchItems,
@@ -51,6 +59,24 @@ type PaginatedItemsResponse = {
   next?: string | null;
   results?: CartItem[];
 };
+
+type LibraryPosItemRowProps = {
+  item: CartItem;
+  isRecentlyAdded: boolean;
+  isOutOfStock: boolean;
+  onAdd: (item: CartItem) => void;
+  theme: {
+    listRow: object;
+    disabledRow: object;
+    rowSub: object;
+    rowSubDis: object;
+  };
+};
+
+/** Assigned after `styles` (below) so the row can use shared `StyleSheet` styles. */
+let LibraryPosItemRow: React.MemoExoticComponent<
+  React.FC<LibraryPosItemRowProps>
+>;
 
 type Props = {
   onAddItem: (item: CartItem) => void;
@@ -223,6 +249,19 @@ const SalesItemBrowser: React.FC<Props> = ({
     [colors, isDark],
   );
 
+  const libraryRowTheme = useMemo(
+    () => ({
+      listRow: bt.listRow,
+      disabledRow: bt.disabledRow,
+      rowSub: bt.rowSub,
+      rowSubDis: bt.rowSubDis,
+    }),
+    [bt],
+  );
+
+  const recentlyAddedIdsRef = useRef(recentlyAddedIds);
+  recentlyAddedIdsRef.current = recentlyAddedIds;
+
   const recentViewedItems = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
 
@@ -369,6 +408,19 @@ const SalesItemBrowser: React.FC<Props> = ({
     void loadCategories();
     void loadItems(1, true);
   }, [loadCategories, loadItems]);
+
+  const handleCategoryPress = useCallback(
+    (category: SalesCategory) => {
+      setSelectedCategoryId(category.id);
+      setTimeout(() => {
+        libraryListRef.current?.scrollToOffset({
+          offset: categories.length * 74 + 28,
+          animated: true,
+        });
+      }, 120);
+    },
+    [categories.length],
+  );
 
   useEffect(() => {
     loadCategories();
@@ -585,50 +637,88 @@ const SalesItemBrowser: React.FC<Props> = ({
     [favoriteSlots, openAddFavoriteModal, removeFavoriteAt],
   );
 
-  const handleAddItem = (item: CartItem) => {
-    if ((Number(item.inventory) || 0) <= 0) {
-      return;
-    }
-
-    const hadSearchPanelOpen = isSearchPanelVisible;
-
-    // Commit cart update in its own task so the sale line appears before browser UI work.
-    onAddItem(item);
-
-    setTimeout(() => {
-      if (hadSearchPanelOpen) {
-        skipNextLibraryFetchRef.current = true;
-      }
-      setPendingSearchItem(null);
-      setRecentlyViewedIds(previous =>
-        [item.system_id, ...previous.filter(id => id !== item.system_id)].slice(
-          0,
-          12,
-        ),
-      );
-      setIsSearchPanelVisible(false);
-      setSearchQuery('');
-      Keyboard.dismiss();
-
-      if (addedTimeoutsRef.current[item.system_id]) {
-        clearTimeout(addedTimeoutsRef.current[item.system_id]);
+  const handleAddItem = useCallback(
+    (item: CartItem) => {
+      if ((Number(item.inventory) || 0) <= 0) {
+        return;
       }
 
-      setRecentlyAddedIds(previous => ({
-        ...previous,
-        [item.system_id]: true,
-      }));
+      const hadSearchPanelOpen = isSearchPanelVisible;
 
-      addedTimeoutsRef.current[item.system_id] = setTimeout(() => {
-        setRecentlyAddedIds(previous => {
-          const next = {...previous};
-          delete next[item.system_id];
-          return next;
-        });
-        delete addedTimeoutsRef.current[item.system_id];
-      }, 1400);
-    }, 0);
-  };
+      onAddItem(item);
+
+      setTimeout(() => {
+        if (hadSearchPanelOpen) {
+          skipNextLibraryFetchRef.current = true;
+        }
+        setPendingSearchItem(null);
+        setRecentlyViewedIds(previous =>
+          [item.system_id, ...previous.filter(id => id !== item.system_id)].slice(
+            0,
+            12,
+          ),
+        );
+        setIsSearchPanelVisible(false);
+        setSearchQuery('');
+        Keyboard.dismiss();
+
+        if (addedTimeoutsRef.current[item.system_id]) {
+          clearTimeout(addedTimeoutsRef.current[item.system_id]);
+        }
+
+        setRecentlyAddedIds(previous => ({
+          ...previous,
+          [item.system_id]: true,
+        }));
+
+        addedTimeoutsRef.current[item.system_id] = setTimeout(() => {
+          setRecentlyAddedIds(previous => {
+            const next = {...previous};
+            delete next[item.system_id];
+            return next;
+          });
+          delete addedTimeoutsRef.current[item.system_id];
+        }, 1400);
+      }, 0);
+    },
+    [onAddItem, isSearchPanelVisible],
+  );
+
+  const renderLibraryItemRow = useCallback(
+    ({item}: {item: CartItem}) => (
+      <LibraryPosItemRow
+        item={item}
+        isRecentlyAdded={Boolean(recentlyAddedIdsRef.current[item.system_id])}
+        isOutOfStock={(Number(item.inventory) || 0) <= 0}
+        onAdd={handleAddItem}
+        theme={libraryRowTheme}
+      />
+    ),
+    [handleAddItem, libraryRowTheme],
+  );
+
+  const libraryListHeader = useMemo(
+    () => (
+      <PosLibraryListHeader
+        categories={categories}
+        categoriesLoadError={categoriesLoadError}
+        selectedCategory={selectedCategory}
+        selectedCategoryId={selectedCategoryId}
+        bt={bt}
+        onRetry={handleRetryLibrary}
+        onCategoryPress={handleCategoryPress}
+      />
+    ),
+    [
+      categories,
+      categoriesLoadError,
+      selectedCategory,
+      selectedCategoryId,
+      bt,
+      handleRetryLibrary,
+      handleCategoryPress,
+    ],
+  );
 
   const onSearchChangeText = (text: string) => {
     setSearchQuery(text);
@@ -681,11 +771,16 @@ const SalesItemBrowser: React.FC<Props> = ({
     const isActive = activeTab === tab.id;
 
     return (
-      <TouchableOpacity
+      <Pressable
         key={tab.id}
-        style={[styles.tabButton, isActive && styles.tabButtonActive, isActive && bt.tabActive]}
+        {...ICON_BUTTON_QUICK_PRESS}
         onPress={() => setActiveTab(tab.id)}
-        activeOpacity={0.8}>
+        style={({pressed}) => [
+          styles.tabButton,
+          isActive && styles.tabButtonActive,
+          isActive && bt.tabActive,
+          pressed && {opacity: isActive ? 0.92 : 0.82},
+        ]}>
         <Text
           style={[
             styles.tabButtonText,
@@ -695,7 +790,7 @@ const SalesItemBrowser: React.FC<Props> = ({
           ]}>
           {tab.label}
         </Text>
-      </TouchableOpacity>
+      </Pressable>
     );
   };
 
@@ -709,7 +804,7 @@ const SalesItemBrowser: React.FC<Props> = ({
           isSearchPanelVisible && bt.searchWrapActive,
         ]}>
         {isSearchPanelVisible ? (
-          <TouchableOpacity
+          <QuickIconPressable
             onPress={() => {
               setSearchQuery('');
               setPendingSearchItem(null);
@@ -717,9 +812,10 @@ const SalesItemBrowser: React.FC<Props> = ({
               Keyboard.dismiss();
             }}
             style={styles.searchBackButton}
-            activeOpacity={0.75}>
+            hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
+            accessibilityLabel="Close search">
             <Image source={icons.back} style={[styles.searchBackIcon, bt.searchBackIcon]} />
-          </TouchableOpacity>
+          </QuickIconPressable>
         ) : (
           <Image source={icons.search} style={[styles.searchIcon, bt.searchIcon]} />
         )}
@@ -729,16 +825,16 @@ const SalesItemBrowser: React.FC<Props> = ({
               <Text style={[styles.searchBarFilterChipText, bt.barFilterChipText]} numberOfLines={1}>
                 {searchFilterChipLabel}
               </Text>
-              <TouchableOpacity
+              <QuickIconPressable
                 onPress={() => setSelectedSearchFilter('items')}
                 style={styles.searchBarFilterChipRemove}
                 hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
-                activeOpacity={0.65}>
+                accessibilityLabel="Clear search filter">
                 <Image
                   source={icons.cross}
                   style={[styles.searchBarFilterChipRemoveIcon, bt.barFilterRemove]}
                 />
-              </TouchableOpacity>
+              </QuickIconPressable>
             </View>
           ) : null}
           <TextInput
@@ -766,16 +862,16 @@ const SalesItemBrowser: React.FC<Props> = ({
           />
         </View>
         {searchQuery.length > 0 && Platform.OS === 'android' ? (
-          <TouchableOpacity
+          <QuickIconPressable
             onPress={() => {
               setSearchQuery('');
               setPendingSearchItem(null);
             }}
             style={styles.searchClearButton}
             hitSlop={{top: 10, bottom: 10, left: 8, right: 8}}
-            activeOpacity={0.7}>
+            accessibilityLabel="Clear search">
             <Image source={icons.cross} style={[styles.searchClearIcon, bt.searchClearIcon]} />
-          </TouchableOpacity>
+          </QuickIconPressable>
         ) : null}
       </View>
 
@@ -950,6 +1046,7 @@ const SalesItemBrowser: React.FC<Props> = ({
 
     return (
       <FlatList
+        style={styles.libraryList}
         data={items}
         extraData={pendingSearchItem}
         keyExtractor={it => it.system_id}
@@ -980,96 +1077,6 @@ const SalesItemBrowser: React.FC<Props> = ({
     );
   };
 
-  const renderCategoryRow = ({item}: {item: SalesCategory}) => (
-    <TouchableOpacity
-      style={[
-        styles.listRow,
-        bt.listRow,
-        String(selectedCategoryId) === String(item.id) && styles.selectedListRow,
-        String(selectedCategoryId) === String(item.id) && bt.selectedRow,
-      ]}
-      onPress={() => {
-        setSelectedCategoryId(item.id);
-        setTimeout(() => {
-          libraryListRef.current?.scrollToOffset({
-            offset: categories.length * 74 + 28,
-            animated: true,
-          });
-        }, 120);
-      }}
-      activeOpacity={0.75}>
-      <View style={styles.initialsTile}>
-        <Text style={styles.initialsText}>{item.initials}</Text>
-      </View>
-
-      <View style={styles.rowContent}>
-        <Text style={styles.rowTitle}>{item.name}</Text>
-        <Text style={[styles.rowSubtitle, bt.rowSub]}>
-          {String(selectedCategoryId) === String(item.id)
-            ? 'Showing items below'
-            : 'Tap to browse items'}
-        </Text>
-      </View>
-
-      <Image source={icons.down_arrow} style={styles.rowChevron} />
-    </TouchableOpacity>
-  );
-
-  const renderItemRow = ({item}: {item: CartItem}) => {
-    const isRecentlyAdded = Boolean(recentlyAddedIds[item.system_id]);
-    const isOutOfStock = (Number(item.inventory) || 0) <= 0;
-    const initials = getInitials(item.item_name || 'IT') || 'IT';
-
-    return (
-      <TouchableOpacity
-        style={[
-          styles.listRow,
-          bt.listRow,
-          isOutOfStock && styles.disabledListRow,
-          isOutOfStock && bt.disabledRow,
-        ]}
-        onPress={() => handleAddItem(item)}
-        activeOpacity={isOutOfStock ? 1 : 0.75}
-        disabled={isOutOfStock}>
-        <View style={[styles.initialsTile, isOutOfStock && styles.disabledInitialsTile]}>
-          <Text style={styles.initialsText}>{initials}</Text>
-        </View>
-
-        <View style={styles.rowContent}>
-          <Text
-            style={[styles.rowTitle, isOutOfStock && styles.disabledRowTitle]}
-            numberOfLines={1}>
-            {item.item_name}
-          </Text>
-          <Text
-            style={[
-              styles.rowSubtitle,
-              bt.rowSub,
-              isOutOfStock && styles.disabledRowSubtitle,
-              isOutOfStock && bt.rowSubDis,
-            ]}
-            numberOfLines={1}>
-            {isOutOfStock
-              ? 'Out of stock'
-              : `Stock ${item.inventory ?? 0}${
-                  item.unit_of_measure ? ` • ${item.unit_of_measure}` : ''
-                }`}
-          </Text>
-        </View>
-
-        <View style={styles.rowRight}>
-          {isRecentlyAdded ? (
-            <Text style={styles.addedText}>Added</Text>
-          ) : isOutOfStock ? (
-            <Text style={styles.outOfStockText}>Unavailable</Text>
-          ) : (
-            <Text style={styles.rowAmount}>{formatMoney(item.unit_price)}</Text>
-          )}
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
   const renderLibrary = () => {
     if (loadingCategories && !categories.length) {
       return (
@@ -1083,47 +1090,21 @@ const SalesItemBrowser: React.FC<Props> = ({
     return (
       <FlatList
         ref={libraryListRef}
+        style={styles.libraryList}
         data={items}
         keyExtractor={item => item.system_id}
-        renderItem={renderItemRow}
+        renderItem={renderLibraryItemRow}
+        extraData={recentlyAddedIds}
+        initialNumToRender={12}
+        maxToRenderPerBatch={8}
+        windowSize={10}
+        updateCellsBatchingPeriod={50}
+        removeClippedSubviews={false}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.listContent}
-        ListHeaderComponent={
-          <View>
-            {categories.length ? (
-              <View>
-                {categories.map(category => (
-                  <View key={String(category.id)}>{renderCategoryRow({item: category})}</View>
-                ))}
-                <View style={[styles.librarySectionGap, bt.libraryGap]} />
-              </View>
-            ) : (
-              <View style={styles.stateWrap}>
-                <Text style={[styles.stateText, bt.stateText]}>
-                  {categoriesLoadError
-                    ? "Couldn't load categories."
-                    : 'No categories available.'}
-                </Text>
-                {categoriesLoadError ? (
-                  <TouchableOpacity
-                    style={styles.retryButton}
-                    onPress={handleRetryLibrary}
-                    activeOpacity={0.85}>
-                    <Text style={styles.retryButtonText}>Retry</Text>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-            )}
-
-            {selectedCategory ? (
-              <View style={[styles.libraryItemsHeader, bt.libHdr]}>
-                <Text style={styles.libraryItemsHeaderText}>
-                  {selectedCategory.name}
-                </Text>
-              </View>
-            ) : null}
-          </View>
-        }
+        ListHeaderComponent={libraryListHeader}
         onEndReached={() => {
           if (!loadingMore && hasNextPage) {
             loadItems(currentPage + 1, false);
@@ -1179,7 +1160,7 @@ const SalesItemBrowser: React.FC<Props> = ({
 
     return (
     <ScrollView
-      style={styles.favScroll}
+      style={styles.favScrollFill}
       contentContainerStyle={[
         styles.favScrollContent,
         hasAnyFavorite && styles.favScrollContentGridOnly,
@@ -1187,22 +1168,28 @@ const SalesItemBrowser: React.FC<Props> = ({
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}>
       {!hasAnyFavorite ? (
-        <View style={styles.favHero}>
+        <Pressable
+          {...ICON_BUTTON_QUICK_PRESS}
+          onPress={() => openAddFavoriteModal(0)}
+          accessibilityRole="button"
+          accessibilityLabel="Add your first favorite"
+          style={({pressed}) => [styles.favHero, pressed && styles.favHeroPressed]}>
           {renderFavoritesGridIcon()}
           <Text style={[styles.favTitle, {color: colors.textPrimary}]}>
             Arrange your favorites
           </Text>
           <Text style={[styles.favSubtitle, {color: colors.textSecondary}]}>
-            Tap an empty tile to add an item. Tap a saved item to add it to the sale. Press and hold a
-            saved item to replace or remove it.
+            Tap here or an empty tile to add an item. Tap a saved item to add it to the sale. Press and
+            hold a saved item to replace or remove it.
           </Text>
-        </View>
+        </Pressable>
       ) : null}
 
       <View style={styles.favGridWrap}>
         {favoriteSlots.map((cell, index) => (
           <Pressable
             key={`fav-slot-${index}`}
+            {...ICON_BUTTON_QUICK_PRESS}
             onPress={() => {
               if (cell) {
                 handleAddItem(cell);
@@ -1212,6 +1199,14 @@ const SalesItemBrowser: React.FC<Props> = ({
             }}
             onLongPress={cell ? () => handleFavoriteFilledSlotLongPress(index) : undefined}
             delayLongPress={cell ? 450 : undefined}
+            android_ripple={
+              Platform.OS === 'android'
+                ? {
+                    color: cell ? 'rgba(2, 134, 255, 0.22)' : 'rgba(0,0,0,0.08)',
+                    foreground: true,
+                  }
+                : undefined
+            }
             style={({pressed}) => [
               styles.favSlot,
               !cell && styles.favSlotEmptyLayout,
@@ -1222,7 +1217,7 @@ const SalesItemBrowser: React.FC<Props> = ({
                     ? 'rgba(2, 134, 255, 0.14)'
                     : COLORS.transparentPrimary2
                   : colors.inputBackground,
-                opacity: pressed ? 0.9 : 1,
+                opacity: pressed ? 0.88 : 1,
               },
             ]}>
             {cell ? (
@@ -1273,18 +1268,19 @@ const SalesItemBrowser: React.FC<Props> = ({
       }}>
       <View style={[styles.favModalRoot, {backgroundColor: colors.background}]}>
         <View style={[styles.favModalHeader, {borderBottomColor: colors.border}]}>
-          <TouchableOpacity
+          <QuickIconPressable
             onPress={() => {
               setAddFavoriteModalVisible(false);
               addFavoriteTargetSlotRef.current = null;
             }}
-            hitSlop={{top: 12, bottom: 12, left: 12, right: 12}}
+            hitSlop={ICON_BUTTON_HIT_SLOP}
+            accessibilityLabel="Close"
             style={styles.favModalClose}>
             <Image
               source={icons.cross}
               style={[styles.favModalCloseIcon, {tintColor: colors.textPrimary}]}
             />
-          </TouchableOpacity>
+          </QuickIconPressable>
           <Text style={[styles.favModalTitle, {color: colors.textPrimary}]}>
             Add to Favorites
           </Text>
@@ -1327,11 +1323,21 @@ const SalesItemBrowser: React.FC<Props> = ({
               const initials = getInitials(item.item_name || 'IT');
               const noStock = (Number(item.inventory) || 0) <= 0;
               return (
-                <TouchableOpacity
-                  style={[styles.favModalRow, {borderBottomColor: colors.border}]}
+                <Pressable
+                  {...ICON_BUTTON_QUICK_PRESS}
                   disabled={noStock}
-                  activeOpacity={0.75}
-                  onPress={() => assignFavoriteFromModal(item)}>
+                  onPress={() => assignFavoriteFromModal(item)}
+                  android_ripple={
+                    Platform.OS === 'android' && !noStock
+                      ? {color: 'rgba(0,0,0,0.1)'}
+                      : undefined
+                  }
+                  style={({pressed}) => [
+                    styles.favModalRow,
+                    {borderBottomColor: colors.border},
+                    noStock && styles.favModalRowDisabled,
+                    !noStock && pressed && styles.favModalRowPressed,
+                  ]}>
                   <View
                     style={[
                       styles.favModalRowTile,
@@ -1361,7 +1367,7 @@ const SalesItemBrowser: React.FC<Props> = ({
                     ]}>
                     {noStock ? 'Out of stock' : formatMoney(item.unit_price)}
                   </Text>
-                </TouchableOpacity>
+                </Pressable>
               );
             }}
             ListEmptyComponent={
@@ -1379,12 +1385,8 @@ const SalesItemBrowser: React.FC<Props> = ({
         )}
 
         <View style={[styles.favModalFooter, {borderTopColor: colors.border}]}>
-          <TouchableOpacity
-            style={[
-              styles.favModalFooterBtn,
-              {backgroundColor: colors.inputBackground},
-            ]}
-            activeOpacity={0.75}
+          <Pressable
+            {...ICON_BUTTON_QUICK_PRESS}
             onPress={() => {
               setAddFavoriteModalVisible(false);
               addFavoriteTargetSlotRef.current = null;
@@ -1398,17 +1400,23 @@ const SalesItemBrowser: React.FC<Props> = ({
                   visibilityTime: 2600,
                 });
               }
-            }}>
+            }}
+            android_ripple={
+              Platform.OS === 'android'
+                ? {color: 'rgba(0,0,0,0.08)', foreground: true}
+                : undefined
+            }
+            style={({pressed}) => [
+              styles.favModalFooterBtn,
+              {backgroundColor: colors.inputBackground},
+              pressed && styles.favModalFooterBtnPressed,
+            ]}>
             <Text style={[styles.favModalFooterBtnText, {color: colors.textPrimary}]}>
               Create an item
             </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.favModalFooterBtn,
-              {backgroundColor: colors.inputBackground},
-            ]}
-            activeOpacity={0.75}
+          </Pressable>
+          <Pressable
+            {...ICON_BUTTON_QUICK_PRESS}
             onPress={() => {
               Toast.show({
                 type: 'info',
@@ -1416,17 +1424,23 @@ const SalesItemBrowser: React.FC<Props> = ({
                 text2: 'Discount setup is available on the web admin for now.',
                 visibilityTime: 2600,
               });
-            }}>
+            }}
+            android_ripple={
+              Platform.OS === 'android'
+                ? {color: 'rgba(0,0,0,0.08)', foreground: true}
+                : undefined
+            }
+            style={({pressed}) => [
+              styles.favModalFooterBtn,
+              {backgroundColor: colors.inputBackground},
+              pressed && styles.favModalFooterBtnPressed,
+            ]}>
             <Text style={[styles.favModalFooterBtnText, {color: colors.textPrimary}]}>
               Create a discount
             </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.favModalFooterBtn,
-              {backgroundColor: colors.inputBackground},
-            ]}
-            activeOpacity={0.75}
+          </Pressable>
+          <Pressable
+            {...ICON_BUTTON_QUICK_PRESS}
             onPress={() => {
               setAddFavoriteModalVisible(false);
               addFavoriteTargetSlotRef.current = null;
@@ -1440,23 +1454,28 @@ const SalesItemBrowser: React.FC<Props> = ({
                   visibilityTime: 2600,
                 });
               }
-            }}>
+            }}
+            android_ripple={
+              Platform.OS === 'android'
+                ? {color: 'rgba(0,0,0,0.08)', foreground: true}
+                : undefined
+            }
+            style={({pressed}) => [
+              styles.favModalFooterBtn,
+              {backgroundColor: colors.inputBackground},
+              pressed && styles.favModalFooterBtnPressed,
+            ]}>
             <Text style={[styles.favModalFooterBtnText, {color: colors.textPrimary}]}>
               Create a service
             </Text>
-          </TouchableOpacity>
+          </Pressable>
         </View>
       </View>
     </Modal>
   );
 
   return (
-    <View
-      style={[
-        styles.container,
-        bt.container,
-        showTypedSearchResults && styles.containerFlex,
-      ]}>
+    <View style={[styles.container, bt.container]}>
       {!showTypedSearchResults ? (
         <View style={[styles.tabsWrap, bt.tabsWrap]}>{TAB_OPTIONS.map(renderTabButton)}</View>
       ) : null}
@@ -1465,11 +1484,7 @@ const SalesItemBrowser: React.FC<Props> = ({
         style={[
           styles.bodyCardBase,
           bt.bodyCard,
-          showTypedSearchResults
-            ? styles.bodyCardFill
-            : activeTab === 'favorites'
-              ? styles.bodyCardFavorites
-              : styles.bodyCardCapped,
+          styles.bodyCardFill,
         ]}>
         {showTypedSearchResults ? (
           renderTypedSearchList()
@@ -1491,13 +1506,11 @@ export default React.memo(SalesItemBrowser);
 
 const styles = StyleSheet.create({
   container: {
+    flex: 1,
+    minHeight: 0,
     paddingHorizontal: 8,
     paddingBottom: 4,
     backgroundColor: COLORS.white,
-  },
-  containerFlex: {
-    flex: 1,
-    minHeight: 0,
   },
   tabsWrap: {
     flexDirection: 'row',
@@ -1632,19 +1645,17 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     minHeight: 220,
   },
-  bodyCardCapped: {
-    maxHeight: 500,
-  },
-  bodyCardFavorites: {
-    minHeight: 320,
-    maxHeight: 580,
-  },
   bodyCardFill: {
     flex: 1,
     minHeight: 0,
   },
-  favScroll: {
-    flexGrow: 0,
+  libraryList: {
+    flex: 1,
+    minHeight: 0,
+  },
+  favScrollFill: {
+    flex: 1,
+    minHeight: 0,
   },
   favScrollContent: {
     paddingBottom: 20,
@@ -1657,6 +1668,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 16,
     paddingHorizontal: 8,
+    borderRadius: 14,
+  },
+  favHeroPressed: {
+    opacity: 0.92,
   },
   favGridIconOuter: {
     width: 56,
@@ -1706,6 +1721,7 @@ const styles = StyleSheet.create({
     padding: 12,
     alignItems: 'flex-start',
     justifyContent: 'flex-start',
+    overflow: 'hidden',
   },
   favSlotEmptyLayout: {
     justifyContent: 'center',
@@ -1819,6 +1835,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
+  favModalRowDisabled: {
+    opacity: 0.55,
+  },
+  favModalRowPressed: {
+    opacity: 0.78,
+  },
   favModalRowTile: {
     width: 44,
     height: 44,
@@ -1860,6 +1882,10 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingVertical: 14,
     alignItems: 'center',
+    overflow: 'hidden',
+  },
+  favModalFooterBtnPressed: {
+    opacity: 0.88,
   },
   favModalFooterBtnText: {
     ...FONTS.body3,
@@ -2019,6 +2045,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     minHeight: 58,
+    overflow: 'hidden',
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.transparentPrimary2,
   },
@@ -2156,5 +2183,186 @@ const styles = StyleSheet.create({
     color: 'transparent',
     fontWeight: '700',
   },
+  libraryRowPressed: {
+    opacity: 0.75,
+  },
+});
+
+/** Subset of SalesItemBrowser `bt` used by POS library header rows. */
+type PosLibraryHeaderTheme = {
+  listRow: object;
+  rowSub: object;
+  selectedRow: object;
+  libraryGap: object;
+  libHdr: object;
+  stateText: object;
+};
+
+type PosLibraryCategoryRowProps = {
+  item: SalesCategory;
+  selectedCategoryId: string | number | null;
+  bt: PosLibraryHeaderTheme;
+  onPress: (category: SalesCategory) => void;
+};
+
+const PosLibraryCategoryRow = React.memo(function PosLibraryCategoryRowInner({
+  item,
+  selectedCategoryId,
+  bt,
+  onPress,
+}: PosLibraryCategoryRowProps) {
+  const isSelected = String(selectedCategoryId) === String(item.id);
+  return (
+    <TouchableOpacity
+      style={[
+        styles.listRow,
+        bt.listRow,
+        isSelected && styles.selectedListRow,
+        isSelected && bt.selectedRow,
+      ]}
+      onPress={() => onPress(item)}
+      activeOpacity={0.75}>
+      <View style={styles.initialsTile}>
+        <Text style={styles.initialsText}>{item.initials}</Text>
+      </View>
+
+      <View style={styles.rowContent}>
+        <Text style={styles.rowTitle}>{item.name}</Text>
+        <Text style={[styles.rowSubtitle, bt.rowSub]}>
+          {isSelected ? 'Showing items below' : 'Tap to browse items'}
+        </Text>
+      </View>
+
+      <Image source={icons.down_arrow} style={styles.rowChevron} />
+    </TouchableOpacity>
+  );
+});
+
+type PosLibraryListHeaderProps = {
+  categories: SalesCategory[];
+  categoriesLoadError: boolean;
+  selectedCategory: SalesCategory | null;
+  selectedCategoryId: string | number | null;
+  bt: PosLibraryHeaderTheme;
+  onRetry: () => void;
+  onCategoryPress: (category: SalesCategory) => void;
+};
+
+const PosLibraryListHeader = React.memo(function PosLibraryListHeaderInner({
+  categories,
+  categoriesLoadError,
+  selectedCategory,
+  selectedCategoryId,
+  bt,
+  onRetry,
+  onCategoryPress,
+}: PosLibraryListHeaderProps) {
+  return (
+    <View>
+      {categories.length ? (
+        <View>
+          {categories.map(category => (
+            <View key={String(category.id)}>
+              <PosLibraryCategoryRow
+                item={category}
+                selectedCategoryId={selectedCategoryId}
+                bt={bt}
+                onPress={onCategoryPress}
+              />
+            </View>
+          ))}
+          <View style={[styles.librarySectionGap, bt.libraryGap]} />
+        </View>
+      ) : (
+        <View style={styles.stateWrap}>
+          <Text style={[styles.stateText, bt.stateText]}>
+            {categoriesLoadError
+              ? "Couldn't load categories."
+              : 'No categories available.'}
+          </Text>
+          {categoriesLoadError ? (
+            <TouchableOpacity
+              style={styles.retryButton}
+              onPress={onRetry}
+              activeOpacity={0.85}>
+              <Text style={styles.retryButtonText}>Retry</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+      )}
+
+      {selectedCategory ? (
+        <View style={[styles.libraryItemsHeader, bt.libHdr]}>
+          <Text style={styles.libraryItemsHeaderText}>{selectedCategory.name}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+});
+
+LibraryPosItemRow = React.memo(function LibraryPosItemRowInner({
+  item,
+  isRecentlyAdded,
+  isOutOfStock,
+  onAdd,
+  theme,
+}: LibraryPosItemRowProps) {
+  const initials = getInitials(item.item_name || 'IT') || 'IT';
+
+  return (
+    <Pressable
+      disabled={isOutOfStock}
+      delayPressIn={0}
+      unstable_pressDelay={0}
+      android_ripple={
+        Platform.OS === 'android' && !isOutOfStock
+          ? {color: 'rgba(0,0,0,0.1)'}
+          : undefined
+      }
+      style={({pressed}) => [
+        styles.listRow,
+        theme.listRow,
+        isOutOfStock && styles.disabledListRow,
+        isOutOfStock && theme.disabledRow,
+        !isOutOfStock && pressed && styles.libraryRowPressed,
+      ]}
+      onPress={() => onAdd(item)}>
+      <View style={[styles.initialsTile, isOutOfStock && styles.disabledInitialsTile]}>
+        <Text style={styles.initialsText}>{initials}</Text>
+      </View>
+
+      <View style={styles.rowContent}>
+        <Text
+          style={[styles.rowTitle, isOutOfStock && styles.disabledRowTitle]}
+          numberOfLines={1}>
+          {item.item_name}
+        </Text>
+        <Text
+          style={[
+            styles.rowSubtitle,
+            theme.rowSub,
+            isOutOfStock && styles.disabledRowSubtitle,
+            isOutOfStock && theme.rowSubDis,
+          ]}
+          numberOfLines={1}>
+          {isOutOfStock
+            ? 'Out of stock'
+            : `Stock ${item.inventory ?? 0}${
+                item.unit_of_measure ? ` • ${item.unit_of_measure}` : ''
+              }`}
+        </Text>
+      </View>
+
+      <View style={styles.rowRight}>
+        {isRecentlyAdded ? (
+          <Text style={styles.addedText}>Added</Text>
+        ) : isOutOfStock ? (
+          <Text style={styles.outOfStockText}>Unavailable</Text>
+        ) : (
+          <Text style={styles.rowAmount}>{formatMoney(item.unit_price)}</Text>
+        )}
+      </View>
+    </Pressable>
+  );
 });
 

@@ -11,6 +11,7 @@ import StepperInput from './StepperInput';
 import TextButton from './TextButton';
 import TextIconButton from './TextIconButton';
 import IconButton from './IconButton';
+import {QuickIconPressable} from './QuickIconPressable';
 import {ProtectedScreen} from './ProtectedScreen';
 import {PermissionButton} from './PermissionButton';
 import {PermissionTextButton} from './PermissionTextButton';
@@ -26,6 +27,7 @@ export {
   StepperInput,
   TextButton,
   IconButton,
+  QuickIconPressable,
   ProtectedScreen,
   PermissionButton,
   PermissionTextButton,

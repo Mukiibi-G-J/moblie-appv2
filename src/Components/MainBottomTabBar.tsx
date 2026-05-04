@@ -8,6 +8,8 @@ import {
 } from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {COLORS, FONTS, SIZES, icons, constants} from '../constants';
+
+export type BottomTabDef = (typeof constants.bottom_tabs)[number];
 import {useTheme} from '../context/ThemeContext';
 
 type TabButtonProps = {
@@ -67,14 +69,18 @@ const TabButton: React.FC<TabButtonProps> = ({
 export type MainBottomTabBarProps = {
   selectedTab: string;
   onSelectTab: (tab: string) => void;
+  /** When omitted, uses `constants.bottom_tabs` (all three tabs). */
+  tabs?: BottomTabDef[];
 };
 
 const MainBottomTabBar: React.FC<MainBottomTabBarProps> = ({
   selectedTab,
   onSelectTab,
+  tabs,
 }) => {
   const {colors} = useTheme();
   const insets = useSafeAreaInsets();
+  const tabList = tabs?.length ? tabs : constants.bottom_tabs;
 
   return (
     <View
@@ -87,24 +93,24 @@ const MainBottomTabBar: React.FC<MainBottomTabBarProps> = ({
         },
       ]}>
       <View style={styles.tabBarRow}>
-        <TabButton
-          label={constants.screens.home}
-          icon={icons.home}
-          isFocused={selectedTab === constants.screens.home}
-          onPress={() => onSelectTab(constants.screens.home)}
-        />
-        <TabButton
-          label={constants.screens.makeSale}
-          icon={icons.cart}
-          isFocused={selectedTab === constants.screens.makeSale}
-          onPress={() => onSelectTab(constants.screens.makeSale)}
-        />
-        <TabButton
-          label={constants.screens.more}
-          icon={icons.menu}
-          isFocused={selectedTab === constants.screens.more}
-          onPress={() => onSelectTab(constants.screens.more)}
-        />
+        {tabList.map(tab => {
+          const label = tab.label;
+          const icon =
+            label === constants.screens.home
+              ? icons.home
+              : label === constants.screens.makeSale
+                ? icons.cart
+                : icons.menu;
+          return (
+            <TabButton
+              key={tab.id}
+              label={label}
+              icon={icon}
+              isFocused={selectedTab === label}
+              onPress={() => onSelectTab(label)}
+            />
+          );
+        })}
       </View>
     </View>
   );

@@ -10,92 +10,119 @@ import {
   ActivityIndicator,
   RefreshControl,
 } from 'react-native';
-import { useNavigation, DrawerActions, useFocusEffect } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { FONTS, SIZES, COLORS, icons } from '../../constants';
+import {
+  constants,
+  FONTS,
+  SIZES,
+  COLORS,
+  icons,
+  ICON_BUTTON_ACTIVE_OPACITY,
+  ICON_BUTTON_HIT_SLOP,
+} from '../../constants';
 import Options from './Options';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ScrollView } from 'react-native';
-import { useAuth } from '../../context/Store';
-import { useTenantContext } from '../../context/TenantContext';
+import { useAppContext, useAuth, useTabContext } from '../../context/Store';
 import { usePermissions } from '../../hooks/usePermissions';
+import { PAGE_NAMES } from '../../constants/pageNames';
+import { useCompanyInfo } from '../../hooks/useCompanyInfo';
 import { useTheme } from '../../context/ThemeContext';
 import { navigate } from '../../hooks/NavigationService';
 import {
   fetchKPIMetrics,
+  fetchMyUserSetup,
   fetchRecentTransactions,
   fetchLowStockItems,
   fetchDraftSales,
   fetchOutstandingReceivables,
   fetchTopSellingItems,
-  getCompanyInfo,
   KPIMetrics,
 } from '../../services/app.services';
 
 interface SalesInvoice {
   id: number;
-  customer_invoice_no: string;
+  invoice_no?: string;
+  customer_invoice_no?: string;
   customer?: { name: string };
+  customer_name?: string;
+  document_date?: string;
   total_amount: number;
-  created_at: string;
+  created_at?: string;
   status: string;
 }
 
-function formatTenantLabel(slug: string | null): string {
-  if (!slug?.trim()) {
-    return 'Your business';
+/** SalesHistoryListSerializer exposes document_date, not created_at — parse safely for subtitle. */
+function formatSalesTransactionListSubtitle(
+  documentDate?: string | null,
+  createdAt?: string | null,
+): string {
+  if (createdAt) {
+    const d = new Date(createdAt);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    }
   }
-  return slug
-    .replace(/[_-]+/g, ' ')
-    .split(' ')
-    .filter(Boolean)
-    .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(' ');
+  if (documentDate != null && String(documentDate).trim() !== '') {
+    const raw = String(documentDate).trim();
+    const isoParts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+    if (isoParts) {
+      const y = Number(isoParts[1]);
+      const mo = Number(isoParts[2]) - 1;
+      const day = Number(isoParts[3]);
+      const d = new Date(y, mo, day);
+      if (!Number.isNaN(d.getTime())) {
+        return d.toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+        });
+      }
+    }
+    const d = new Date(raw);
+    if (!Number.isNaN(d.getTime())) {
+      return d.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      });
+    }
+  }
+  return '—';
 }
 
 export default function Home() {
   const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const { auth, accessToken } = useAuth();
-  const { currentTenant } = useTenantContext();
+  const app = useAppContext();
   const { isModuleVisible, hasAnyPageAccess, canCreate } = usePermissions();
+  const { storeLabel } = useCompanyInfo();
   const [currentDateTime, setCurrentDateTime] = useState(new Date());
   const [isAuthLoading, setIsAuthLoading] = React.useState(true);
-  const [companyName, setCompanyName] = useState<string | null>(null);
   const navigation = useNavigation();
-
-  useFocusEffect(
-    useCallback(() => {
-      let cancelled = false;
-      (async () => {
-        try {
-          const res = await getCompanyInfo();
-          const name = res?.data?.company?.name?.trim?.();
-          if (!cancelled && name) {
-            setCompanyName(name);
-          }
-        } catch {
-          /* keep previous */
-        }
-      })();
-      return () => {
-        cancelled = true;
-      };
-    }, []),
-  );
-
-  const storeLabel = useMemo(() => {
-    if (companyName?.trim()) {
-      return companyName.trim();
-    }
-    return formatTenantLabel(currentTenant);
-  }, [companyName, currentTenant]);
+  const { setSelectedTab } = useTabContext();
 
   /** Greeting uses a single given name (first word of full name, else username). */
   const displayName =
     auth.full_name?.trim()?.split(/\s+/).filter(Boolean)[0] ||
     auth.username?.trim() ||
     '';
+
+  const activeBranchLabel = useMemo(() => {
+    const b = app?.branchSession?.active_branch;
+    if (!b) return '';
+    const description = b.description?.trim();
+    const code = b.code?.trim();
+    if (description && code && description !== code) {
+      return `${description} (${code})`;
+    }
+    return description || code || '';
+  }, [app?.branchSession?.active_branch]);
 
   // KPI Data
   const [kpiMetrics, setKpiMetrics] = useState < KPIMetrics | null > (null);
@@ -129,24 +156,30 @@ export default function Home() {
   // Refresh state
   const [refreshing, setRefreshing] = useState(false);
 
+  /** Matches Sales History: User Setup canViewOnlyTheirSales + ?user= on sales list */
+  const [restrictSalesToSelf, setRestrictSalesToSelf] = useState(true);
+
   // Permission checks
-  const canViewKPIs =
+  /** Web parity: Sales module entry uses "Sales Dashboard"; snapshot KPIs match that gate only. */
+  const canViewSalesDashboard =
     isModuleVisible('sales') &&
-    (hasAnyPageAccess('Sales Dashboard') || hasAnyPageAccess('Sales'));
+    hasAnyPageAccess(PAGE_NAMES.SALES_DASHBOARD);
 
   const canViewTransactions =
     isModuleVisible('sales') &&
-    (hasAnyPageAccess('Sales History') || hasAnyPageAccess('Sales'));
+    (hasAnyPageAccess(PAGE_NAMES.SALES_HISTORY) ||
+      hasAnyPageAccess(PAGE_NAMES.SALES));
 
   const canViewItems =
-    isModuleVisible('items') && hasAnyPageAccess('Items');
+    isModuleVisible('items') && hasAnyPageAccess(PAGE_NAMES.ITEMS);
 
   const canViewDrafts =
-    isModuleVisible('sales') && canCreate('Sales');
+    isModuleVisible('sales') && canCreate(PAGE_NAMES.SALES);
 
   const canViewReceivables =
     (isModuleVisible('payments') || isModuleVisible('customers')) &&
-    (hasAnyPageAccess('Payments') || hasAnyPageAccess('Customer Management'));
+    (hasAnyPageAccess(PAGE_NAMES.PAYMENTS) ||
+      hasAnyPageAccess(PAGE_NAMES.CUSTOMER_MANAGEMENT));
 
   const t = useMemo(
     () => ({
@@ -209,6 +242,26 @@ export default function Home() {
     return () => clearTimeout(timeout);
   }, [isAuthLoading]);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const setup = await fetchMyUserSetup();
+        if (cancelled) {
+          return;
+        }
+        setRestrictSalesToSelf(setup?.canViewOnlyTheirSales ?? true);
+      } catch {
+        if (!cancelled) {
+          setRestrictSalesToSelf(true);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Update date at midnight
   useEffect(() => {
     const timer = setInterval(() => {
@@ -219,7 +272,7 @@ export default function Home() {
 
   // Fetch KPI Metrics
   const loadKPIMetrics = async () => {
-    if (!canViewKPIs) return;
+    if (!canViewSalesDashboard) return;
 
     setKpiLoading(true);
     try {
@@ -232,20 +285,22 @@ export default function Home() {
     }
   };
 
-  // Fetch Recent Transactions
-  const loadRecentTransactions = async () => {
+  const loadRecentTransactions = useCallback(async () => {
     if (!canViewTransactions) return;
 
     setTransactionsLoading(true);
     try {
-      const transactions = await fetchRecentTransactions(10);
+      const uid = Number.parseInt(String(auth.user_id || ''), 10);
+      const opts =
+        restrictSalesToSelf && Number.isFinite(uid) ? { userId: uid } : undefined;
+      const transactions = await fetchRecentTransactions(10, opts);
       setRecentTransactions(transactions);
     } catch (error) {
       console.error('Error loading recent transactions:', error);
     } finally {
       setTransactionsLoading(false);
     }
-  };
+  }, [canViewTransactions, restrictSalesToSelf, auth.user_id]);
 
   // Fetch Low Stock Items
   const loadLowStockItems = async () => {
@@ -294,7 +349,7 @@ export default function Home() {
 
   // Fetch Top Selling Items
   const loadTopSellingItems = async () => {
-    if (!canViewKPIs) return;
+    if (!canViewSalesDashboard) return;
 
     setTopItemsLoading(true);
     try {
@@ -319,11 +374,14 @@ export default function Home() {
     }
   }, [
     isAuthLoading,
-    canViewKPIs,
+    canViewSalesDashboard,
     canViewTransactions,
     canViewItems,
     canViewDrafts,
     canViewReceivables,
+    restrictSalesToSelf,
+    auth.user_id,
+    loadRecentTransactions,
   ]);
 
   // Pull to refresh handler
@@ -345,21 +403,22 @@ export default function Home() {
       setRefreshing(false);
     }
   }, [
-    canViewKPIs,
+    canViewSalesDashboard,
     canViewTransactions,
     canViewItems,
     canViewDrafts,
     canViewReceivables,
+    loadRecentTransactions,
   ]);
 
-  const openDrawer = () => {
-    navigation.dispatch(DrawerActions.openDrawer());
+  const openMoreTab = () => {
+    setSelectedTab(constants.screens.more);
   };
 
   const renderHomeTopBar = () => (
     <View style={styles.homeTopBar}>
       <TouchableOpacity
-        onPress={openDrawer}
+        onPress={openMoreTab}
         style={[
           styles.homeCircleBtn,
           {
@@ -368,15 +427,17 @@ export default function Home() {
             borderWidth: StyleSheet.hairlineWidth,
           },
         ]}
-        hitSlop={12}
-        accessibilityLabel="Open menu">
+        activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}
+        hitSlop={ICON_BUTTON_HIT_SLOP}
+        accessibilityRole="button"
+        accessibilityLabel="Open More menu">
         <Image
           source={icons.menu}
           style={[styles.homeTopBarIcon, { tintColor: colors.textPrimary }]}
         />
       </TouchableOpacity>
       <TouchableOpacity
-        onPress={() => navigate('Subscription', undefined)}
+        onPress={() => navigate('PrinterConfig', undefined)}
         style={[
           styles.homeCircleBtn,
           {
@@ -385,10 +446,12 @@ export default function Home() {
             borderWidth: StyleSheet.hairlineWidth,
           },
         ]}
-        hitSlop={12}
-        accessibilityLabel="Subscription and perks">
+        activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}
+        hitSlop={ICON_BUTTON_HIT_SLOP}
+        accessibilityRole="button"
+        accessibilityLabel="Printer configuration">
         <Image
-          source={icons.coupon}
+          source={icons.printer}
           style={[styles.homeTopBarIcon, { tintColor: colors.textPrimary }]}
         />
       </TouchableOpacity>
@@ -405,6 +468,11 @@ export default function Home() {
       <Text style={[styles.homeStoreName, { color: colors.textSecondary }]}>
         {storeLabel}
       </Text>
+      {activeBranchLabel ? (
+        <Text style={[styles.homeBranchName, { color: colors.textSecondary }]}>
+          {activeBranchLabel}
+        </Text>
+      ) : null}
     </View>
   );
 
@@ -437,149 +505,149 @@ export default function Home() {
     }).format(amount);
   };
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
-  // Render KPI Cards
+  // Render KPI Cards + optional alerts (receivables / low stock use their own permissions)
   const renderQuickStats = () => {
-    if (!canViewKPIs) return null;
-
-    if (kpiLoading) {
-      return (
-        <View style={styles.statsSection}>
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={COLORS.primary2} />
-            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
-              Loading metrics...
-            </Text>
-          </View>
-        </View>
+    const showReceivablesAlert =
+      !!(
+        canViewReceivables &&
+        outstandingReceivables &&
+        outstandingReceivables.total_amount > 0
       );
-    }
-
-    if (!kpiMetrics) {
+    const showLowStockAlert = canViewItems && lowStockItems.length > 0;
+    const hasStatsSection =
+      canViewSalesDashboard || showReceivablesAlert || showLowStockAlert;
+    if (!hasStatsSection) {
       return null;
     }
 
-    const salesChange = kpiMetrics.revenue_growth;
+    const salesChange = kpiMetrics?.revenue_growth ?? 0;
     const hasPositiveTrend = salesChange >= 0;
 
     return (
       <View style={styles.statsSection}>
-        <Text style={[styles.kpiSectionTitle, t.sectionTitle, FONTS.h3]}>
-          {"Today's snapshot"}
-        </Text>
-        {/* Main Sales Card */}
-        <View style={[styles.mainStatsCard, t.card]}>
-          <View style={styles.salesHeader}>
-            <View>
-              <Text style={[styles.salesLabel, t.salesLabel]}>Today's Revenue</Text>
-              <Text style={[styles.salesAmount, t.salesAmount]}>
-                {formatCurrency(kpiMetrics.today_revenue)}
+        {canViewSalesDashboard &&
+          (kpiLoading ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={COLORS.primary2} />
+              <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+                Loading metrics...
               </Text>
             </View>
-            {salesChange !== 0 && (
-              <View
-                style={[
-                  styles.trendBadge,
-                  hasPositiveTrend ? styles.positiveTrend : styles.negativeTrend,
-                ]}>
-                <Text
-                  style={[
-                    styles.trendText,
-                    hasPositiveTrend ? styles.positiveText : styles.negativeText,
-                  ]}>
-                  {hasPositiveTrend ? '↑' : '↓'} {Math.abs(salesChange).toFixed(1)}%
+          ) : kpiMetrics ? (
+            <>
+              <Text style={[styles.kpiSectionTitle, t.sectionTitle, FONTS.h3]}>
+                {"Today's snapshot"}
+              </Text>
+              {/* Main Sales Card */}
+              <View style={[styles.mainStatsCard, t.card]}>
+                <View style={styles.salesHeader}>
+                  <View>
+                    <Text style={[styles.salesLabel, t.salesLabel]}>
+                      Today's Revenue
+                    </Text>
+                    <Text style={[styles.salesAmount, t.salesAmount]}>
+                      {formatCurrency(kpiMetrics.today_revenue)}
+                    </Text>
+                  </View>
+                  {salesChange !== 0 && (
+                    <View
+                      style={[
+                        styles.trendBadge,
+                        hasPositiveTrend ? styles.positiveTrend : styles.negativeTrend,
+                      ]}>
+                      <Text
+                        style={[
+                          styles.trendText,
+                          hasPositiveTrend ? styles.positiveText : styles.negativeText,
+                        ]}>
+                        {hasPositiveTrend ? '↑' : '↓'}{' '}
+                        {Math.abs(salesChange).toFixed(1)}%
+                      </Text>
+                    </View>
+                  )}
+                </View>
+                <Text style={[styles.comparedText, t.comparedText]}>
+                  Compared to yesterday
                 </Text>
               </View>
-            )}
-          </View>
-          <Text style={[styles.comparedText, t.comparedText]}>
-            Compared to yesterday
-          </Text>
-        </View>
 
-        {/* Secondary Stats Row */}
-        <View style={styles.secondaryStatsContainer}>
-          <View style={[styles.statCard, t.card]}>
-            <View style={styles.statHeader}>
-              <Image
-                source={icons.cart}
-                style={[styles.statIcon, { tintColor: COLORS.primary2 }]}
-              />
-              <Text style={[styles.statValue, t.statValue]}>
-                {kpiMetrics.today_orders}
-              </Text>
-            </View>
-            <Text style={[styles.statItemLabel, t.statItemLabel]}>Orders Today</Text>
-          </View>
-
-          <View style={[styles.statCard, t.card]}>
-            <View style={styles.statHeader}>
-              <Image
-                source={icons.product}
-                style={[styles.statIcon, { tintColor: COLORS.success }]}
-              />
-              <Text style={[styles.statValue, t.statValue]}>
-                {kpiMetrics.today_products_sold}
-              </Text>
-            </View>
-            <Text style={[styles.statItemLabel, t.statItemLabel]}>Products Sold</Text>
-            {kpiMetrics.total_products > 0 && (
-              <View style={[styles.progressBar, t.progressTrack]}>
-                <View
-                  style={[
-                    styles.progressFill,
-                    {
-                      width: `${Math.min(
-                        (kpiMetrics.today_products_sold / kpiMetrics.total_products) *
-                        100,
-                        100,
-                      )}%`,
-                    },
-                  ]}
-                />
-              </View>
-            )}
-          </View>
-        </View>
-
-        {canViewReceivables &&
-          outstandingReceivables &&
-          outstandingReceivables.total_amount > 0 && (
-            <TouchableOpacity
-              style={[
-                styles.alertCard,
-                t.card,
-                { borderLeftColor: COLORS.warning },
-              ]}
-              onPress={() => navigation.navigate('Payments' as never)}>
-              <View style={styles.alertContent}>
-                <Image
-                  source={icons.wallet}
-                  style={[styles.alertIcon, { tintColor: COLORS.warning }]}
-                />
-                <View style={styles.alertTextContainer}>
-                  <Text style={[styles.alertTitle, t.alertTitle]}>
-                    Outstanding Receivables
-                  </Text>
-                  <Text style={[styles.alertText, t.alertText]}>
-                    {formatCurrency(outstandingReceivables.total_amount)} from{' '}
-                    {outstandingReceivables.count} customer
-                    {outstandingReceivables.count !== 1 ? 's' : ''}
+              {/* Secondary Stats Row */}
+              <View style={styles.secondaryStatsContainer}>
+                <View style={[styles.statCard, t.card]}>
+                  <View style={styles.statHeader}>
+                    <Image
+                      source={icons.cart}
+                      style={[styles.statIcon, { tintColor: COLORS.primary2 }]}
+                    />
+                    <Text style={[styles.statValue, t.statValue]}>
+                      {kpiMetrics.today_orders}
+                    </Text>
+                  </View>
+                  <Text style={[styles.statItemLabel, t.statItemLabel]}>
+                    Orders Today
                   </Text>
                 </View>
-                <Text style={[styles.alertArrow, t.alertArrow]}>→</Text>
-              </View>
-            </TouchableOpacity>
-          )}
 
-        {canViewItems && lowStockItems.length > 0 && (
+                <View style={[styles.statCard, t.card]}>
+                  <View style={styles.statHeader}>
+                    <Image
+                      source={icons.product}
+                      style={[styles.statIcon, { tintColor: COLORS.success }]}
+                    />
+                    <Text style={[styles.statValue, t.statValue]}>
+                      {kpiMetrics.today_products_sold}
+                    </Text>
+                  </View>
+                  <Text style={[styles.statItemLabel, t.statItemLabel]}>
+                    Products Sold
+                  </Text>
+                  {kpiMetrics.total_products > 0 && (
+                    <View style={[styles.progressBar, t.progressTrack]}>
+                      <View
+                        style={[
+                          styles.progressFill,
+                          {
+                            width: `${Math.min(
+                              (kpiMetrics.today_products_sold /
+                                kpiMetrics.total_products) *
+                                100,
+                              100,
+                            )}%`,
+                          },
+                        ]}
+                      />
+                    </View>
+                  )}
+                </View>
+              </View>
+            </>
+          ) : null)}
+
+        {showReceivablesAlert && (
+          <TouchableOpacity
+            style={[styles.alertCard, t.card, { borderLeftColor: COLORS.warning }]}
+            onPress={() => navigation.navigate('Payments' as never)}>
+            <View style={styles.alertContent}>
+              <Image
+                source={icons.wallet}
+                style={[styles.alertIcon, { tintColor: COLORS.warning }]}
+              />
+              <View style={styles.alertTextContainer}>
+                <Text style={[styles.alertTitle, t.alertTitle]}>
+                  Outstanding Receivables
+                </Text>
+                <Text style={[styles.alertText, t.alertText]}>
+                  {formatCurrency(outstandingReceivables!.total_amount)} from{' '}
+                  {outstandingReceivables!.count} customer
+                  {outstandingReceivables!.count !== 1 ? 's' : ''}
+                </Text>
+              </View>
+              <Text style={[styles.alertArrow, t.alertArrow]}>→</Text>
+            </View>
+          </TouchableOpacity>
+        )}
+
+        {showLowStockAlert && (
           <TouchableOpacity
             style={[styles.alertCard, t.card, styles.alertCardErrorAccent]}
             onPress={() => navigation.navigate('Items' as never)}>
@@ -626,8 +694,15 @@ export default function Home() {
     return (
       <View style={styles.recentSection}>
         <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionTitle, t.sectionTitle]}>Draft Sales</Text>
-          <TouchableOpacity onPress={() => navigation.navigate('Cart' as never)}>
+          <Text
+            style={[styles.sectionTitle, t.sectionTitle]}
+            numberOfLines={1}
+            ellipsizeMode="tail">
+            Draft Sales
+          </Text>
+          <TouchableOpacity
+            style={styles.sectionHeaderAction}
+            onPress={() => navigation.navigate('Cart' as never)}>
             <Text style={[styles.seeAllText, t.seeAll]}>View All</Text>
           </TouchableOpacity>
         </View>
@@ -675,15 +750,20 @@ export default function Home() {
 
   // Render Top Selling Items
   const renderTopSellingItems = () => {
-    if (!canViewKPIs || topSellingItems.length === 0) return null;
+    if (!canViewSalesDashboard || topSellingItems.length === 0) return null;
 
     return (
       <View style={styles.recentSection}>
         <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionTitle, t.sectionTitle]}>
+          <Text
+            style={[styles.sectionTitle, t.sectionTitle]}
+            numberOfLines={1}
+            ellipsizeMode="tail">
             Top Selling Items Today
           </Text>
-          <TouchableOpacity onPress={() => navigation.navigate('Items' as never)}>
+          <TouchableOpacity
+            style={styles.sectionHeaderAction}
+            onPress={() => navigation.navigate('Items' as never)}>
             <Text style={[styles.seeAllText, t.seeAll]}>View All</Text>
           </TouchableOpacity>
         </View>
@@ -727,8 +807,15 @@ export default function Home() {
     return (
       <View style={styles.recentSection}>
         <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionTitle, t.sectionTitle]}>Recent Transactions</Text>
-          <TouchableOpacity onPress={() => navigation.navigate('SalesHistory' as never)}>
+          <Text
+            style={[styles.sectionTitle, t.sectionTitle]}
+            numberOfLines={1}
+            ellipsizeMode="tail">
+            Recent Transactions
+          </Text>
+          <TouchableOpacity
+            style={styles.sectionHeaderAction}
+            onPress={() => navigation.navigate('SalesHistory' as never)}>
             <Text style={[styles.seeAllText, t.seeAll]}>See All</Text>
           </TouchableOpacity>
         </View>
@@ -765,10 +852,14 @@ export default function Home() {
                     </View>
                     <View style={styles.transactionInfo}>
                       <Text style={[styles.transactionNumber, t.transactionNumber]}>
-                        {item.customer_invoice_no || `#${item.id}`}
+                        {item.customer_invoice_no ||
+                          item.invoice_no ||
+                          `#${item.id}`}
                       </Text>
                       <Text style={[styles.transactionCustomer, t.transactionCustomer]}>
-                        {item.customer?.name || 'Walk-in Customer'}
+                        {item.customer?.name?.trim() ||
+                          item.customer_name?.trim() ||
+                          'Walk-in Customer'}
                       </Text>
                     </View>
                   </View>
@@ -777,7 +868,10 @@ export default function Home() {
                       {formatCurrency(item.total_amount || 0)}
                     </Text>
                     <Text style={[styles.transactionTime, t.transactionTime]}>
-                      {formatDate(item.created_at)}
+                      {formatSalesTransactionListSubtitle(
+                        item.document_date,
+                        item.created_at,
+                      )}
                     </Text>
                   </View>
                 </TouchableOpacity>
@@ -872,6 +966,11 @@ const styles = StyleSheet.create({
     ...FONTS.body3,
     marginTop: 6,
     fontWeight: '600',
+  },
+  homeBranchName: {
+    ...FONTS.body4,
+    marginTop: 2,
+    fontWeight: '500',
   },
   homeMetaRow: {
     flexDirection: 'row',
@@ -1056,14 +1155,20 @@ const styles = StyleSheet.create({
   },
   sectionHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 16,
+    gap: 8,
   },
   sectionTitle: {
     ...FONTS.h3,
     fontSize: 17,
     fontWeight: '700',
+    flex: 1,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  sectionHeaderAction: {
+    flexShrink: 0,
   },
   seeAllText: {
     ...FONTS.body4,

@@ -16,7 +16,14 @@ import {
 import ReactNativeModal from 'react-native-modal';
 import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
-import {COLORS, FONTS, SIZES, icons} from '../constants';
+import {
+  COLORS,
+  FONTS,
+  SIZES,
+  icons,
+  ICON_BUTTON_HIT_SLOP,
+} from '../constants';
+import {QuickIconPressable} from './QuickIconPressable';
 import {CartItem, SalesInvoiceData} from '../@types/types.dto';
 import {validateCartTracking} from '../utils/salesTracking';
 import {
@@ -91,7 +98,6 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
         backgroundColor: colors.surface,
       },
       checkoutCloseGlyph: {color: colors.textPrimary},
-      splitLink: {color: colors.textSecondary},
       heroTotal: {color: colors.textPrimary},
       heroSub: {color: colors.textSecondary},
       tenderHdr: {borderBottomColor: colors.border},
@@ -313,16 +319,33 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
       console.log('🔍 DEBUG: createSalesInvoice response:', response.data);
 
       if (response.data && response.data.id) {
+        let postedSuccessfully = false;
         try {
           console.log('🔍 DEBUG: About to call postSalesInvoice...');
           await postSalesInvoice(response.data.id);
+          postedSuccessfully = true;
           console.log('✅ Sale posted successfully!');
-        } catch (postError) {
+        } catch (postError: any) {
           console.error('Failed to post invoice:', postError);
-          // Continue with the sale even if posting fails
+          const apiErr = postError?.response?.data?.error;
+          const msg =
+            typeof apiErr === 'string'
+              ? apiErr
+              : postError?.message || 'Failed to post invoice.';
+          setErrorMessage(msg);
+          Toast.show({
+            type: 'error',
+            text1: 'Could not post sale',
+            text2: msg.length > 140 ? `${msg.slice(0, 137)}...` : msg,
+            visibilityTime: 5000,
+          });
         }
 
-        // Print receipt only when the user opted in and a printer path is available
+        if (!postedSuccessfully) {
+          return;
+        }
+
+        // Receipt printing only after a successful post (avoid "paid" slips for unposted invoices)
         try {
           if (!printReceipt) {
             console.log('🖨️ Print receipt unchecked — skipping');
@@ -355,7 +378,6 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
                     phone: company.phone || 'Phone',
                     email: company.email || 'Email',
                     tin: company.tin || 'TIN',
-                    vatNo: company.vatNo || 'VAT No',
                   };
                   console.log('✅ Company info fetched:', companyInfo);
                 } else {
@@ -465,16 +487,6 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
     }
   };
 
-  const handleSplitAmountPress = () => {
-    Toast.show({
-      type: 'info',
-      text1: 'Split payment',
-      text2: 'Split payment is not available in the app yet.',
-      visibilityTime: 2500,
-      position: 'top',
-    });
-  };
-
   const change = calculateChange();
 
   /** Cash/tender step: require full payment before enabling Complete Sale */
@@ -505,11 +517,13 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
         {errorMessage && (
           <View style={styles.errorContainerFixed}>
             <Text style={styles.errorText}>{errorMessage}</Text>
-            <TouchableOpacity
+            <QuickIconPressable
               style={styles.errorCloseButton}
-              onPress={() => setErrorMessage(null)}>
+              onPress={() => setErrorMessage(null)}
+              hitSlop={ICON_BUTTON_HIT_SLOP}
+              accessibilityLabel="Dismiss error">
               <Text style={styles.errorCloseText}>✕</Text>
-            </TouchableOpacity>
+            </QuickIconPressable>
           </View>
         )}
 
@@ -521,13 +535,14 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
             <View style={styles.tenderScreen}>
               <View style={styles.tenderTopBlock}>
                 <View style={[styles.tenderHeader, st.tenderHdr]}>
-                  <TouchableOpacity
+                  <QuickIconPressable
                     style={[styles.tenderBackButton, st.tenderBack]}
                     onPress={() => setScreenMode('main')}
                     disabled={isProcessing}
-                    hitSlop={{top: 12, bottom: 12, left: 12, right: 12}}>
+                    hitSlop={ICON_BUTTON_HIT_SLOP}
+                    accessibilityLabel="Back">
                     <Image source={icons.back} style={styles.tenderBackIcon} />
-                  </TouchableOpacity>
+                  </QuickIconPressable>
                   <Text
                     style={[styles.tenderHeaderTitle, st.tenderTitle]}
                     numberOfLines={2}
@@ -577,19 +592,14 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
         ) : (
           <>
             <View style={styles.checkoutHeader}>
-              <TouchableOpacity
+              <QuickIconPressable
                 style={[styles.checkoutCloseCircle, st.checkoutClose]}
                 onPress={handleClose}
                 disabled={isProcessing}
-                activeOpacity={0.7}>
+                hitSlop={ICON_BUTTON_HIT_SLOP}
+                accessibilityLabel="Close">
                 <Text style={[styles.checkoutCloseGlyph, st.checkoutCloseGlyph]}>✕</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={handleSplitAmountPress}
-                disabled={isProcessing}
-                activeOpacity={0.7}>
-                <Text style={[styles.splitAmountLink, st.splitLink]}>Split Amount</Text>
-              </TouchableOpacity>
+              </QuickIconPressable>
             </View>
 
             <ScrollView style={[styles.content, st.content]} showsVerticalScrollIndicator={false}>
@@ -973,7 +983,7 @@ const styles = StyleSheet.create({
   },
   checkoutHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
     alignItems: 'center',
     paddingHorizontal: SIZES.padding,
     paddingTop: 8,
@@ -992,12 +1002,6 @@ const styles = StyleSheet.create({
   checkoutCloseGlyph: {
     fontSize: 16,
     color: COLORS.darkGray,
-    fontWeight: '600',
-  },
-  splitAmountLink: {
-    ...FONTS.body4,
-    color: COLORS.darkGray,
-    textDecorationLine: 'underline',
     fontWeight: '600',
   },
   heroTotalWrap: {

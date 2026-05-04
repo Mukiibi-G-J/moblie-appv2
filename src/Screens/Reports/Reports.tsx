@@ -22,6 +22,8 @@ import {
   fetchWeeklySummaryReport,
 } from '../../services/app.services';
 import {savePdfBufferAndShare} from '../../utils/reportPdfDownload';
+import {BranchFilterSelect} from '../../Components/BranchFilterSelect';
+import {useAppContext} from '../../context/Store';
 
 type DateFilter = 'today' | 'last7days' | 'last30days';
 
@@ -200,6 +202,7 @@ const REPORT_SECTIONS = [
 
 const Reports = () => {
   const {canRead} = usePermissions();
+  const app = useAppContext();
   const [activeFilter, setActiveFilter] = useState<DateFilter>('today');
   const [sales, setSales] = useState<SalesInvoice[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -235,6 +238,25 @@ const Reports = () => {
       data: null,
     });
   const [exportingAnalyticsPdf, setExportingAnalyticsPdf] = useState(false);
+  const [branchFilter, setBranchFilter] = useState<number | null | undefined>(
+    undefined,
+  );
+
+  // Default report branch to the global working branch once known.
+  useEffect(() => {
+    if (branchFilter !== undefined) return;
+    const activeId = app?.branchSession?.active_branch_id ?? null;
+    if (activeId != null) {
+      setBranchFilter(activeId);
+    }
+  }, [app?.branchSession?.active_branch_id, branchFilter]);
+
+  const branchRequestConfig = useMemo(() => {
+    if (branchFilter === null) return {headers: {'X-Branch-Scope': 'all'}};
+    if (typeof branchFilter === 'number')
+      return {headers: {'X-Branch-Id': String(branchFilter)}};
+    return undefined;
+  }, [branchFilter]);
 
   const {startDate, endDate} = useMemo(() => {
     const today = new Date();
@@ -276,7 +298,7 @@ const Reports = () => {
       const response = await fetchSalesData({
         startDate,
         endDate,
-      });
+      }, branchRequestConfig);
 
       if (response && Array.isArray(response)) {
         setSales(response);
@@ -333,7 +355,11 @@ const Reports = () => {
       try {
         if (reportId === 'daily-profit') {
           setDailyProfit(prev => ({...prev, loading: true, error: null}));
-          const response = await fetchDailyProfitReport(endDate);
+          const response = await fetchDailyProfitReport(
+            endDate,
+            branchFilter === undefined ? undefined : branchFilter,
+            branchRequestConfig,
+          );
           setDailyProfit({loading: false, error: null, data: response});
           return;
         }
@@ -343,6 +369,8 @@ const Reports = () => {
           const response = await fetchWeeklySummaryReport({
             startDate,
             endDate,
+            branch: branchFilter === undefined ? undefined : branchFilter,
+            requestConfig: branchRequestConfig,
           });
           setWeeklySummary({loading: false, error: null, data: response});
           return;
@@ -351,7 +379,11 @@ const Reports = () => {
         if (reportId === 'monthly-summary') {
           setMonthlySummary(prev => ({...prev, loading: true, error: null}));
           const monthValue = endDate?.slice(0, 7);
-          const response = await fetchMonthlySummaryReport(monthValue);
+          const response = await fetchMonthlySummaryReport(
+            monthValue,
+            branchFilter === undefined ? undefined : branchFilter,
+            branchRequestConfig,
+          );
           setMonthlySummary({loading: false, error: null, data: response});
           return;
         }
@@ -365,6 +397,8 @@ const Reports = () => {
           const response = await fetchProductProfitabilityReport({
             startDate,
             endDate,
+            branch: branchFilter === undefined ? undefined : branchFilter,
+            requestConfig: branchRequestConfig,
           });
           setProductProfitability({
             loading: false,
@@ -383,6 +417,8 @@ const Reports = () => {
           const response = await fetchExpenseBreakdownReport({
             startDate,
             endDate,
+            branch: branchFilter === undefined ? undefined : branchFilter,
+            requestConfig: branchRequestConfig,
           });
           setExpenseBreakdown({
             loading: false,
@@ -413,7 +449,7 @@ const Reports = () => {
         }
       }
     },
-    [endDate, startDate],
+    [endDate, startDate, branchFilter, branchRequestConfig],
   );
 
   const handleExportAnalyticsPdf = useCallback(async () => {
@@ -1221,6 +1257,12 @@ const Reports = () => {
       <Text style={styles.subHeading}>
         Track your business performance with comprehensive analytics and insights.
       </Text>
+      <View style={styles.branchRow}>
+        <BranchFilterSelect
+          value={branchFilter}
+          onChange={(v) => setBranchFilter(v)}
+        />
+      </View>
       {renderFilterRow()}
       {renderSummaryCards()}
       {renderState()}
@@ -1310,6 +1352,10 @@ const styles = StyleSheet.create({
     color: COLORS.gray,
     marginBottom: SIZES.padding,
     lineHeight: 20,
+  },
+  branchRow: {
+    marginBottom: SIZES.padding,
+    alignItems: 'flex-start',
   },
   filterRow: {
     flexDirection: 'row',

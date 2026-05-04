@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { NavigationContainer, DarkTheme, DefaultTheme } from '@react-navigation/native';
+import {
+  NavigationContainer,
+  DarkTheme,
+  DefaultTheme,
+  CommonActions,
+} from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -7,15 +12,16 @@ import { View, Text } from 'react-native';
 import SplashScreen from './src/Screens/SplashScreen/SplashScreen';
 import OnBoarding from './src/OnBoarding/OnBoarding';
 import SignIn from './src/Screens/Authentication/SignIn';
-import { AppProvider, useAuth } from './src/context/Store';
+import { AppProvider, useAppContext, useAuth } from './src/context/Store';
 import { TenantProvider } from './src/context/TenantContext';
 import { NetworkProvider } from './src/context/NetworkContext';
-import CustomDrawer from './src/navigation/CustomDrawer';
+import MainLayout from './src/Screens/MainLayout';
 import Cart from './src/Screens/Cart/Cart';
 import { CartProvider } from './src/context/CartStore';
 import { SearchModeProvider } from './src/context/SearchModeStore';
 import { navigationRef } from './src/hooks/NavigationService';
 import Settings from './src/Screens/Settings/Settings';
+import BusinessDetails from './src/Screens/BusinessDetails/BusinessDetails';
 import Expenses from './src/Screens/Expenses/Expenses';
 import ExpenseHistory from './src/Screens/Expenses/ExpenseHistory';
 import MyWallet from './src/Screens/MyWallet/MyWallet';
@@ -33,14 +39,20 @@ import {
   getPendingCompanyCreation,
   clearPendingCompanyCreation,
 } from './src/utils/pendingCompanyCreation';
+import {
+  getRestaurantDevicePrefs,
+  RESTAURANT_SHOW_PIN_SETUP_IMMEDIATE_KEY,
+} from './src/storage/restaurantDeviceStorage';
 import Otp from './src/Screens/Otp/Otp';
 import ItemJournal from './src/Screens/ItemJournal/ItemJournal';
 import SearchPage from './src/Screens/Search/SearchPage';
 import NetworkManager from './src/utils/networkManager';
 import Toast from 'react-native-toast-message';
 import Login from './src/Screens/Authentication/Login';
+import SelectBranch from './src/Screens/Authentication/SelectBranch';
+import RestaurantPinSignIn from './src/Screens/Authentication/RestaurantPinSignIn';
+import RestaurantPinSetup from './src/Screens/Authentication/RestaurantPinSetup';
 import AuthGuard from './src/Components/AuthGuard';
-import PurchasesMenu from './src/Screens/Purchases/PurchasesMenu';
 import PurchaseHistory from './src/Screens/Purchases/PurchaseHistory';
 import PurchaseCreation from './src/Screens/Purchases/PurchaseCreation';
 import Suppliers from './src/Screens/Suppliers/Suppliers';
@@ -54,19 +66,177 @@ import Financials from './src/Screens/Financials/Financials';
 import UserManagement from './src/Screens/UserManagement/UserManagement';
 import { ProtectedScreen } from './src/Components/ProtectedScreen';
 import { PAGE_NAMES } from './src/constants/pageNames';
+import RestaurantHub from './src/Screens/Restaurant/RestaurantHub';
+import RestaurantPOS from './src/Screens/Restaurant/RestaurantPOS';
+import RestaurantOrders from './src/Screens/Restaurant/RestaurantOrders';
+import RestaurantKitchen from './src/Screens/Restaurant/RestaurantKitchen';
+import RestaurantDashboard from './src/Screens/Restaurant/RestaurantDashboard';
+import RestaurantTables from './src/Screens/Restaurant/RestaurantTables';
+import RestaurantReservations from './src/Screens/Restaurant/RestaurantReservations';
+import RestaurantMenus from './src/Screens/Restaurant/RestaurantMenus';
+import RestaurantSettings from './src/Screens/Restaurant/RestaurantSettings';
 import PrinterConfig from './src/Screens/PrinterConfig/PrinterConfig';
 import SubscriptionPage from './src/Screens/Subscription/SubscriptionPage';
 import MobileMoneyPaymentInstructions from './src/Screens/Subscription/MobileMoneyPaymentInstructions';
 import BarcodeScannerScreen from './src/Screens/Scanner/BarcodeScannerScreen';
 import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 import { COLORS } from './src/constants';
+import { AppUpdateGate } from './src/Components/AppUpdateGate';
+import RestaurantPinRouteGate from './src/Components/RestaurantPinRouteGate';
 
 const Stack = createStackNavigator();
 
+type ProtectedPageName = React.ComponentProps<typeof ProtectedScreen>['pageName'];
+
+/** Stable `ProtectedScreen` wrapper for stack routes (avoids inline `component={() => …}`). */
+function protectRoute<P extends object>(
+  Inner: React.ComponentType<P>,
+  pageName: ProtectedPageName,
+): React.ComponentType<P> {
+  function Wrapped(props: P) {
+    return (
+      <ProtectedScreen pageName={pageName}>
+        <Inner {...props} />
+      </ProtectedScreen>
+    );
+  }
+  const innerName =
+    Inner.displayName ?? (Inner as {name?: string}).name ?? 'Screen';
+  Wrapped.displayName = `ProtectedRoute(${innerName})`;
+  return Wrapped;
+}
+
+function ProfitLossReportRoute(props: any) {
+  return (
+    <ProtectedScreen pageName={PAGE_NAMES.PROFIT_AND_LOSS}>
+      <ReportStatementScreen {...props} reportType="profit-loss" />
+    </ProtectedScreen>
+  );
+}
+ProfitLossReportRoute.displayName = 'ProfitLossReportRoute';
+
+function BalanceSheetReportRoute(props: any) {
+  return (
+    <ProtectedScreen pageName={PAGE_NAMES.BALANCE_SHEET}>
+      <ReportStatementScreen {...props} reportType="balance-sheet" />
+    </ProtectedScreen>
+  );
+}
+BalanceSheetReportRoute.displayName = 'BalanceSheetReportRoute';
+
+const RouteCart = protectRoute(Cart, PAGE_NAMES.SALES);
+const RouteExpenses = protectRoute(Expenses, PAGE_NAMES.EXPENSES);
+const RouteExpenseHistory = protectRoute(
+  ExpenseHistory,
+  PAGE_NAMES.EXPENSE_HISTORY,
+);
+const RouteMyWallet = protectRoute(MyWallet, PAGE_NAMES.PAYMENTS);
+const RouteReportsMenu = protectRoute(ReportsMenu, PAGE_NAMES.REPORTS);
+const RouteItemsMenu = protectRoute(ItemsMenu, PAGE_NAMES.ITEMS);
+const RouteAllItems = protectRoute(AllItems, PAGE_NAMES.ITEMS);
+const RouteCustomers = protectRoute(Customers, PAGE_NAMES.CUSTOMER_MANAGEMENT);
+const RouteItemCategories = protectRoute(
+  ItemCategories,
+  PAGE_NAMES.ITEM_CATEGORIES,
+);
+const RouteSalesHistory = protectRoute(SalesHistory, PAGE_NAMES.SALES_HISTORY);
+const RoutePrintLabels = protectRoute(PrintLabels, PAGE_NAMES.ITEMS);
+const RouteItemJournal = protectRoute(ItemJournal, PAGE_NAMES.ITEM_JOURNAL);
+const RouteSearchPage = protectRoute(SearchPage, PAGE_NAMES.ITEMS);
+const RoutePurchaseHistory = protectRoute(
+  PurchaseHistory,
+  PAGE_NAMES.PURCHASES,
+);
+const RoutePurchaseCreation = protectRoute(
+  PurchaseCreation,
+  PAGE_NAMES.PURCHASES,
+);
+const RouteSuppliers = protectRoute(Suppliers, PAGE_NAMES.SUPPLIERS);
+const RoutePayments = protectRoute(Payments, PAGE_NAMES.PAYMENTS);
+const RouteBankAccounts = protectRoute(
+  BankAccounts,
+  PAGE_NAMES.BANK_ACCOUNT_MANAGEMENT,
+);
+const RouteLoans = protectRoute(Loans, PAGE_NAMES.LOAN_REGISTRATION);
+const RouteLoanRepayments = protectRoute(
+  LoanRepayments,
+  PAGE_NAMES.LOAN_REPAYMENT,
+);
+const RoutePrepayments = protectRoute(Prepayments, PAGE_NAMES.PREPAYMENTS);
+const RouteBankAccountLedger = protectRoute(
+  BankAccountLedger,
+  PAGE_NAMES.BANK_ACCOUNT_LEDGER_ENTRIES,
+);
+const RouteFinancials = protectRoute(Financials, PAGE_NAMES.FINANCIAL_REPORTS);
+const RouteUserManagement = protectRoute(
+  UserManagement,
+  PAGE_NAMES.USER_MANAGEMENT,
+);
+const RouteRestaurantPOS = protectRoute(
+  RestaurantPOS,
+  PAGE_NAMES.RESTAURANT_POS,
+);
+const RouteRestaurantOrders = protectRoute(
+  RestaurantOrders,
+  PAGE_NAMES.RESTAURANT_ORDERS,
+);
+const RouteRestaurantKitchen = protectRoute(
+  RestaurantKitchen,
+  PAGE_NAMES.RESTAURANT_KITCHEN_DISPLAY,
+);
+const RouteRestaurantDashboard = protectRoute(
+  RestaurantDashboard,
+  PAGE_NAMES.RESTAURANT_DASHBOARD,
+);
+const RouteRestaurantTables = protectRoute(
+  RestaurantTables,
+  PAGE_NAMES.RESTAURANT_TABLE_MANAGEMENT,
+);
+const RouteRestaurantReservations = protectRoute(
+  RestaurantReservations,
+  PAGE_NAMES.RESTAURANT_RESERVATIONS,
+);
+const RouteRestaurantMenus = protectRoute(RestaurantMenus, [
+  PAGE_NAMES.RESTAURANT_MENUS,
+  PAGE_NAMES.RESTAURANT_MENU_MANAGEMENT,
+  PAGE_NAMES.RESTAURANT_MENU_LAYOUT_EDITOR,
+]);
+const RouteRestaurantSettings = protectRoute(
+  RestaurantSettings,
+  PAGE_NAMES.RESTAURANT_SETTINGS,
+);
+
+function HomeAuthenticatedLayout(props: object) {
+  return (
+    <AuthGuard requireAuth={true}>
+      <MainLayout {...props} />
+    </AuthGuard>
+  );
+}
+HomeAuthenticatedLayout.displayName = 'HomeAuthenticatedLayout';
+
+/** Routes registered only on the guest stack — never use auth-only names here. */
+const GUEST_STACK_ROUTES = new Set<string>([
+  'OnBoarding',
+  'SignIn',
+  'RestaurantPinSignIn',
+  'SignUp',
+  'CompanyProvisioning',
+  'Otp',
+]);
+
 const AppNavigator = () => {
   const { accessToken } = useAuth();
+  const { branchSession } = useAppContext() as any;
   const [isLoading, setIsLoading] = useState(true);
   const [initialRoute, setInitialRoute] = useState('OnBoarding');
+
+  const guestInitialRouteName = useMemo(() => {
+    if (GUEST_STACK_ROUTES.has(initialRoute)) {
+      return initialRoute;
+    }
+    return 'SignIn';
+  }, [initialRoute]);
 
   useEffect(() => {
     const initializeApp = async () => {
@@ -76,13 +246,38 @@ const AppNavigator = () => {
         );
         if (accessToken) {
           await clearPendingCompanyCreation();
-          setInitialRoute('Home');
+          const showPinImmediate = await AsyncStorage.getItem(
+            RESTAURANT_SHOW_PIN_SETUP_IMMEDIATE_KEY,
+          );
+          if (showPinImmediate === '1') {
+            setInitialRoute('RestaurantPinSetup');
+            await AsyncStorage.removeItem(RESTAURANT_SHOW_PIN_SETUP_IMMEDIATE_KEY);
+          } else if (branchSession?.branchSelectionPending) {
+            setInitialRoute('SelectBranch');
+          } else {
+            setInitialRoute('Home');
+          }
         } else {
           const pendingCompany = await getPendingCompanyCreation();
           if (pendingCompany) {
             setInitialRoute('CompanyProvisioning');
-          } else if (onboardingComplete === 'true') {
-            setInitialRoute('SignIn');
+          } else {
+            const prefs = await getRestaurantDevicePrefs();
+            if (
+              prefs?.isRestaurantDevice &&
+              prefs.deviceId &&
+              prefs.schemaName
+            ) {
+              await AsyncStorage.setItem(
+                'tenant',
+                prefs.schemaName.trim().toLowerCase(),
+              );
+              setInitialRoute('RestaurantPinSignIn');
+            } else if (onboardingComplete === 'true') {
+              setInitialRoute('SignIn');
+            } else {
+              setInitialRoute('OnBoarding');
+            }
           }
         }
         await new Promise(resolve => setTimeout(resolve, 2000));
@@ -94,7 +289,31 @@ const AppNavigator = () => {
     };
     NetworkManager.getInstance();
     initializeApp();
-  }, [accessToken]);
+  }, [accessToken, branchSession?.branchSelectionPending]);
+
+  // If branch selection becomes pending after the auth stack mounted (e.g. Home won
+  // initialRouteName due to timing), reset — matches web modal always blocking app.
+  useEffect(() => {
+    if (!accessToken || !branchSession?.branchSelectionPending) {
+      return;
+    }
+    const id = requestAnimationFrame(() => {
+      const nav = navigationRef.current;
+      if (!nav?.isReady()) {
+        return;
+      }
+      if (nav.getCurrentRoute()?.name === 'SelectBranch') {
+        return;
+      }
+      nav.dispatch(
+        CommonActions.reset({
+          index: 0,
+          routes: [{name: 'SelectBranch'}],
+        }),
+      );
+    });
+    return () => cancelAnimationFrame(id);
+  }, [accessToken, branchSession?.branchSelectionPending]);
 
   if (isLoading) {
     return <SplashScreen />;
@@ -103,7 +322,16 @@ const AppNavigator = () => {
   return (
     <>
       <Stack.Navigator
-        initialRouteName={initialRoute}
+        key={accessToken ? 'auth' : 'guest'}
+        initialRouteName={
+          accessToken
+            ? branchSession?.branchSelectionPending
+              ? 'SelectBranch'
+              : initialRoute === 'RestaurantPinSetup'
+                ? 'RestaurantPinSetup'
+                : 'Home'
+            : guestInitialRouteName
+        }
         screenOptions={{
           headerShown: false,
           gestureEnabled: false, // Disable swipe back gesture
@@ -131,6 +359,15 @@ const AppNavigator = () => {
                 headerShown: false,
                 gestureEnabled: false, // Disable swipe back gesture
               }}
+            />
+            <Stack.Screen
+              name="RestaurantPinSignIn"
+              component={(props: any) => (
+                <AuthGuard requireAuth={false}>
+                  <RestaurantPinSignIn {...props} />
+                </AuthGuard>
+              )}
+              options={{headerShown: false, gestureEnabled: false}}
             />
             <Stack.Screen
               name="SignUp"
@@ -164,12 +401,26 @@ const AppNavigator = () => {
           // Main app screens - only show when logged in
           <>
             <Stack.Screen
-              name="Home"
-              component={(props: any) => (
+              name="SelectBranch"
+              children={(props: any) => (
                 <AuthGuard requireAuth={true}>
-                  <CustomDrawer {...props} />
+                  <SelectBranch {...props} />
                 </AuthGuard>
               )}
+              options={{ headerShown: false, gestureEnabled: false }}
+            />
+            <Stack.Screen
+              name="RestaurantPinSetup"
+              children={(props: any) => (
+                <AuthGuard requireAuth={true}>
+                  <RestaurantPinSetup {...props} />
+                </AuthGuard>
+              )}
+              options={{headerShown: false, gestureEnabled: false}}
+            />
+            <Stack.Screen
+              name="Home"
+              component={HomeAuthenticatedLayout}
               options={{
                 headerShown: false,
                 gestureEnabled: false, // Disable swipe back gesture
@@ -187,263 +438,197 @@ const AppNavigator = () => {
             />
             <Stack.Screen
               name="Cart"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.SALES}>
-                  <Cart {...props} />
-                </ProtectedScreen>
-              )}
+              component={RouteCart}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="Settings"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.PROFILE_SETTINGS}>
-                  <Settings {...props} />
-                </ProtectedScreen>
-              )}
+              component={Settings}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="BusinessDetails"
+              component={BusinessDetails}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="Expenses"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.EXPENSES}>
-                  <Expenses {...props} />
-                </ProtectedScreen>
-              )}
+              component={RouteExpenses}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="ExpenseHistory"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.EXPENSE_HISTORY}>
-                  <ExpenseHistory {...props} />
-                </ProtectedScreen>
-              )}
+              component={RouteExpenseHistory}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="MyWallet"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.PAYMENTS}>
-                  <MyWallet {...props} />
-                </ProtectedScreen>
-              )}
+              component={RouteMyWallet}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="Reports"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.REPORTS}>
-                  <ReportsMenu {...props} />
-                </ProtectedScreen>
-              )}
+              component={RouteReportsMenu}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="ProfitLossReport"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.PROFIT_AND_LOSS}>
-                  <ReportStatementScreen {...props} reportType="profit-loss" />
-                </ProtectedScreen>
-              )}
+              component={ProfitLossReportRoute}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="BalanceSheetReport"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.BALANCE_SHEET}>
-                  <ReportStatementScreen {...props} reportType="balance-sheet" />
-                </ProtectedScreen>
-              )}
+              component={BalanceSheetReportRoute}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="Items"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.ITEMS}>
-                  <ItemsMenu {...props} />
-                </ProtectedScreen>
-              )}
+              component={RouteItemsMenu}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="AllItems"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.ITEMS}>
-                  <AllItems {...props} />
-                </ProtectedScreen>
-              )}
+              component={RouteAllItems}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="AllServices"
+              component={RouteAllItems}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="Customers"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.CUSTOMER_MANAGEMENT}>
-                  <Customers {...props} />
-                </ProtectedScreen>
-              )}
+              component={RouteCustomers}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="ItemCategories"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.ITEM_CATEGORIES}>
-                  <ItemCategories {...props} />
-                </ProtectedScreen>
-              )}
+              component={RouteItemCategories}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="SalesHistory"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.SALES_HISTORY}>
-                  <SalesHistory {...props} />
-                </ProtectedScreen>
-              )}
+              component={RouteSalesHistory}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="PrintLabels"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.ITEMS}>
-                  <PrintLabels {...props} />
-                </ProtectedScreen>
-              )}
+              component={RoutePrintLabels}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="ItemJournal"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.ITEM_JOURNAL}>
-                  <ItemJournal {...props} />
-                </ProtectedScreen>
-              )}
+              component={RouteItemJournal}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="SearchPage"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.ITEMS}>
-                  <SearchPage {...props} />
-                </ProtectedScreen>
-              )}
+              component={RouteSearchPage}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="Purchases"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.PURCHASES}>
-                  <PurchasesMenu {...props} />
-                </ProtectedScreen>
-              )}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="PurchaseHistory"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.PURCHASES}>
-                  <PurchaseHistory {...props} />
-                </ProtectedScreen>
-              )}
+              component={RoutePurchaseHistory}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="PurchaseCreation"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.PURCHASES}>
-                  <PurchaseCreation {...props} />
-                </ProtectedScreen>
-              )}
+              component={RoutePurchaseCreation}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="Suppliers"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.SUPPLIERS}>
-                  <Suppliers {...props} />
-                </ProtectedScreen>
-              )}
+              component={RouteSuppliers}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="Payments"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.PAYMENTS}>
-                  <Payments {...props} />
-                </ProtectedScreen>
-              )}
+              component={RoutePayments}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="BankAccounts"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.BANK_ACCOUNT_MANAGEMENT}>
-                  <BankAccounts {...props} />
-                </ProtectedScreen>
-              )}
+              component={RouteBankAccounts}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="Loans"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.LOAN_REGISTRATION}>
-                  <Loans {...props} />
-                </ProtectedScreen>
-              )}
+              component={RouteLoans}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="LoanRepayments"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.LOAN_REPAYMENT}>
-                  <LoanRepayments {...props} />
-                </ProtectedScreen>
-              )}
+              component={RouteLoanRepayments}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="Prepayments"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.PREPAYMENTS}>
-                  <Prepayments {...props} />
-                </ProtectedScreen>
-              )}
+              component={RoutePrepayments}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="BankAccountLedger"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.BANK_ACCOUNT_LEDGER_ENTRIES}>
-                  <BankAccountLedger {...props} />
-                </ProtectedScreen>
-              )}
+              component={RouteBankAccountLedger}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="Financials"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.FINANCIAL_REPORTS}>
-                  <Financials {...props} />
-                </ProtectedScreen>
-              )}
+              component={RouteFinancials}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="UserManagement"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.USER_MANAGEMENT}>
-                  <UserManagement {...props} />
-                </ProtectedScreen>
-              )}
+              component={RouteUserManagement}
               options={{ headerShown: false }}
             />
             <Stack.Screen
+              name="RestaurantHub"
+              component={RestaurantHub}
+              options={{headerShown: false}}
+            />
+            <Stack.Screen
+              name="RestaurantPOS"
+              component={RouteRestaurantPOS}
+              options={{headerShown: false}}
+            />
+            <Stack.Screen
+              name="RestaurantOrders"
+              component={RouteRestaurantOrders}
+              options={{headerShown: false}}
+            />
+            <Stack.Screen
+              name="RestaurantKitchen"
+              component={RouteRestaurantKitchen}
+              options={{headerShown: false}}
+            />
+            <Stack.Screen
+              name="RestaurantDashboard"
+              component={RouteRestaurantDashboard}
+              options={{headerShown: false}}
+            />
+            <Stack.Screen
+              name="RestaurantTables"
+              component={RouteRestaurantTables}
+              options={{headerShown: false}}
+            />
+            <Stack.Screen
+              name="RestaurantReservations"
+              component={RouteRestaurantReservations}
+              options={{headerShown: false}}
+            />
+            <Stack.Screen
+              name="RestaurantMenus"
+              component={RouteRestaurantMenus}
+              options={{headerShown: false}}
+            />
+            <Stack.Screen
+              name="RestaurantSettings"
+              component={RouteRestaurantSettings}
+              options={{headerShown: false}}
+            />
+            <Stack.Screen
               name="PrinterConfig"
-              component={(props: any) => (
-                <ProtectedScreen pageName={PAGE_NAMES.PROFILE_SETTINGS}>
-                  <PrinterConfig {...props} />
-                </ProtectedScreen>
-              )}
+              component={PrinterConfig}
               options={{ headerShown: false }}
             />
             <Stack.Screen
@@ -478,6 +663,7 @@ function ThemedNavigation() {
   return (
     <NavigationContainer ref={navigationRef} theme={navTheme}>
       <AppNavigator />
+      <RestaurantPinRouteGate />
     </NavigationContainer>
   );
 }
@@ -491,7 +677,9 @@ function App() {
             <CartProvider>
               <SearchModeProvider>
                 <ThemeProvider>
-                  <ThemedNavigation />
+                  <AppUpdateGate>
+                    <ThemedNavigation />
+                  </AppUpdateGate>
                 </ThemeProvider>
               </SearchModeProvider>
             </CartProvider>

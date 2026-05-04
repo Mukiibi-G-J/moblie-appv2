@@ -37,8 +37,8 @@ type SearchModeAction =
 const initialState: SearchModeState = {
   searchMode: 'barcode', // Default to barcode mode
   isLoading: true,
-  barcodeScannerEnabled: true,
-  barcodeBeepEnabled: true,
+  barcodeScannerEnabled: false,
+  barcodeBeepEnabled: false,
 };
 
 const SearchModeContext = createContext<{

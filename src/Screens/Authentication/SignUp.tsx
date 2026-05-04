@@ -8,10 +8,11 @@ import {
     View,
     ActivityIndicator,
     Pressable,
+    Modal,
 } from "react-native";
 import AuthLayout from "../../Components/layouts/AuthLayout";
 import FormInput2 from "../../Components/FormInput2";
-import { COLORS, FONTS, icons, SIZES } from "../../constants";
+import { COLORS, FONTS, icons } from "../../constants";
 import { useTheme } from "../../context/ThemeContext";
 import utils from "../../utils/utils";
 import React, { useState, useRef, useEffect } from "react";
@@ -34,6 +35,7 @@ import {
 import type { AxiosError } from "axios";
 import { radii } from "../../design-system/theme";
 import { authOnboarding } from "../../design-system/authOnboardingTokens";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 /** Primary CTA — match Login Continue / Sign in */
 const SIGNUP_PRIMARY = "#0b5cff";
@@ -87,7 +89,7 @@ function deriveUserNameFromEmail(email: string): string {
 }
 
 const SignUp = ({ navigation }) => {
-    const { colors } = useTheme();
+    const { colors, isDark } = useTheme();
 
     const [form, setForm] = React.useState({
         email: "",
@@ -461,6 +463,14 @@ const SignUp = ({ navigation }) => {
     };
 
     const onBack = () => {
+        if (busy) {
+            Toast.show({
+                type: "info",
+                text1: "Setup in progress",
+                text2: "Please keep this screen open until we are finished.",
+            });
+            return;
+        }
         if (step === 3) {
             setStep(2);
         } else if (step === 2) {
@@ -748,55 +758,150 @@ const SignUp = ({ navigation }) => {
             </AuthLayout>
             <Toast />
 
-            {busy ? (
-                <View style={styles.loaderContainer}>
-                    <ActivityIndicator size="large" color={COLORS.primary2} />
-                    <Text style={styles.loaderTitle}>
-                        {statusMessage ||
-                            (phase === "submitting"
-                                ? "Starting company setup…"
-                                : "Creating your company…")}
-                    </Text>
-                    <Text style={styles.loaderHint}>
-                        This can take several minutes. Please stay on this screen and wait — do not
-                        close the app.
-                        {"\n\n"}
-                        When your company is ready, we&apos;ll send a confirmation email to{" "}
-                        {form.email.trim() ? form.email.trim() : "the address you entered"}.
-                    </Text>
-                </View>
-            ) : null}
+            <Modal
+                visible={busy}
+                transparent={false}
+                animationType="fade"
+                statusBarTranslucent
+                presentationStyle="fullScreen"
+                onRequestClose={() => {
+                    Toast.show({
+                        type: "info",
+                        text1: "Setup in progress",
+                        text2: "Please keep this screen open until we are finished.",
+                    });
+                }}
+            >
+                <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
+                    <View style={styles.processingRoot}>
+                        <View
+                            style={[
+                                styles.processingCard,
+                                {
+                                    backgroundColor: colors.surface,
+                                    borderColor: colors.border,
+                                },
+                            ]}
+                            accessibilityViewIsModal
+                        >
+                            <View
+                                style={[
+                                    styles.processingSpinnerRing,
+                                    { backgroundColor: colors.inputBackground },
+                                ]}
+                            >
+                                <ActivityIndicator size="large" color={SIGNUP_PRIMARY} />
+                            </View>
+
+                            <Text style={[styles.processingKicker, { color: colors.textTertiary }]}>
+                                {phase === "submitting" ? "Starting" : "Provisioning"}
+                            </Text>
+
+                            <Text style={[styles.processingTitle, { color: colors.textPrimary }]}>
+                                {statusMessage ||
+                                    (phase === "submitting"
+                                        ? "Starting company setup…"
+                                        : "Creating your company…")}
+                            </Text>
+
+                            <Text style={[styles.processingBody, { color: colors.textSecondary }]}>
+                                This can take several minutes. Keep this screen open and do not close
+                                the app. We will notify you when it is done.
+                            </Text>
+
+                            <View
+                                style={[
+                                    styles.processingEmailPanel,
+                                    {
+                                        backgroundColor: isDark
+                                            ? "rgba(11, 92, 255, 0.14)"
+                                            : "rgba(11, 92, 255, 0.08)",
+                                        borderColor: isDark
+                                            ? "rgba(11, 92, 255, 0.35)"
+                                            : "rgba(11, 92, 255, 0.2)",
+                                    },
+                                ]}
+                            >
+                                <Text
+                                    style={[styles.processingEmailLead, { color: colors.textSecondary }]}
+                                >
+                                    Confirmation email will be sent to
+                                </Text>
+                                <Text
+                                    style={[styles.processingEmailValue, { color: colors.textPrimary }]}
+                                    numberOfLines={2}
+                                >
+                                    {form.email.trim() || "the address you entered"}
+                                </Text>
+                            </View>
+                        </View>
+                    </View>
+                </SafeAreaView>
+            </Modal>
         </KeyboardAvoidingView>
     );
 };
 
 const styles = StyleSheet.create({
-    loaderContainer: {
-        position: "absolute",
-        left: 0,
-        right: 0,
-        top: 0,
-        bottom: 0,
+    processingRoot: {
+        flex: 1,
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: "rgba(0,0,0,0.5)",
+        paddingHorizontal: authOnboarding.spacing.lg,
+    },
+    processingCard: {
+        width: "100%",
+        maxWidth: 380,
+        borderRadius: radii.lg,
+        borderWidth: StyleSheet.hairlineWidth * 2,
         paddingHorizontal: 24,
+        paddingVertical: 28,
+        alignItems: "center",
     },
-    loaderTitle: {
-        ...FONTS.body3,
-        color: COLORS.white,
-        marginTop: SIZES.padding,
-        textAlign: "center",
-        fontWeight: "600",
-        maxWidth: 340,
+    processingSpinnerRing: {
+        width: 72,
+        height: 72,
+        borderRadius: 36,
+        alignItems: "center",
+        justifyContent: "center",
     },
-    loaderHint: {
+    processingKicker: {
         ...FONTS.body4,
-        color: "rgba(255,255,255,0.92)",
-        marginTop: 16,
+        marginTop: 20,
+        letterSpacing: 1.2,
+        textTransform: "uppercase",
+        fontWeight: "600",
+    },
+    processingTitle: {
+        ...FONTS.h3,
+        marginTop: 8,
+        textAlign: "center",
+        fontWeight: "700",
+        lineHeight: 26,
+    },
+    processingBody: {
+        ...FONTS.body4,
+        marginTop: 14,
         textAlign: "center",
         lineHeight: 22,
-        maxWidth: 340,
+    },
+    processingEmailPanel: {
+        marginTop: 22,
+        width: "100%",
+        borderRadius: radii.md,
+        borderWidth: 1,
+        paddingVertical: 14,
+        paddingHorizontal: 16,
+    },
+    processingEmailLead: {
+        ...FONTS.body4,
+        textAlign: "center",
+    },
+    processingEmailValue: {
+        ...FONTS.body3,
+        marginTop: 6,
+        textAlign: "center",
+        fontWeight: "700",
     },
     pickerLabel: {
         ...FONTS.body4,

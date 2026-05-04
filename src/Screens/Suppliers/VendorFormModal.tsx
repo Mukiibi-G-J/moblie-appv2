@@ -20,6 +20,7 @@ import {
   PaymentMethod,
   VendorFormValues,
 } from '../../@types/vendor';
+import {QuickIconPressable} from '../../Components';
 import {VendorServices} from '../../services/VendorServices';
 import Toast from 'react-native-toast-message';
 
@@ -240,16 +241,17 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
       onRequestClose={onClose}>
       <View style={styles.pageRoot}>
         <View style={styles.pageHeader}>
-          <TouchableOpacity
+          <QuickIconPressable
             onPress={onClose}
             style={styles.headerIconButton}
-            hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
+            hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
+            accessibilityLabel="Close">
             <Image
               source={icons.cross}
               style={styles.headerIcon}
               resizeMode="contain"
             />
-          </TouchableOpacity>
+          </QuickIconPressable>
 
           {((isEditMode && canEdit && !isGeneralVendor) ||
             (!isEditMode && canCreate)) && (

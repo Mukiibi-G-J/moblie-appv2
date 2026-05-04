@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useMemo} from 'react';
 import {
   View,
   Text,
@@ -11,9 +11,19 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Image,
 } from 'react-native';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {Picker} from '@react-native-picker/picker';
-import {COLORS, FONTS, SIZES} from '../../constants';
+import {QuickIconPressable} from '../../Components';
+import {
+  COLORS,
+  FONTS,
+  SIZES,
+  ICON_BUTTON_HIT_SLOP,
+  icons,
+} from '../../constants';
+import {useTheme} from '../../context/ThemeContext';
 import {
   PaymentJournal,
   PaymentJournalFormValues,
@@ -48,6 +58,42 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
   canDelete,
 }) => {
   const isEditMode = !!payment;
+  const {colors} = useTheme();
+  const insets = useSafeAreaInsets();
+  const canSave =
+    (isEditMode && canEdit) || (!isEditMode && canCreate);
+
+  const themeStyles = useMemo(
+    () => ({
+      loadingText: {
+        color: colors.textSecondary,
+      },
+      sectionTitle: {
+        color: colors.textPrimary,
+      },
+      label: {
+        color: colors.textPrimary,
+      },
+      input: {
+        borderColor: colors.border,
+        color: colors.textPrimary,
+        backgroundColor: colors.inputBackground,
+      },
+      disabledInput: {
+        backgroundColor: colors.screenMuted,
+        color: colors.textSecondary,
+      },
+      pickerWrap: {
+        borderColor: colors.border,
+        backgroundColor: colors.inputBackground,
+      },
+      picker: {
+        backgroundColor: colors.inputBackground,
+        color: colors.textPrimary,
+      },
+    }),
+    [colors],
+  );
 
   // Form state
   const [formData, setFormData] = useState<PaymentJournalFormValues>({
@@ -449,41 +495,104 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
     <Modal
       visible={visible}
       animationType="slide"
-      transparent={true}
+      transparent={false}
       onRequestClose={onClose}>
       <KeyboardAvoidingView
-        style={styles.modalOverlay}
+        style={[styles.pageRoot, {backgroundColor: colors.background}]}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <View style={styles.modalContent}>
-          {/* Header */}
-          <View style={styles.header}>
-            <Text style={styles.title}>
-              {isEditMode ? 'Edit Payment' : 'Create Payment'}
-            </Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <Text style={styles.closeButtonText}>✕</Text>
-            </TouchableOpacity>
+        <View style={[styles.page, {backgroundColor: colors.background}]}>
+          <View
+            style={[
+              styles.pageHeader,
+              {
+                paddingTop: Math.max(
+                  insets.top,
+                  Platform.OS === 'ios' ? 12 : 16,
+                ),
+              },
+            ]}>
+            <QuickIconPressable
+              onPress={onClose}
+              style={[
+                styles.headerIconButton,
+                {
+                  backgroundColor: colors.card,
+                  borderColor: colors.border,
+                  borderWidth: StyleSheet.hairlineWidth,
+                },
+              ]}
+              hitSlop={ICON_BUTTON_HIT_SLOP}
+              accessibilityLabel="Close">
+              <Image
+                source={icons.cross}
+                style={[
+                  styles.headerCloseIcon,
+                  {tintColor: colors.textPrimary},
+                ]}
+                resizeMode="contain"
+              />
+            </QuickIconPressable>
+            {canSave ? (
+              <TouchableOpacity
+                style={[
+                  styles.headerSaveButton,
+                  (loading || loadingDropdowns) &&
+                    styles.headerSaveButtonDisabled,
+                ]}
+                onPress={handleSave}
+                disabled={loading || loadingDropdowns}
+                activeOpacity={0.85}>
+                {loading ? (
+                  <ActivityIndicator size="small" color={COLORS.white} />
+                ) : (
+                  <Text style={styles.headerSaveText}>
+                    {isEditMode ? 'Save' : 'Create'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.headerSaveSpacer} />
+            )}
           </View>
 
           {loadingDropdowns ? (
             <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={COLORS.primary} />
-              <Text style={styles.loadingText}>Loading form data...</Text>
+              <ActivityIndicator size="large" color={COLORS.primary2} />
+              <Text style={[styles.loadingText, themeStyles.loadingText]}>
+                Loading form data...
+              </Text>
             </View>
           ) : (
             <ScrollView
-              style={styles.scrollView}
+              style={styles.formContainer}
+              contentContainerStyle={[
+                styles.formContent,
+                {paddingBottom: Math.max(insets.bottom, 28) + 16},
+              ]}
+              keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}>
-              <View style={styles.formCard}>
-                {/* Document Information Section */}
-                <Text style={styles.sectionTitle}>Document Information</Text>
+              <Text style={[styles.pageTitle, {color: colors.textPrimary}]}>
+                {isEditMode ? 'Edit payment' : 'Create payment'}
+              </Text>
+
+              {/* Document Information Section */}
+              <Text style={[styles.sectionTitle, themeStyles.sectionTitle]}>
+                Document information
+              </Text>
 
                 {/* Document No (Read-only) */}
                 {isEditMode && payment?.document_no && (
                   <View style={styles.fieldContainer}>
-                    <Text style={styles.label}>Document No</Text>
+                    <Text style={[styles.label, themeStyles.label]}>
+                      Document no
+                    </Text>
                     <TextInput
-                      style={[styles.input, styles.disabledInput]}
+                      style={[
+                        styles.input,
+                        themeStyles.input,
+                        styles.disabledInput,
+                        themeStyles.disabledInput,
+                      ]}
                       value={payment.document_no}
                       editable={false}
                     />
@@ -492,15 +601,21 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
 
                 {/* Posting Date */}
                 <View style={styles.fieldContainer}>
-                  <Text style={styles.label}>Posting Date *</Text>
+                  <Text style={[styles.label, themeStyles.label]}>
+                    Posting date *
+                  </Text>
                   <TextInput
-                    style={[styles.input, errors.posting_date && styles.inputError]}
+                    style={[
+                      styles.input,
+                      themeStyles.input,
+                      errors.posting_date && styles.inputError,
+                    ]}
                     value={formData.posting_date}
                     onChangeText={text =>
                       setFormData({...formData, posting_date: text})
                     }
                     placeholder="YYYY-MM-DD"
-                    placeholderTextColor={COLORS.gray}
+                    placeholderTextColor={colors.placeholder}
                   />
                   {errors.posting_date && (
                     <Text style={styles.errorText}>{errors.posting_date}</Text>
@@ -509,15 +624,19 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
 
                 {/* Document Type */}
                 <View style={styles.fieldContainer}>
-                  <Text style={styles.label}>Document Type</Text>
-                  <View style={styles.pickerContainer}>
+                  <Text style={[styles.label, themeStyles.label]}>
+                    Document type
+                  </Text>
+                  <View
+                    style={[styles.pickerContainer, themeStyles.pickerWrap]}>
                     <Picker
                       selectedValue={formData.document_type}
                       onValueChange={value =>
                         setFormData({...formData, document_type: value})
                       }
-                      style={styles.picker}
-                      itemStyle={{color: COLORS.black}}>
+                      style={[styles.picker, themeStyles.picker]}
+                      itemStyle={{color: colors.textPrimary}}
+                      dropdownIconColor={colors.textPrimary}>
                       <Picker.Item label="Payment" value="Payment" />
                       <Picker.Item label="Refund" value="Refund" />
                     </Picker>
@@ -527,9 +646,14 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
                 {/* Status (Read-only) */}
                 {isEditMode && (
                   <View style={styles.fieldContainer}>
-                    <Text style={styles.label}>Status</Text>
+                    <Text style={[styles.label, themeStyles.label]}>Status</Text>
                     <TextInput
-                      style={[styles.input, styles.disabledInput]}
+                      style={[
+                        styles.input,
+                        themeStyles.input,
+                        styles.disabledInput,
+                        themeStyles.disabledInput,
+                      ]}
                       value={formData.status}
                       editable={false}
                     />
@@ -537,21 +661,32 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
                 )}
 
                 {/* Account Information Section */}
-                <Text style={[styles.sectionTitle, styles.sectionTitleMargin]}>
-                  Account Information
+                <Text
+                  style={[
+                    styles.sectionTitle,
+                    styles.sectionTitleMargin,
+                    themeStyles.sectionTitle,
+                  ]}>
+                  Account information
                 </Text>
 
                 {/* Description */}
                 <View style={styles.fieldContainer}>
-                  <Text style={styles.label}>Description</Text>
+                  <Text style={[styles.label, themeStyles.label]}>
+                    Description
+                  </Text>
                   <TextInput
-                    style={[styles.input, styles.textArea]}
+                    style={[
+                      styles.input,
+                      themeStyles.input,
+                      styles.textArea,
+                    ]}
                     value={formData.description}
                     onChangeText={text =>
                       setFormData({...formData, description: text})
                     }
                     placeholder="Enter payment description"
-                    placeholderTextColor={COLORS.gray}
+                    placeholderTextColor={colors.placeholder}
                     multiline
                     numberOfLines={2}
                   />
@@ -559,8 +694,11 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
 
                 {/* Account Type */}
                 <View style={styles.fieldContainer}>
-                  <Text style={styles.label}>Account Type *</Text>
-                  <View style={styles.pickerContainer}>
+                  <Text style={[styles.label, themeStyles.label]}>
+                    Account type *
+                  </Text>
+                  <View
+                    style={[styles.pickerContainer, themeStyles.pickerWrap]}>
                     <Picker
                       selectedValue={formData.account_type || ''}
                       onValueChange={value => {
@@ -570,8 +708,9 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
                           handleAccountTypeChange(value);
                         }
                       }}
-                      style={styles.picker}
-                      itemStyle={{color: COLORS.black}}>
+                      style={[styles.picker, themeStyles.picker]}
+                      itemStyle={{color: colors.textPrimary}}
+                      dropdownIconColor={colors.textPrimary}>
                       <Picker.Item
                         label="-- Select Account Type --"
                         value=""
@@ -589,10 +728,11 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
                 {/* Account Selection */}
                 {formData.account_type && (
                   <View style={styles.fieldContainer}>
-                    <Text style={styles.label}>
+                    <Text style={[styles.label, themeStyles.label]}>
                       {formData.account_type} *
                     </Text>
-                    <View style={styles.pickerContainer}>
+                    <View
+                      style={[styles.pickerContainer, themeStyles.pickerWrap]}>
                       <Picker
                         selectedValue={
                           formData.account_object_id?.toString() || '0'
@@ -613,8 +753,9 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
                             handleAccountChange(accountId);
                           }
                         }}
-                        style={styles.picker}
-                        itemStyle={{color: COLORS.black}}>
+                        style={[styles.picker, themeStyles.picker]}
+                        itemStyle={{color: colors.textPrimary}}
+                        dropdownIconColor={colors.textPrimary}>
                         <Picker.Item
                           label={`Select ${formData.account_type.toLowerCase()}`}
                           value="0"
@@ -637,14 +778,22 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
                 )}
 
                 {/* Payment Information Section */}
-                <Text style={[styles.sectionTitle, styles.sectionTitleMargin]}>
-                  Payment Information
+                <Text
+                  style={[
+                    styles.sectionTitle,
+                    styles.sectionTitleMargin,
+                    themeStyles.sectionTitle,
+                  ]}>
+                  Payment information
                 </Text>
 
                 {/* Payment Method */}
                 <View style={styles.fieldContainer}>
-                  <Text style={styles.label}>Payment Method (Optional)</Text>
-                  <View style={styles.pickerContainer}>
+                  <Text style={[styles.label, themeStyles.label]}>
+                    Payment method (optional)
+                  </Text>
+                  <View
+                    style={[styles.pickerContainer, themeStyles.pickerWrap]}>
                     <Picker
                       selectedValue={formData.payment_method || 0}
                       onValueChange={value => {
@@ -654,8 +803,9 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
                           handlePaymentMethodChange(value);
                         }
                       }}
-                      style={styles.picker}
-                      itemStyle={{color: COLORS.black}}>
+                      style={[styles.picker, themeStyles.picker]}
+                      itemStyle={{color: colors.textPrimary}}
+                      dropdownIconColor={colors.textPrimary}>
                       <Picker.Item label="Select payment method" value={0} />
                       {paymentMethods.map(method => (
                         <Picker.Item
@@ -670,9 +820,15 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
 
                 {/* Amount */}
                 <View style={styles.fieldContainer}>
-                  <Text style={styles.label}>Amount (UGX) *</Text>
+                  <Text style={[styles.label, themeStyles.label]}>
+                    Amount (UGX) *
+                  </Text>
                   <TextInput
-                    style={[styles.input, errors.amount && styles.inputError]}
+                    style={[
+                      styles.input,
+                      themeStyles.input,
+                      errors.amount && styles.inputError,
+                    ]}
                     value={
                       formData.amount === 0 ? '' : formData.amount.toString()
                     }
@@ -683,7 +839,7 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
                       }
                     }}
                     placeholder="Enter amount"
-                    placeholderTextColor={COLORS.gray}
+                    placeholderTextColor={colors.placeholder}
                     keyboardType="numeric"
                   />
                   {errors.amount && (
@@ -700,14 +856,20 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
                         style={[
                           styles.sectionTitle,
                           styles.sectionTitleMargin,
+                          themeStyles.sectionTitle,
                         ]}>
-                        Applies To (Optional)
+                        Applies to (optional)
                       </Text>
 
-                      {/* Applies To Document Type */}
                       <View style={styles.fieldContainer}>
-                        <Text style={styles.label}>Document Type</Text>
-                        <View style={styles.pickerContainer}>
+                        <Text style={[styles.label, themeStyles.label]}>
+                          Document type
+                        </Text>
+                        <View
+                          style={[
+                            styles.pickerContainer,
+                            themeStyles.pickerWrap,
+                          ]}>
                           <Picker
                             selectedValue={formData.applies_to_doc_type || ''}
                             onValueChange={value =>
@@ -718,8 +880,9 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
                                 applies_to_object_id: null,
                               })
                             }
-                            style={styles.picker}
-                            itemStyle={{color: COLORS.black}}>
+                            style={[styles.picker, themeStyles.picker]}
+                            itemStyle={{color: colors.textPrimary}}
+                            dropdownIconColor={colors.textPrimary}>
                             <Picker.Item label="-- Select --" value="" />
                             <Picker.Item label="Invoice" value="Invoice" />
                             <Picker.Item
@@ -731,11 +894,16 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
                         </View>
                       </View>
 
-                      {/* Applies To Document */}
                       {formData.applies_to_doc_type && (
                         <View style={styles.fieldContainer}>
-                          <Text style={styles.label}>Document</Text>
-                          <View style={styles.pickerContainer}>
+                          <Text style={[styles.label, themeStyles.label]}>
+                            Document
+                          </Text>
+                          <View
+                            style={[
+                              styles.pickerContainer,
+                              themeStyles.pickerWrap,
+                            ]}>
                             <Picker
                               selectedValue={formData.applies_to_object_id || 0}
                               onValueChange={value => {
@@ -756,8 +924,9 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
                                   });
                                 }
                               }}
-                              style={styles.picker}
-                              itemStyle={{color: COLORS.black}}>
+                              style={[styles.picker, themeStyles.picker]}
+                              itemStyle={{color: colors.textPrimary}}
+                              dropdownIconColor={colors.textPrimary}>
                               <Picker.Item label="Select document" value={0} />
                               {getAvailableLedgerEntries().map(entry => (
                                 <Picker.Item
@@ -777,33 +946,8 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
                       )}
                     </>
                   )}
-              </View>
             </ScrollView>
           )}
-
-          {/* Footer Buttons */}
-          <View style={styles.footer}>
-            <TouchableOpacity
-              style={[styles.button, styles.cancelButton]}
-              onPress={onClose}
-              disabled={loading}>
-              <Text style={styles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
-            {((isEditMode && canEdit) || (!isEditMode && canCreate)) && (
-              <TouchableOpacity
-                style={[styles.button, styles.saveButton]}
-                onPress={handleSave}
-                disabled={loading || loadingDropdowns}>
-                {loading ? (
-                  <ActivityIndicator size="small" color={COLORS.white} />
-                ) : (
-                  <Text style={styles.buttonText}>
-                    {isEditMode ? 'Update' : 'Create'}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            )}
-          </View>
         </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -811,72 +955,79 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
 };
 
 const styles = StyleSheet.create({
-  modalOverlay: {
+  pageRoot: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
   },
-  modalContent: {
-    backgroundColor: COLORS.white,
-    borderTopLeftRadius: SIZES.radius * 2,
-    borderTopRightRadius: SIZES.radius * 2,
-    maxHeight: '90%',
+  page: {
+    flex: 1,
   },
-  header: {
+  pageHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: SIZES.padding,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray2,
+    paddingHorizontal: 20,
+    paddingBottom: 8,
   },
-  title: {
-    ...FONTS.h2,
-    color: COLORS.black,
-  },
-  closeButton: {
-    width: 32,
-    height: 32,
+  headerIconButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  closeButtonText: {
-    fontSize: 24,
-    color: COLORS.gray,
+  headerCloseIcon: {
+    width: 20,
+    height: 20,
+  },
+  headerSaveButton: {
+    minWidth: 108,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.primary2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  headerSaveButtonDisabled: {
+    opacity: 0.55,
+  },
+  headerSaveSpacer: {
+    minWidth: 108,
+    height: 48,
+  },
+  headerSaveText: {
+    color: COLORS.white,
+    fontSize: 17,
+    fontWeight: '700',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     padding: SIZES.padding * 2,
+    minHeight: 200,
   },
   loadingText: {
     ...FONTS.body3,
-    color: COLORS.gray,
     marginTop: SIZES.base,
   },
-  scrollView: {
-    maxHeight: '70%',
+  formContainer: {
+    flex: 1,
   },
-  formCard: {
-    marginHorizontal: SIZES.padding,
-    marginVertical: SIZES.base,
-    backgroundColor: COLORS.white,
-    borderRadius: SIZES.radius * 1.5,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    paddingBottom: SIZES.padding,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
+  formContent: {
+    paddingHorizontal: 20,
+  },
+  pageTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    letterSpacing: -0.3,
+    marginTop: 8,
+    marginBottom: 20,
   },
   sectionTitle: {
     ...FONTS.h4,
-    color: COLORS.black,
     fontWeight: '600',
-    paddingHorizontal: SIZES.padding,
+    paddingHorizontal: 0,
     paddingTop: SIZES.base * 1.5,
     paddingBottom: SIZES.base,
   },
@@ -889,28 +1040,22 @@ const styles = StyleSheet.create({
   },
   label: {
     ...FONTS.body3,
-    color: COLORS.black,
     marginBottom: SIZES.base / 2,
+    fontWeight: '600',
   },
   input: {
     height: 44,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderWidth: StyleSheet.hairlineWidth * 2,
     borderRadius: SIZES.radius,
     paddingHorizontal: SIZES.base,
     ...FONTS.body3,
-    color: COLORS.black,
-    backgroundColor: '#F7F9FD',
   },
   textArea: {
     height: 60,
     textAlignVertical: 'top',
     paddingTop: SIZES.base,
   },
-  disabledInput: {
-    backgroundColor: '#EFF2F7',
-    color: COLORS.gray,
-  },
+  disabledInput: {},
   inputError: {
     borderColor: COLORS.error,
   },
@@ -920,45 +1065,12 @@ const styles = StyleSheet.create({
     marginTop: SIZES.base / 2,
   },
   pickerContainer: {
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderWidth: StyleSheet.hairlineWidth * 2,
     borderRadius: SIZES.radius,
-    backgroundColor: '#F7F9FD',
+    overflow: 'hidden',
   },
   picker: {
     width: '100%',
-    backgroundColor: '#F7F9FD',
-    color: COLORS.black,
-  },
-  footer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    padding: SIZES.padding,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.lightGray2,
-  },
-  button: {
-    flex: 1,
-    height: 44,
-    borderRadius: SIZES.radius,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginHorizontal: SIZES.base / 2,
-  },
-  cancelButton: {
-    backgroundColor: COLORS.lightGray1,
-  },
-  cancelButtonText: {
-    ...FONTS.body3,
-    color: COLORS.black,
-  },
-  saveButton: {
-    backgroundColor: COLORS.primary,
-  },
-  buttonText: {
-    ...FONTS.body3,
-    color: COLORS.white,
-    fontWeight: '600',
   },
 });
 

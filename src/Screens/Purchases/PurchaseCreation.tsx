@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useCallback, useRef} from 'react';
+import React, {useState, useEffect, useCallback, useRef, useMemo} from 'react';
 import {
   View,
   Text,
@@ -14,11 +14,18 @@ import {
   KeyboardAvoidingView,
   Platform,
   FlatList,
+  Linking,
 } from 'react-native';
 import {useNavigation, useRoute} from '@react-navigation/native';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {COLORS, FONTS, SIZES} from '../../constants/theme';
 import icons from '../../constants/icons';
-import Header from '../../Components/Header';
+import {useTheme} from '../../context/ThemeContext';
+import {useTabContext} from '../../context/Store';
+import {QuickIconPressable} from '../../Components';
+import MainBottomTabBar from '../../Components/MainBottomTabBar';
+import Toast from 'react-native-toast-message';
+import DocumentPicker from 'react-native-document-picker';
 import {
   upsertPurchase,
   updatePurchaseLines,
@@ -26,9 +33,18 @@ import {
   fetchVendors,
   searchItems,
   fetchPurchasesData,
+  fetchItemByNo,
+  generatePurchaseVendorInvoiceNo,
+  fetchPurchaseAttachments,
+  uploadPurchaseAttachment,
+  deletePurchaseAttachment,
+  type PurchaseInvoiceAttachmentDto,
+  type ItemDetailByNo,
 } from '../../services/app.services';
+import PurchaseLineSpecificationsModal from './PurchaseLineSpecificationsModal';
 import {fetchPaymentMethods} from '../../services/app.services';
 import {usePermissions} from '../../hooks/usePermissions';
+import {safeGoBack} from '../../hooks/NavigationService';
 import {PAGE_NAMES} from '../../constants/pageNames';
 
 type Vendor = {
@@ -59,6 +75,8 @@ type PurchaseLine = {
   deleted?: boolean;
 };
 
+type PurchaseAttachment = PurchaseInvoiceAttachmentDto;
+
 type PurchaseInvoice = {
   id?: number;
   system_id?: string;
@@ -75,13 +93,88 @@ type PurchaseInvoice = {
   status?: string;
   total_amount?: number;
   lines?: PurchaseLine[];
+  attachments?: PurchaseAttachment[];
 };
 
 const PurchaseCreation = () => {
   const navigation = useNavigation();
   const route = useRoute();
+  const insets = useSafeAreaInsets();
+  const {colors} = useTheme();
+  const {selectedTab, setSelectedTab} = useTabContext();
   const {canCreate, canEdit} = usePermissions();
   const PAGE_NAME = PAGE_NAMES.PURCHASES;
+
+  const t = useMemo(
+    () => ({
+      screen: {backgroundColor: colors.screenMuted},
+      topHeader: {
+        paddingTop: Math.max(insets.top, 12),
+        backgroundColor: colors.background,
+        borderBottomColor: colors.border,
+      },
+      headerTitle: {color: colors.textPrimary},
+      sectionCard: {
+        backgroundColor: colors.card,
+        borderColor: colors.border,
+      },
+      sectionTitle: {color: colors.textPrimary},
+      mutedText: {color: colors.textSecondary},
+      input: {
+        color: colors.textPrimary,
+        backgroundColor: colors.inputBackground,
+        borderColor: colors.border,
+      },
+      inputDisabled: {
+        backgroundColor: colors.screenMuted,
+        color: colors.textSecondary,
+      },
+      vendorInner: {backgroundColor: colors.inputBackground},
+      pickerRow: {
+        backgroundColor: colors.inputBackground,
+        borderColor: colors.border,
+      },
+      pickerText: {color: colors.textPrimary},
+      dashedSelect: {
+        backgroundColor: colors.inputBackground,
+        borderColor: COLORS.primary,
+      },
+      lineCard: {
+        backgroundColor: colors.surface,
+        borderColor: colors.border,
+      },
+      lineInput: {
+        color: colors.textPrimary,
+        backgroundColor: colors.inputBackground,
+        borderColor: colors.border,
+      },
+      totalsCard: {
+        backgroundColor: colors.card,
+        borderColor: colors.border,
+      },
+      secondaryBtn: {
+        backgroundColor: colors.inputBackground,
+        borderColor: colors.border,
+      },
+      secondaryBtnText: {color: colors.textSecondary},
+      emptyBox: {
+        backgroundColor: colors.inputBackground,
+      },
+      modalSurface: {backgroundColor: colors.surface},
+      modalHeaderBorder: {borderBottomColor: colors.border},
+      modalTitle: {color: colors.textPrimary},
+      searchBarBorder: {borderBottomColor: colors.border},
+      searchInner: {backgroundColor: colors.inputBackground},
+      listRowBorder: {borderBottomColor: colors.border},
+      thumbBg: {backgroundColor: colors.inputBackground},
+    }),
+    [colors, insets.top],
+  );
+
+  const onSelectTab = (tab: string) => {
+    setSelectedTab(tab);
+    navigation.navigate('Home' as never);
+  };
 
   // Get purchase from route params if editing
   const existingPurchase = (route.params as any)?.purchase as
@@ -135,6 +228,20 @@ const PurchaseCreation = () => {
   const [itemSearchQuery, setItemSearchQuery] = useState('');
   const [itemsLoading, setItemsLoading] = useState(false);
   const [postingPurchase, setPostingPurchase] = useState(false);
+  const [generatingVendorInvoiceNo, setGeneratingVendorInvoiceNo] =
+    useState(false);
+  const [attachments, setAttachments] = useState<PurchaseAttachment[]>([]);
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false);
+  const [uploadAttachmentBusy, setUploadAttachmentBusy] = useState(false);
+  const [specModalOpen, setSpecModalOpen] = useState(false);
+  const [specModalCtx, setSpecModalCtx] = useState<{
+    lineId: number;
+    itemPk: number;
+    itemNo: string;
+    itemName: string;
+    tracking: NonNullable<ItemDetailByNo['tracking_code']>;
+  } | null>(null);
+  const [openingSpecs, setOpeningSpecs] = useState(false);
 
   // Load payment methods
   useEffect(() => {
@@ -194,6 +301,35 @@ const PurchaseCreation = () => {
     loadPurchaseDetails();
   }, [existingPurchase]);
 
+  useEffect(() => {
+    if (!purchase.id) {
+      setAttachments([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setAttachmentsLoading(true);
+      try {
+        const list = await fetchPurchaseAttachments(purchase.id);
+        if (!cancelled) {
+          setAttachments(list);
+        }
+      } catch (error) {
+        console.error('Error loading purchase attachments:', error);
+        if (!cancelled) {
+          setAttachments([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setAttachmentsLoading(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [purchase.id]);
+
   // Load vendors when modal opens
   useEffect(() => {
     if (vendorModalVisible) {
@@ -248,6 +384,143 @@ const PurchaseCreation = () => {
     }
   };
 
+  const handleGenerateVendorInvoiceNo = async () => {
+    if (purchase.status === 'Posted') {
+      return;
+    }
+    setGeneratingVendorInvoiceNo(true);
+    try {
+      const invNo = purchase.invoice_no?.trim();
+      const data = await generatePurchaseVendorInvoiceNo({
+        system_id: purchase.system_id || '',
+        ...(invNo ? {invoice_no: invNo} : {}),
+      });
+      const next = data?.vendor_invoice_no;
+      if (next) {
+        setPurchase(prev => ({...prev, vendor_invoice_no: next}));
+        Toast.show({
+          type: 'success',
+          text1: 'Vendor invoice number',
+          text2: next,
+        });
+      }
+    } catch (error: any) {
+      const msg =
+        error?.response?.data?.error ||
+        error?.response?.data?.detail ||
+        error?.message ||
+        'Could not generate vendor invoice number';
+      Toast.show({type: 'error', text1: 'Generate failed', text2: String(msg)});
+    } finally {
+      setGeneratingVendorInvoiceNo(false);
+    }
+  };
+
+  const handleAddAttachment = async () => {
+    if (!purchase.id || purchase.status === 'Posted' || !canEdit(PAGE_NAME)) {
+      return;
+    }
+    try {
+      const [picked] = await DocumentPicker.pick({
+        type: [
+          DocumentPicker.types.pdf,
+          DocumentPicker.types.images,
+          DocumentPicker.types.plainText,
+          DocumentPicker.types.doc,
+          DocumentPicker.types.docx,
+          DocumentPicker.types.xls,
+          DocumentPicker.types.xlsx,
+        ],
+        copyTo: 'cachesDirectory',
+      });
+      const uri = picked.fileCopyUri || picked.uri;
+      const name = picked.name || `file_${Date.now()}`;
+      const mime = picked.type || 'application/octet-stream';
+      setUploadAttachmentBusy(true);
+      const created = await uploadPurchaseAttachment(
+        purchase.id,
+        uri,
+        name,
+        mime,
+      );
+      setAttachments(prev =>
+        [...prev, created].sort(
+          (a, b) =>
+            new Date(b.created_at).getTime() -
+            new Date(a.created_at).getTime(),
+        ),
+      );
+      Toast.show({type: 'success', text1: 'Attachment added'});
+    } catch (e: any) {
+      if (DocumentPicker.isCancel(e)) {
+        return;
+      }
+      const msg =
+        e?.response?.data?.detail ||
+        e?.response?.data?.file?.[0] ||
+        e?.message ||
+        'Upload failed';
+      Toast.show({
+        type: 'error',
+        text1: 'Upload failed',
+        text2: String(msg),
+      });
+    } finally {
+      setUploadAttachmentBusy(false);
+    }
+  };
+
+  const handleOpenAttachment = async (url: string | null) => {
+    if (!url) {
+      Toast.show({type: 'error', text1: 'No file link for this attachment'});
+      return;
+    }
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+      } else {
+        Toast.show({type: 'error', text1: 'Cannot open this file'});
+      }
+    } catch {
+      Toast.show({type: 'error', text1: 'Could not open file'});
+    }
+  };
+
+  const handleDeleteAttachment = (att: PurchaseAttachment) => {
+    if (purchase.status === 'Posted' || !canEdit(PAGE_NAME)) {
+      return;
+    }
+    Alert.alert(
+      'Remove attachment',
+      att.original_name || 'This file will be removed.',
+      [
+        {text: 'Cancel', style: 'cancel'},
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deletePurchaseAttachment(att.id);
+              setAttachments(prev => prev.filter(x => x.id !== att.id));
+              Toast.show({type: 'success', text1: 'Attachment removed'});
+            } catch (e: any) {
+              const msg =
+                e?.response?.data?.detail ||
+                e?.message ||
+                'Delete failed';
+              Toast.show({
+                type: 'error',
+                text1: 'Delete failed',
+                text2: String(msg),
+              });
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const handleVendorSelect = (selectedVendor: Vendor) => {
     setVendor(selectedVendor);
     setPurchase(prev => ({
@@ -291,10 +564,17 @@ const PurchaseCreation = () => {
 
       const createdPurchase = await upsertPurchase(purchaseData);
       setPurchase(createdPurchase);
+      const successButtons = [
+        {text: 'Continue', style: 'cancel' as const},
+        {
+          text: 'View list',
+          onPress: () => safeGoBack(navigation, 'Purchases'),
+        },
+      ];
       if (purchase.id) {
-        Alert.alert('Success', 'Purchase updated successfully');
+        Alert.alert('Success', 'Purchase updated successfully', successButtons);
       } else {
-        Alert.alert('Success', 'Purchase created successfully');
+        Alert.alert('Success', 'Purchase created successfully', successButtons);
       }
     } catch (error: any) {
       console.error('Error creating/updating purchase:', error);
@@ -361,6 +641,60 @@ const PurchaseCreation = () => {
     }
   };
 
+  const openLineSpecifications = async (line: PurchaseLine) => {
+    if (!purchase.id) {
+      Alert.alert(
+        'Save first',
+        'Create the purchase header before adding specifications.',
+      );
+      return;
+    }
+    if (!line.id) {
+      Alert.alert(
+        'Save line first',
+        'Save the purchase so the line is stored, then you can add tracking specifications (same as web).',
+      );
+      return;
+    }
+    if (!line.item_no) {
+      return;
+    }
+    if (!line.quantity || line.quantity <= 0) {
+      Alert.alert(
+        'Quantity required',
+        'Set the line quantity to at least 1 before adding tracking specifications. The total spec quantities must match the line quantity (in base units).',
+      );
+      return;
+    }
+    setOpeningSpecs(true);
+    try {
+      const item = await fetchItemByNo(line.item_no);
+      if (!item?.tracking_code) {
+        Alert.alert(
+          'No tracking setup',
+          'This item has no tracking code on file. Specifications apply only to items with a tracking code (same as web).',
+        );
+        return;
+      }
+      setSpecModalCtx({
+        lineId: line.id,
+        itemPk: item.id,
+        itemNo: item.no,
+        itemName: item.item_name || line.item_name,
+        tracking: item.tracking_code,
+      });
+      setSpecModalOpen(true);
+    } catch (e: any) {
+      const msg =
+        e?.response?.data?.detail ||
+        e?.message ||
+        'Could not load item details';
+      Alert.alert('Error', String(msg));
+    } finally {
+      setOpeningSpecs(false);
+    }
+  };
+
   const handleDeleteLine = async (lineId: number) => {
     if (!purchase.id) return;
 
@@ -419,7 +753,7 @@ const PurchaseCreation = () => {
               Alert.alert('Success', 'Purchase posted successfully', [
                 {
                   text: 'OK',
-                  onPress: () => navigation.goBack(),
+                  onPress: () => safeGoBack(navigation, 'Purchases'),
                 },
               ]);
             } catch (error: any) {
@@ -446,34 +780,35 @@ const PurchaseCreation = () => {
       transparent={true}
       onRequestClose={() => setVendorModalVisible(false)}>
       <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Select Vendor</Text>
-            <TouchableOpacity
+        <View style={[styles.modalContent, t.modalSurface]}>
+          <View style={[styles.modalHeader, t.modalHeaderBorder]}>
+            <Text style={[styles.modalTitle, t.modalTitle]}>Select Vendor</Text>
+            <QuickIconPressable
               onPress={() => {
                 setVendorModalVisible(false);
                 setVendorSearchQuery('');
               }}
-              style={styles.closeButton}>
+              style={styles.closeButton}
+              accessibilityLabel="Close">
               <Image
                 source={icons.cross as ImageSourcePropType}
-                style={styles.closeIcon}
+                style={[styles.closeIcon, {tintColor: colors.textTertiary}]}
                 resizeMode="contain"
               />
-            </TouchableOpacity>
+            </QuickIconPressable>
           </View>
 
-          <View style={styles.searchContainer}>
-            <View style={styles.searchInputContainer}>
+          <View style={[styles.searchContainer, t.searchBarBorder]}>
+            <View style={[styles.searchInputContainer, t.searchInner]}>
               <Image
                 source={icons.search as ImageSourcePropType}
-                style={styles.searchIcon}
+                style={[styles.searchIcon, {tintColor: colors.textTertiary}]}
                 resizeMode="contain"
               />
               <TextInput
-                style={styles.searchInput}
+                style={[styles.searchInput, {color: colors.textPrimary}]}
                 placeholder="Search vendors..."
-                placeholderTextColor={COLORS.gray3}
+                placeholderTextColor={colors.placeholder}
                 value={vendorSearchQuery}
                 onChangeText={setVendorSearchQuery}
               />
@@ -490,18 +825,24 @@ const PurchaseCreation = () => {
               keyExtractor={item => item.id.toString()}
               renderItem={({item}) => (
                 <TouchableOpacity
-                  style={styles.vendorItem}
+                  style={[styles.vendorItem, t.listRowBorder]}
                   onPress={() => handleVendorSelect(item)}
                   activeOpacity={0.7}>
                   <View style={styles.vendorItemLeft}>
-                    <Text style={styles.vendorItemName}>{item.name}</Text>
-                    <Text style={styles.vendorItemCode}>{item.no}</Text>
+                    <Text style={[styles.vendorItemName, t.sectionTitle]}>
+                      {item.name}
+                    </Text>
+                    <Text style={[styles.vendorItemCode, t.mutedText]}>
+                      {item.no}
+                    </Text>
                   </View>
                 </TouchableOpacity>
               )}
               ListEmptyComponent={
                 <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyText}>No vendors found</Text>
+                  <Text style={[styles.emptyText, t.mutedText]}>
+                    No vendors found
+                  </Text>
                 </View>
               }
             />
@@ -518,34 +859,35 @@ const PurchaseCreation = () => {
       transparent={true}
       onRequestClose={() => setItemModalVisible(false)}>
       <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Select Item</Text>
-            <TouchableOpacity
+        <View style={[styles.modalContent, t.modalSurface]}>
+          <View style={[styles.modalHeader, t.modalHeaderBorder]}>
+            <Text style={[styles.modalTitle, t.modalTitle]}>Select Item</Text>
+            <QuickIconPressable
               onPress={() => {
                 setItemModalVisible(false);
                 setItemSearchQuery('');
               }}
-              style={styles.closeButton}>
+              style={styles.closeButton}
+              accessibilityLabel="Close">
               <Image
                 source={icons.cross as ImageSourcePropType}
-                style={styles.closeIcon}
+                style={[styles.closeIcon, {tintColor: colors.textTertiary}]}
                 resizeMode="contain"
               />
-            </TouchableOpacity>
+            </QuickIconPressable>
           </View>
 
-          <View style={styles.searchContainer}>
-            <View style={styles.searchInputContainer}>
+          <View style={[styles.searchContainer, t.searchBarBorder]}>
+            <View style={[styles.searchInputContainer, t.searchInner]}>
               <Image
                 source={icons.search as ImageSourcePropType}
-                style={styles.searchIcon}
+                style={[styles.searchIcon, {tintColor: colors.textTertiary}]}
                 resizeMode="contain"
               />
               <TextInput
-                style={styles.searchInput}
+                style={[styles.searchInput, {color: colors.textPrimary}]}
                 placeholder="Search items..."
-                placeholderTextColor={COLORS.gray3}
+                placeholderTextColor={colors.placeholder}
                 value={itemSearchQuery}
                 onChangeText={setItemSearchQuery}
               />
@@ -567,10 +909,10 @@ const PurchaseCreation = () => {
               }
               renderItem={({item}) => (
                 <TouchableOpacity
-                  style={styles.itemListItem}
+                  style={[styles.itemListItem, t.listRowBorder]}
                   onPress={() => handleAddItem(item)}
                   activeOpacity={0.7}>
-                  <View style={styles.itemImageContainer}>
+                  <View style={[styles.itemImageContainer, t.thumbBg]}>
                     <Image
                       source={
                         item.item_images && item.item_images[0]?.url
@@ -582,10 +924,10 @@ const PurchaseCreation = () => {
                     />
                   </View>
                   <View style={styles.itemListItemLeft}>
-                    <Text style={styles.itemListItemName}>
+                    <Text style={[styles.itemListItemName, t.sectionTitle]}>
                       {item.item_name || item.name}
                     </Text>
-                    <Text style={styles.itemListItemCode}>
+                    <Text style={[styles.itemListItemCode, t.mutedText]}>
                       {item.no || item.item_no}
                     </Text>
                   </View>
@@ -597,7 +939,9 @@ const PurchaseCreation = () => {
               )}
               ListEmptyComponent={
                 <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyText}>No items found</Text>
+                  <Text style={[styles.emptyText, t.mutedText]}>
+                    No items found
+                  </Text>
                 </View>
               }
             />
@@ -611,11 +955,11 @@ const PurchaseCreation = () => {
     if (line.deleted) return null;
 
     return (
-      <View key={line.id || index} style={styles.lineItemCard}>
+      <View key={line.id || index} style={[styles.lineItemCard, t.lineCard]}>
         <View style={styles.lineItemHeader}>
           <View style={styles.lineItemInfo}>
-            <Text style={styles.lineItemName}>{line.item_name}</Text>
-            <Text style={styles.lineItemCode}>{line.item_no}</Text>
+            <Text style={[styles.lineItemName, t.sectionTitle]}>{line.item_name}</Text>
+            <Text style={[styles.lineItemCode, t.mutedText]}>{line.item_no}</Text>
           </View>
           {purchase.status !== 'Posted' && (
             <TouchableOpacity
@@ -632,9 +976,13 @@ const PurchaseCreation = () => {
 
         <View style={styles.lineItemFields}>
           <View style={styles.lineItemField}>
-            <Text style={styles.lineItemLabel}>Quantity</Text>
+            <Text style={[styles.lineItemLabel, t.mutedText]}>Quantity</Text>
             <TextInput
-              style={styles.lineItemInput}
+              style={[
+                styles.lineItemInput,
+                t.lineInput,
+                purchase.status === 'Posted' && t.inputDisabled,
+              ]}
               value={line.quantity.toString()}
               onChangeText={text => {
                 const qty = parseFloat(text) || 0;
@@ -650,13 +998,19 @@ const PurchaseCreation = () => {
               keyboardType="numeric"
               editable={purchase.status !== 'Posted'}
             />
-            <Text style={styles.lineItemUOM}>{line.unit_of_measure}</Text>
+            <Text style={[styles.lineItemUOM, t.mutedText]}>
+              {line.unit_of_measure}
+            </Text>
           </View>
 
           <View style={styles.lineItemField}>
-            <Text style={styles.lineItemLabel}>Unit Cost</Text>
+            <Text style={[styles.lineItemLabel, t.mutedText]}>Unit Cost</Text>
             <TextInput
-              style={styles.lineItemInput}
+              style={[
+                styles.lineItemInput,
+                t.lineInput,
+                purchase.status === 'Posted' && t.inputDisabled,
+              ]}
               value={line.unit_cost.toString()}
               onChangeText={text => {
                 const cost = parseFloat(text) || 0;
@@ -675,8 +1029,27 @@ const PurchaseCreation = () => {
           </View>
         </View>
 
-        <View style={styles.lineItemTotal}>
-          <Text style={styles.lineItemTotalLabel}>Line Total:</Text>
+        <TouchableOpacity
+          style={[
+            styles.specsButton,
+            {borderColor: colors.border, backgroundColor: colors.inputBackground},
+          ]}
+          onPress={() => openLineSpecifications(line)}
+          disabled={openingSpecs || !line.item_no}
+          activeOpacity={0.7}>
+          {openingSpecs ? (
+            <ActivityIndicator size="small" color={COLORS.primary} />
+          ) : (
+            <Text style={styles.specsButtonText}>
+              Item specifications / tracking
+            </Text>
+          )}
+        </TouchableOpacity>
+
+        <View style={[styles.lineItemTotal, {borderTopColor: colors.border}]}>
+          <Text style={[styles.lineItemTotalLabel, t.mutedText]}>
+            Line Total:
+          </Text>
           <Text style={styles.lineItemTotalValue}>
             UGX {(line.quantity * line.unit_cost).toLocaleString()}
           </Text>
@@ -686,241 +1059,459 @@ const PurchaseCreation = () => {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <Header
-        title={existingPurchase ? 'Edit Purchase' : 'New Purchase'}
-        showBack={true}
-        onBackPress={() => navigation.goBack()}
-      />
-      <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}>
-        {/* Invoice Number */}
-        {purchase.invoice_no && (
-          <View style={styles.invoiceNumberContainer}>
-            <Text style={styles.invoiceNumberLabel}>Invoice No:</Text>
-            <Text style={styles.invoiceNumber}>{purchase.invoice_no}</Text>
-          </View>
-        )}
+    <View style={[styles.container, t.screen]}>
+      <KeyboardAvoidingView
+        style={styles.keyboardFlex}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <View style={[styles.topHeader, t.topHeader]}>
+          <QuickIconPressable
+            onPress={() => safeGoBack(navigation, 'Purchases')}
+            style={[
+              styles.headerCircleBtn,
+              {backgroundColor: colors.backButtonBg},
+            ]}
+            hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
+            accessibilityLabel="Go back">
+            <Image
+              source={icons.back}
+              style={[styles.headerBackIcon, {tintColor: colors.textPrimary}]}
+              resizeMode="contain"
+            />
+          </QuickIconPressable>
+          <Text style={[styles.headerBarTitle, t.headerTitle]}>
+            {existingPurchase ? 'Edit purchase' : 'New purchase'}
+          </Text>
+          <View style={styles.headerBarSpacer} />
+        </View>
+        <ScrollView
+          style={[styles.scrollView, {backgroundColor: colors.screenMuted}]}
+          contentContainerStyle={[styles.scrollContent, styles.scrollContentBottom]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled">
+          {/* Invoice Number */}
+          {purchase.invoice_no && (
+            <View style={[styles.invoiceNumberContainer, t.sectionCard]}>
+              <Text style={[styles.invoiceNumberLabel, t.mutedText]}>
+                Invoice No:
+              </Text>
+              <Text style={styles.invoiceNumber}>{purchase.invoice_no}</Text>
+            </View>
+          )}
 
-        {/* Vendor Selection */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Vendor *</Text>
-          {vendor ? (
-            <View style={styles.vendorCard}>
-              <View style={styles.vendorInfo}>
-                <Text style={styles.vendorName}>{vendor.name}</Text>
-                <Text style={styles.vendorCode}>{vendor.no}</Text>
+          {/* Vendor Selection */}
+          <View style={[styles.section, t.sectionCard]}>
+            <Text style={[styles.sectionTitle, t.sectionTitle]}>Vendor *</Text>
+            {vendor ? (
+              <View style={[styles.vendorCard, t.vendorInner]}>
+                <View style={styles.vendorInfo}>
+                  <Text style={[styles.vendorName, t.sectionTitle]}>
+                    {vendor.name}
+                  </Text>
+                  <Text style={[styles.vendorCode, t.mutedText]}>{vendor.no}</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.changeButton}
+                  onPress={() => setVendorModalVisible(true)}
+                  activeOpacity={0.7}>
+                  <Text style={styles.changeButtonText}>Change</Text>
+                </TouchableOpacity>
               </View>
+            ) : (
               <TouchableOpacity
-                style={styles.changeButton}
+                style={[styles.selectVendorButton, t.dashedSelect]}
                 onPress={() => setVendorModalVisible(true)}
                 activeOpacity={0.7}>
-                <Text style={styles.changeButtonText}>Change</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <TouchableOpacity
-              style={styles.selectVendorButton}
-              onPress={() => setVendorModalVisible(true)}
-              activeOpacity={0.7}>
-              <Image
-                source={icons.plus as ImageSourcePropType}
-                style={styles.selectButtonIcon}
-                resizeMode="contain"
-              />
-              <Text style={styles.selectButtonText}>Select Vendor</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {/* Header Fields */}
-        {vendor && (
-          <>
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Document Date</Text>
-              <TextInput
-                style={styles.input}
-                value={purchase.document_date}
-                onChangeText={text =>
-                  setPurchase(prev => ({...prev, document_date: text}))
-                }
-                placeholder="YYYY-MM-DD"
-                editable={purchase.status !== 'Posted'}
-              />
-            </View>
-
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Vendor Invoice No</Text>
-              <TextInput
-                style={styles.input}
-                value={purchase.vendor_invoice_no}
-                onChangeText={text =>
-                  setPurchase(prev => ({...prev, vendor_invoice_no: text}))
-                }
-                placeholder="Vendor's invoice number"
-                editable={purchase.status !== 'Posted'}
-              />
-            </View>
-
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Contact Person</Text>
-              <TextInput
-                style={styles.input}
-                value={purchase.contact_person}
-                onChangeText={text =>
-                  setPurchase(prev => ({...prev, contact_person: text}))
-                }
-                placeholder="Contact person name"
-                editable={purchase.status !== 'Posted'}
-              />
-            </View>
-
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Payment Method</Text>
-              <TouchableOpacity
-                style={styles.pickerButton}
-                onPress={() => {
-                  // Simple payment method picker
-                  Alert.alert('Payment Method', 'Select payment method', [
-                    {text: 'Cancel', style: 'cancel'},
-                    ...paymentMethods.map(method => ({
-                      text: `${method.code} - ${method.description}`,
-                      onPress: () =>
-                        setPurchase(prev => ({
-                          ...prev,
-                          payment_method: method.id,
-                        })),
-                    })),
-                  ]);
-                }}
-                activeOpacity={0.7}>
-                <Text style={styles.pickerButtonText}>
-                  {purchase.payment_method
-                    ? paymentMethods.find(m => m.id === purchase.payment_method)
-                        ?.description || 'Select...'
-                    : 'Select Payment Method'}
-                </Text>
                 <Image
-                  source={icons.down_arrow as ImageSourcePropType}
-                  style={styles.pickerArrow}
+                  source={icons.plus as ImageSourcePropType}
+                  style={styles.selectButtonIcon}
                   resizeMode="contain"
                 />
+                <Text style={styles.selectButtonText}>Select vendor</Text>
               </TouchableOpacity>
-            </View>
-          </>
-        )}
-
-        {/* Create Purchase Button */}
-        {vendor && !purchase.id && (
-          <TouchableOpacity
-            style={styles.createButton}
-            onPress={handleCreatePurchase}
-            disabled={isLoading}
-            activeOpacity={0.7}>
-            {isLoading ? (
-              <ActivityIndicator color={COLORS.white} />
-            ) : (
-              <Text style={styles.createButtonText}>Create Purchase</Text>
             )}
-          </TouchableOpacity>
-        )}
+          </View>
 
-        {/* Line Items Section */}
-        {purchase.id && (
-          <>
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>Items</Text>
-                {purchase.status !== 'Posted' && (
+          {/* Header Fields */}
+          {vendor && (
+            <>
+              <View style={[styles.section, t.sectionCard]}>
+                <Text style={[styles.sectionTitle, t.sectionTitle]}>
+                  Document date
+                </Text>
+                <TextInput
+                  style={[
+                    styles.input,
+                    t.input,
+                    purchase.status === 'Posted' && t.inputDisabled,
+                  ]}
+                  value={purchase.document_date}
+                  onChangeText={text =>
+                    setPurchase(prev => ({...prev, document_date: text}))
+                  }
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={colors.placeholder}
+                  editable={purchase.status !== 'Posted'}
+                />
+              </View>
+
+              <View style={[styles.section, t.sectionCard]}>
+                <Text style={[styles.sectionTitle, t.sectionTitle]}>
+                  Vendor invoice no
+                </Text>
+                <View style={styles.vendorInvoiceRow}>
+                  <TextInput
+                    style={[
+                      styles.vendorInvoiceInput,
+                      styles.input,
+                      t.input,
+                      purchase.status === 'Posted' && t.inputDisabled,
+                    ]}
+                    value={purchase.vendor_invoice_no ?? ''}
+                    onChangeText={text =>
+                      setPurchase(prev => ({...prev, vendor_invoice_no: text}))
+                    }
+                    placeholder="Vendor's invoice number"
+                    placeholderTextColor={colors.placeholder}
+                    editable={purchase.status !== 'Posted'}
+                  />
                   <TouchableOpacity
-                    style={styles.addItemButton}
-                    onPress={() => setItemModalVisible(true)}
+                    style={[
+                      styles.generateInvoiceNoBtn,
+                      (purchase.status === 'Posted' ||
+                        generatingVendorInvoiceNo) &&
+                        styles.generateInvoiceNoBtnDisabled,
+                    ]}
+                    onPress={handleGenerateVendorInvoiceNo}
+                    disabled={
+                      purchase.status === 'Posted' ||
+                      generatingVendorInvoiceNo
+                    }
                     activeOpacity={0.7}>
-                    <Image
-                      source={icons.plus as ImageSourcePropType}
-                      style={styles.addItemIcon}
-                      resizeMode="contain"
-                    />
-                    <Text style={styles.addItemButtonText}>Add Item</Text>
+                    {generatingVendorInvoiceNo ? (
+                      <ActivityIndicator
+                        size="small"
+                        color={COLORS.white}
+                      />
+                    ) : (
+                      <Text style={styles.generateInvoiceNoBtnText}>
+                        Generate
+                      </Text>
+                    )}
                   </TouchableOpacity>
+                </View>
+                {purchase.status !== 'Posted' ? (
+                  <Text style={[styles.generateHint, t.mutedText]}>
+                    {purchase.invoice_no
+                      ? 'Generate replaces the vendor invoice number and saves it on this purchase.'
+                      : 'Generate picks a unique number now; it is stored when you create the purchase.'}
+                  </Text>
+                ) : null}
+              </View>
+
+              <View style={[styles.section, t.sectionCard]}>
+                <Text style={[styles.sectionTitle, t.sectionTitle]}>
+                  Contact person
+                </Text>
+                <TextInput
+                  style={[
+                    styles.input,
+                    t.input,
+                    purchase.status === 'Posted' && t.inputDisabled,
+                  ]}
+                  value={purchase.contact_person}
+                  onChangeText={text =>
+                    setPurchase(prev => ({...prev, contact_person: text}))
+                  }
+                  placeholder="Contact person name"
+                  placeholderTextColor={colors.placeholder}
+                  editable={purchase.status !== 'Posted'}
+                />
+              </View>
+
+              <View style={[styles.section, t.sectionCard]}>
+                <Text style={[styles.sectionTitle, t.sectionTitle]}>
+                  Payment method
+                </Text>
+                <TouchableOpacity
+                  style={[styles.pickerButton, t.pickerRow]}
+                  onPress={() => {
+                    Alert.alert('Payment Method', 'Select payment method', [
+                      {text: 'Cancel', style: 'cancel'},
+                      ...paymentMethods.map(method => ({
+                        text: `${method.code} - ${method.description}`,
+                        onPress: () =>
+                          setPurchase(prev => ({
+                            ...prev,
+                            payment_method: method.id,
+                          })),
+                      })),
+                    ]);
+                  }}
+                  activeOpacity={0.7}
+                  disabled={purchase.status === 'Posted'}>
+                  <Text style={[styles.pickerButtonText, t.pickerText]}>
+                    {purchase.payment_method
+                      ? paymentMethods.find(
+                          m => m.id === purchase.payment_method,
+                        )?.description || 'Select...'
+                      : 'Select payment method'}
+                  </Text>
+                  <Image
+                    source={icons.down_arrow as ImageSourcePropType}
+                    style={[
+                      styles.pickerArrow,
+                      {tintColor: colors.textTertiary},
+                    ]}
+                    resizeMode="contain"
+                  />
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+
+          {/* Create Purchase Button */}
+          {vendor && !purchase.id && (
+            <TouchableOpacity
+              style={styles.createButton}
+              onPress={handleCreatePurchase}
+              disabled={isLoading}
+              activeOpacity={0.7}>
+              {isLoading ? (
+                <ActivityIndicator color={COLORS.white} />
+              ) : (
+                <Text style={styles.createButtonText}>Create purchase</Text>
+              )}
+            </TouchableOpacity>
+          )}
+
+          {/* Line Items Section */}
+          {purchase.id && (
+            <>
+              <View style={[styles.section, t.sectionCard]}>
+                <View style={styles.sectionHeader}>
+                  <Text style={[styles.sectionTitleFlat, t.sectionTitle]}>
+                    Attachments
+                  </Text>
+                  {purchase.status !== 'Posted' && canEdit(PAGE_NAME) ? (
+                    <TouchableOpacity
+                      style={styles.addItemButton}
+                      onPress={handleAddAttachment}
+                      disabled={uploadAttachmentBusy}
+                      activeOpacity={0.7}>
+                      {uploadAttachmentBusy ? (
+                        <ActivityIndicator
+                          size="small"
+                          color={COLORS.primary}
+                        />
+                      ) : (
+                        <>
+                          <Image
+                            source={icons.plus as ImageSourcePropType}
+                            style={styles.addItemIcon}
+                            resizeMode="contain"
+                          />
+                          <Text style={styles.addItemButtonText}>Add file</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+                {attachmentsLoading ? (
+                  <ActivityIndicator
+                    color={COLORS.primary}
+                    style={styles.attachmentsLoader}
+                  />
+                ) : attachments.length === 0 ? (
+                  <View style={[styles.emptyLinesContainer, t.emptyBox]}>
+                    <Text style={[styles.emptyLinesText, t.mutedText]}>
+                      No attachments. Add invoices, delivery notes, or other
+                      documents.
+                    </Text>
+                  </View>
+                ) : (
+                  attachments.map(att => (
+                    <View
+                      key={att.id}
+                      style={[styles.attachmentRow, t.lineCard]}>
+                      <TouchableOpacity
+                        style={styles.attachmentRowMain}
+                        onPress={() => handleOpenAttachment(att.file_url)}
+                        activeOpacity={0.7}>
+                        <Text
+                          style={[styles.attachmentName, t.sectionTitle]}
+                          numberOfLines={1}>
+                          {att.original_name || 'File'}
+                        </Text>
+                        <Text style={[styles.attachmentOpenHint, t.mutedText]}>
+                          Open
+                        </Text>
+                      </TouchableOpacity>
+                      {purchase.status !== 'Posted' && canEdit(PAGE_NAME) ? (
+                        <TouchableOpacity
+                          style={styles.attachmentDeleteBtn}
+                          onPress={() => handleDeleteAttachment(att)}
+                          hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
+                          activeOpacity={0.7}>
+                          <Image
+                            source={icons.delete_icon as ImageSourcePropType}
+                            style={[
+                              styles.attachmentDeleteIcon,
+                              {tintColor: colors.textSecondary},
+                            ]}
+                            resizeMode="contain"
+                          />
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  ))
                 )}
               </View>
 
-              {lines.length === 0 ? (
-                <View style={styles.emptyLinesContainer}>
-                  <Text style={styles.emptyLinesText}>
-                    No items added yet. Tap "Add Item" to add items.
+              <View style={[styles.section, t.sectionCard]}>
+                <View style={styles.sectionHeader}>
+                  <Text style={[styles.sectionTitleFlat, t.sectionTitle]}>
+                    Items
+                  </Text>
+                  {purchase.status !== 'Posted' && (
+                    <TouchableOpacity
+                      style={styles.addItemButton}
+                      onPress={() => setItemModalVisible(true)}
+                      activeOpacity={0.7}>
+                      <Image
+                        source={icons.plus as ImageSourcePropType}
+                        style={styles.addItemIcon}
+                        resizeMode="contain"
+                      />
+                      <Text style={styles.addItemButtonText}>Add item</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {lines.length === 0 ? (
+                  <View style={[styles.emptyLinesContainer, t.emptyBox]}>
+                    <Text style={[styles.emptyLinesText, t.mutedText]}>
+                      No items yet. Tap Add item to add lines.
+                    </Text>
+                  </View>
+                ) : (
+                  lines.map((line, index) => renderLineItem(line, index))
+                )}
+              </View>
+
+              <View style={[styles.totalsSection, t.totalsCard]}>
+                <View style={styles.totalRow}>
+                  <Text style={[styles.totalLabel, t.sectionTitle]}>
+                    Total amount
+                  </Text>
+                  <Text style={styles.totalValue}>
+                    UGX {(purchase.total_amount || 0).toLocaleString()}
                   </Text>
                 </View>
-              ) : (
-                lines.map((line, index) => renderLineItem(line, index))
-              )}
-            </View>
-
-            {/* Totals */}
-            <View style={styles.totalsSection}>
-              <View style={styles.totalRow}>
-                <Text style={styles.totalLabel}>Total Amount</Text>
-                <Text style={styles.totalValue}>
-                  UGX {(purchase.total_amount || 0).toLocaleString()}
-                </Text>
               </View>
+
+              <View style={styles.actionsSection}>
+                <TouchableOpacity
+                  style={[styles.saveDraftButton, t.secondaryBtn]}
+                  onPress={() => safeGoBack(navigation, 'Purchases')}
+                  activeOpacity={0.7}>
+                  <Text style={[styles.saveDraftButtonText, t.secondaryBtnText]}>
+                    Save draft
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.postButton,
+                    (lines.length === 0 || purchase.status === 'Posted') &&
+                      styles.postButtonDisabled,
+                  ]}
+                  onPress={handlePostPurchase}
+                  disabled={
+                    lines.length === 0 ||
+                    purchase.status === 'Posted' ||
+                    postingPurchase
+                  }
+                  activeOpacity={0.7}>
+                  {postingPurchase ? (
+                    <ActivityIndicator color={COLORS.white} />
+                  ) : (
+                    <Text style={styles.postButtonText}>Post purchase</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+
+          {isSaving && (
+            <View style={styles.savingIndicator}>
+              <ActivityIndicator size="small" color={COLORS.primary} />
+              <Text style={[styles.savingText, t.mutedText]}>Saving...</Text>
             </View>
-
-            {/* Actions */}
-            <View style={styles.actionsSection}>
-              <TouchableOpacity
-                style={styles.saveDraftButton}
-                onPress={() => navigation.goBack()}
-                activeOpacity={0.7}>
-                <Text style={styles.saveDraftButtonText}>Save Draft</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.postButton,
-                  (lines.length === 0 || purchase.status === 'Posted') &&
-                    styles.postButtonDisabled,
-                ]}
-                onPress={handlePostPurchase}
-                disabled={
-                  lines.length === 0 ||
-                  purchase.status === 'Posted' ||
-                  postingPurchase
-                }
-                activeOpacity={0.7}>
-                {postingPurchase ? (
-                  <ActivityIndicator color={COLORS.white} />
-                ) : (
-                  <Text style={styles.postButtonText}>Post Purchase</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </>
-        )}
-
-        {isSaving && (
-          <View style={styles.savingIndicator}>
-            <ActivityIndicator size="small" color={COLORS.primary} />
-            <Text style={styles.savingText}>Saving...</Text>
-          </View>
-        )}
-      </ScrollView>
+          )}
+        </ScrollView>
+      </KeyboardAvoidingView>
 
       {renderVendorPicker()}
       {renderItemPicker()}
-    </KeyboardAvoidingView>
+      {specModalCtx && purchase.id != null && (
+        <PurchaseLineSpecificationsModal
+          visible={specModalOpen}
+          onClose={() => {
+            setSpecModalOpen(false);
+            setSpecModalCtx(null);
+          }}
+          purchaseId={purchase.id}
+          lineId={specModalCtx.lineId}
+          itemPk={specModalCtx.itemPk}
+          itemNo={specModalCtx.itemNo}
+          itemName={specModalCtx.itemName}
+          trackingInfo={specModalCtx.tracking}
+          readOnly={purchase.status === 'Posted'}
+        />
+      )}
+      <MainBottomTabBar
+        selectedTab={selectedTab}
+        onSelectTab={onSelectTab}
+      />
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.lightGray2,
+  },
+  keyboardFlex: {
+    flex: 1,
+  },
+  topHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: SIZES.padding,
+    paddingBottom: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  headerCircleBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerBackIcon: {
+    width: 20,
+    height: 20,
+  },
+  headerBarTitle: {
+    flex: 1,
+    textAlign: 'center',
+    ...FONTS.h3,
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+  },
+  headerBarSpacer: {
+    width: 40,
   },
   scrollView: {
     flex: 1,
@@ -929,20 +1520,20 @@ const styles = StyleSheet.create({
     padding: SIZES.base * 2,
     paddingBottom: SIZES.padding * 2,
   },
+  scrollContentBottom: {
+    paddingBottom: 100,
+  },
   invoiceNumberContainer: {
-    backgroundColor: COLORS.white,
     padding: SIZES.base * 2,
     borderRadius: SIZES.radius,
     marginBottom: SIZES.base * 2,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   invoiceNumberLabel: {
     ...FONTS.body4,
-    color: COLORS.gray2,
     fontWeight: '500',
   },
   invoiceNumber: {
@@ -951,12 +1542,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   section: {
-    backgroundColor: COLORS.white,
     padding: SIZES.base * 2,
     borderRadius: SIZES.radius,
     marginBottom: SIZES.base * 2,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   sectionHeader: {
     flexDirection: 'row',
@@ -966,16 +1555,19 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     ...FONTS.h4,
-    color: COLORS.black,
     fontWeight: '600',
     marginBottom: SIZES.base * 1.5,
+  },
+  sectionTitleFlat: {
+    ...FONTS.h4,
+    fontWeight: '600',
+    marginBottom: 0,
   },
   vendorCard: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: SIZES.base * 1.5,
-    backgroundColor: COLORS.lightGray2,
     borderRadius: SIZES.radius,
   },
   vendorInfo: {
@@ -983,13 +1575,11 @@ const styles = StyleSheet.create({
   },
   vendorName: {
     ...FONTS.h4,
-    color: COLORS.black,
     fontWeight: '600',
     marginBottom: SIZES.base * 0.5,
   },
   vendorCode: {
     ...FONTS.body4,
-    color: COLORS.gray2,
   },
   changeButton: {
     paddingHorizontal: SIZES.base * 2,
@@ -1007,10 +1597,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: SIZES.base * 2,
-    backgroundColor: COLORS.lightGray2,
     borderRadius: SIZES.radius,
     borderWidth: 2,
-    borderColor: COLORS.primary,
     borderStyle: 'dashed',
     gap: SIZES.base,
   },
@@ -1026,32 +1614,55 @@ const styles = StyleSheet.create({
   },
   input: {
     ...FONTS.body3,
-    color: COLORS.black,
-    backgroundColor: COLORS.lightGray2,
     padding: SIZES.base * 1.5,
     borderRadius: SIZES.radius,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  vendorInvoiceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SIZES.base,
+  },
+  vendorInvoiceInput: {
+    flex: 1,
+    minWidth: 0,
+  },
+  generateInvoiceNoBtn: {
+    paddingHorizontal: SIZES.base * 1.75,
+    paddingVertical: SIZES.base * 1.35,
+    borderRadius: SIZES.radius,
+    backgroundColor: COLORS.primary,
+    minWidth: 96,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  generateInvoiceNoBtnDisabled: {
+    opacity: 0.45,
+  },
+  generateInvoiceNoBtnText: {
+    ...FONTS.body4,
+    color: COLORS.white,
+    fontWeight: '700',
+  },
+  generateHint: {
+    ...FONTS.body5,
+    marginTop: SIZES.base,
   },
   pickerButton: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: COLORS.lightGray2,
     padding: SIZES.base * 1.5,
     borderRadius: SIZES.radius,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   pickerButtonText: {
     ...FONTS.body3,
-    color: COLORS.black,
     flex: 1,
   },
   pickerArrow: {
     width: 16,
     height: 16,
-    tintColor: COLORS.gray2,
   },
   createButton: {
     backgroundColor: COLORS.primary,
@@ -1093,21 +1704,52 @@ const styles = StyleSheet.create({
   emptyLinesContainer: {
     padding: SIZES.base * 2,
     alignItems: 'center',
-    backgroundColor: COLORS.lightGray2,
     borderRadius: SIZES.radius,
   },
   emptyLinesText: {
     ...FONTS.body3,
-    color: COLORS.gray2,
     textAlign: 'center',
   },
+  attachmentsLoader: {
+    marginVertical: SIZES.base * 1.5,
+  },
+  attachmentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: SIZES.base * 1.25,
+    paddingHorizontal: SIZES.base * 1.5,
+    marginBottom: SIZES.base,
+    borderRadius: SIZES.radius,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: SIZES.base,
+  },
+  attachmentRowMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: SIZES.base,
+  },
+  attachmentName: {
+    ...FONTS.body3,
+    flex: 1,
+    fontWeight: '500',
+  },
+  attachmentOpenHint: {
+    ...FONTS.body5,
+  },
+  attachmentDeleteBtn: {
+    padding: SIZES.base * 0.75,
+  },
+  attachmentDeleteIcon: {
+    width: 20,
+    height: 20,
+  },
   lineItemCard: {
-    backgroundColor: COLORS.white,
     padding: SIZES.base * 2,
     borderRadius: SIZES.radius,
     marginBottom: SIZES.base * 1.5,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   lineItemHeader: {
     flexDirection: 'row',
@@ -1120,13 +1762,11 @@ const styles = StyleSheet.create({
   },
   lineItemName: {
     ...FONTS.body3,
-    color: COLORS.black,
     fontWeight: '600',
     marginBottom: SIZES.base * 0.5,
   },
   lineItemCode: {
     ...FONTS.body5,
-    color: COLORS.gray2,
   },
   deleteLineButton: {
     padding: SIZES.base * 0.5,
@@ -1146,34 +1786,41 @@ const styles = StyleSheet.create({
   },
   lineItemLabel: {
     ...FONTS.body5,
-    color: COLORS.gray2,
     marginBottom: SIZES.base * 0.5,
   },
   lineItemInput: {
     ...FONTS.body3,
-    color: COLORS.black,
-    backgroundColor: COLORS.lightGray2,
     padding: SIZES.base * 1.25,
     borderRadius: SIZES.radius,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   lineItemUOM: {
     ...FONTS.body5,
-    color: COLORS.gray2,
     marginTop: SIZES.base * 0.25,
+  },
+  specsButton: {
+    alignSelf: 'flex-start',
+    marginTop: SIZES.base,
+    marginBottom: SIZES.base * 0.5,
+    paddingVertical: SIZES.base * 0.75,
+    paddingHorizontal: SIZES.base * 1.25,
+    borderRadius: SIZES.radius,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  specsButtonText: {
+    ...FONTS.body4,
+    color: COLORS.primary,
+    fontWeight: '600',
   },
   lineItemTotal: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingTop: SIZES.base * 1.5,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.lightGray1,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
   lineItemTotalLabel: {
     ...FONTS.body3,
-    color: COLORS.gray2,
     fontWeight: '500',
   },
   lineItemTotalValue: {
@@ -1182,12 +1829,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   totalsSection: {
-    backgroundColor: COLORS.white,
     padding: SIZES.base * 2,
     borderRadius: SIZES.radius,
     marginBottom: SIZES.base * 2,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   totalRow: {
     flexDirection: 'row',
@@ -1196,7 +1841,6 @@ const styles = StyleSheet.create({
   },
   totalLabel: {
     ...FONTS.h4,
-    color: COLORS.black,
     fontWeight: '600',
   },
   totalValue: {
@@ -1211,16 +1855,13 @@ const styles = StyleSheet.create({
   },
   saveDraftButton: {
     flex: 1,
-    backgroundColor: COLORS.lightGray2,
     padding: SIZES.base * 2,
     borderRadius: SIZES.radius,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   saveDraftButtonText: {
     ...FONTS.button,
-    color: COLORS.gray2,
     fontWeight: '600',
   },
   postButton: {
@@ -1253,7 +1894,6 @@ const styles = StyleSheet.create({
   },
   savingText: {
     ...FONTS.body4,
-    color: COLORS.gray2,
   },
   modalOverlay: {
     flex: 1,
@@ -1261,7 +1901,6 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: COLORS.white,
     borderTopLeftRadius: SIZES.radius * 2,
     borderTopRightRadius: SIZES.radius * 2,
     maxHeight: '90%',
@@ -1272,12 +1911,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: SIZES.base * 2,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   modalTitle: {
     ...FONTS.h3,
-    color: COLORS.black,
     fontWeight: '600',
   },
   closeButton: {
@@ -1289,17 +1926,14 @@ const styles = StyleSheet.create({
   closeIcon: {
     width: 20,
     height: 20,
-    tintColor: COLORS.gray2,
   },
   searchContainer: {
     padding: SIZES.base * 2,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   searchInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.lightGray2,
     borderRadius: SIZES.radius,
     paddingHorizontal: SIZES.base * 1.5,
     height: 48,
@@ -1307,13 +1941,11 @@ const styles = StyleSheet.create({
   searchIcon: {
     width: 20,
     height: 20,
-    tintColor: COLORS.gray2,
     marginRight: SIZES.base,
   },
   searchInput: {
     flex: 1,
     ...FONTS.body3,
-    color: COLORS.black,
     paddingVertical: 0,
   },
   loadingContainer: {
@@ -1325,29 +1957,25 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: SIZES.base * 2,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
   vendorItemLeft: {
     flex: 1,
   },
   vendorItemName: {
     ...FONTS.body3,
-    color: COLORS.black,
     fontWeight: '600',
     marginBottom: SIZES.base * 0.5,
   },
   vendorItemCode: {
     ...FONTS.body5,
-    color: COLORS.gray2,
   },
   itemListItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: SIZES.base * 2,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     gap: SIZES.base * 1.5,
   },
   itemImageContainer: {
@@ -1355,7 +1983,6 @@ const styles = StyleSheet.create({
     height: 50,
     borderRadius: SIZES.radius,
     overflow: 'hidden',
-    backgroundColor: COLORS.lightGray2,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -1368,13 +1995,11 @@ const styles = StyleSheet.create({
   },
   itemListItemName: {
     ...FONTS.body3,
-    color: COLORS.black,
     fontWeight: '600',
     marginBottom: SIZES.base * 0.5,
   },
   itemListItemCode: {
     ...FONTS.body5,
-    color: COLORS.gray2,
   },
   itemListItemPrice: {
     ...FONTS.body3,
@@ -1387,7 +2012,6 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     ...FONTS.body3,
-    color: COLORS.gray2,
   },
 });
 

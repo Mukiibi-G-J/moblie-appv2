@@ -15,6 +15,7 @@ import {
   Image,
 } from 'react-native';
 import {COLORS} from '../../constants/theme';
+import {QuickIconPressable} from '../../Components';
 import {useTheme} from '../../context/ThemeContext';
 import icons from '../../constants/icons';
 import {
@@ -274,16 +275,17 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
         style={[styles.pageRoot, catTheme.pageRoot]}>
         <View style={[styles.page, catTheme.page]}>
           <View style={styles.pageHeader}>
-            <TouchableOpacity
+            <QuickIconPressable
               onPress={onClose}
               style={styles.headerIconButton}
-              hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
+              hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
+              accessibilityLabel="Close">
               <Image
                 source={icons.cross}
                 style={[styles.headerIcon, catTheme.headerIcon]}
                 resizeMode="contain"
               />
-            </TouchableOpacity>
+            </QuickIconPressable>
 
             <TouchableOpacity
               style={[styles.headerSaveButton, loading && styles.buttonDisabled]}

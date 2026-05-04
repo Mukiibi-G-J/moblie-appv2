@@ -35,12 +35,15 @@ import {
   deleteItemImage,
 } from '../../services/app.services';
 import { usePermissions } from '../../hooks/usePermissions';
+import { safeGoBack } from '../../hooks/NavigationService';
 import { PAGE_NAMES } from '../../constants/pageNames';
 import { COLORS, SIZES, FONTS } from '../../constants/theme';
+import { ICON_BUTTON_ACTIVE_OPACITY, ICON_BUTTON_HIT_SLOP } from '../../constants';
 import icons from '../../constants/icons';
+import { QuickIconPressable } from '../../Components';
 import MainBottomTabBar from '../../Components/MainBottomTabBar';
 import { useTheme } from '../../context/ThemeContext';
-import { useTabContext } from '../../context/Store';
+import { useAppContext, useTabContext } from '../../context/Store';
 import Toast from 'react-native-toast-message';
 // CameraRoll import removed - using native gallery picker instead
 
@@ -93,14 +96,16 @@ interface InventoryEntry {
   location_name?: string;
 }
 
-const createEmptyItemDraft = (): Item => ({
+const createEmptyItemDraft = (
+  defaultType: 'Inventory' | 'Service' | 'Non-Inventory' = 'Inventory',
+): Item => ({
   system_id: '',
   item_name: '',
   unit_price: 0,
   item_images: [],
   inventory: 0,
   description: '',
-  type: 'Inventory',
+  type: defaultType,
 });
 
 const EditItemModal = ({
@@ -112,6 +117,8 @@ const EditItemModal = ({
   canCreate,
   canDelete,
   mode = 'edit',
+  defaultCreateType = 'Inventory',
+  allowInventoryType = true,
 }: {
   visible: boolean;
   onClose: () => void;
@@ -121,6 +128,8 @@ const EditItemModal = ({
   canCreate?: boolean;
   canDelete: boolean;
   mode?: 'edit' | 'create';
+  defaultCreateType?: 'Inventory' | 'Service' | 'Non-Inventory';
+  allowInventoryType?: boolean;
 }) => {
   const navigation = useNavigation();
   const route = useRoute<any>();
@@ -141,6 +150,12 @@ const EditItemModal = ({
   // Removed in-app gallery states since we're using native gallery
 
   const { colors } = useTheme();
+  const appCtx = useAppContext();
+  /** Match web: only hide when permission is explicitly false (undefined defaults to allowed). */
+  const canSeeBuyingPriceUi =
+    appCtx?.auth?.userPermissions?.canSeeBuyingPrice !== false;
+  const canSeeProfitMarginUi =
+    appCtx?.auth?.userPermissions?.canSeeProfitMargin !== false;
   const editTheme = useMemo(
     () => ({
       root: { backgroundColor: colors.background },
@@ -243,13 +258,13 @@ const EditItemModal = ({
     if (item) {
       setEditedItem(item);
     } else if (visible && isCreateMode) {
-      setEditedItem(createEmptyItemDraft());
+      setEditedItem(createEmptyItemDraft(defaultCreateType));
     }
     setSelectedImage(null);
     setImageUploadError(null);
     setImageUploadSuccess(false);
     loadCategories();
-  }, [item, visible, isCreateMode, loadCategories]);
+  }, [item, visible, isCreateMode, loadCategories, defaultCreateType]);
 
   useEffect(() => {
     if (!visible) {
@@ -846,18 +861,16 @@ const EditItemModal = ({
                     { paddingTop: Math.max(insets.top, 12) },
                   ]}>
                   <View style={styles.editItemHeaderSide}>
-                    <TouchableOpacity
+                    <QuickIconPressable
                       onPress={onClose}
                       style={[styles.editItemCloseCircle, editTheme.closeCircle]}
-                      activeOpacity={0.7}
-                      accessibilityRole="button"
                       accessibilityLabel="Close">
                       <Image
                         source={icons.cross as any}
                         style={[styles.editItemCloseIcon, editTheme.closeIcon]}
                         resizeMode="contain"
                       />
-                    </TouchableOpacity>
+                    </QuickIconPressable>
                   </View>
                   <Text style={[styles.editItemHeaderTitle, editTheme.headerTitle]}>
                     {isCreateMode
@@ -1020,11 +1033,15 @@ const EditItemModal = ({
                       <View style={styles.itemTypeChipRow}>
                         {(
                           [
-                            {value: 'Inventory' as const, label: 'Inventory'},
+                            ...(allowInventoryType
+                              ? [{value: 'Inventory' as const, label: 'Inventory'}]
+                              : []),
                             {value: 'Service' as const, label: 'Service'},
+                            {value: 'Non-Inventory' as const, label: 'Non-Inventory'},
                           ] as const
                         ).map(opt => {
-                          const selected = (editedItem.type || 'Inventory') === opt.value;
+                          const selected =
+                            (editedItem.type || defaultCreateType) === opt.value;
                           return (
                             <TouchableOpacity
                               key={opt.value}
@@ -1151,6 +1168,70 @@ const EditItemModal = ({
                       />
                     </View>
                   </View>
+
+                  {canSeeBuyingPriceUi ? (
+                    <View style={[styles.squareOutlineField, editTheme.outlineField]}>
+                      <Text style={[styles.squareOutlineLabel, editTheme.outlineLabel]}>
+                        Buying price / Unit cost (UGX)
+                      </Text>
+                      {editedItem.type === 'Service' ||
+                      editedItem.type === 'Non-Inventory' ? (
+                        <View style={styles.squarePriceRow}>
+                          <Text style={styles.squarePricePrefix}>UGX</Text>
+                          <TextInput
+                            style={[styles.squarePriceInput, editTheme.priceInput]}
+                            value={formatAmountWithCommas(editedItem.unit_cost ?? 0)}
+                            onChangeText={text => {
+                              const numericValue =
+                                parseFloat(text.replace(/,/g, '')) || 0;
+                              setEditedItem({
+                                ...editedItem,
+                                unit_cost: numericValue,
+                              });
+                            }}
+                            keyboardType="numeric"
+                            placeholder="0"
+                            placeholderTextColor={colors.placeholder}
+                          />
+                        </View>
+                      ) : (
+                        <View style={styles.squareOutlineStaticRow}>
+                          <Text
+                            style={[
+                              styles.squareOutlineStaticValue,
+                              editTheme.staticValue,
+                            ]}>
+                            UGX {formatAmountWithCommas(editedItem.unit_cost ?? 0)}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  ) : null}
+
+                  {canSeeProfitMarginUi ? (
+                    <View style={[styles.squareOutlineField, editTheme.outlineField]}>
+                      <Text style={[styles.squareOutlineLabel, editTheme.outlineLabel]}>
+                        Profit margin
+                      </Text>
+                      <View style={styles.squareOutlineStaticRow}>
+                        <Text
+                          style={[
+                            styles.squareOutlineStaticValue,
+                            editTheme.staticValue,
+                          ]}>
+                          {(() => {
+                            const up = Number(editedItem.unit_price) || 0;
+                            const uc = Number(editedItem.unit_cost) || 0;
+                            if (up <= 0) {
+                              return '—';
+                            }
+                            const pct = ((up - uc) / up) * 100;
+                            return `${pct.toFixed(2)}%`;
+                          })()}
+                        </Text>
+                      </View>
+                    </View>
+                  ) : null}
 
                   {!isCreateMode ? (
                     <View style={[styles.squareOutlineField, editTheme.outlineField]}>
@@ -1300,6 +1381,11 @@ const Items = () => {
   const { selectedTab, setSelectedTab } = useTabContext();
   const { canRead, canCreate, canEdit, canDelete } = usePermissions();
   const PAGE_NAME = PAGE_NAMES.ITEMS;
+  const isAllServicesScreen = route.name === 'AllServices';
+  const defaultCreateType: 'Inventory' | 'Service' = isAllServicesScreen
+    ? 'Service'
+    : 'Inventory';
+  const screenTitle = isAllServicesScreen ? 'All services' : 'All items';
 
   // Early return if no read permission
   if (!canRead(PAGE_NAME)) {
@@ -1403,7 +1489,7 @@ const Items = () => {
             ...incomingDraft,
             category_id: resolvedCategoryValue,
           }
-        : createEmptyItemDraft();
+        : createEmptyItemDraft(defaultCreateType);
 
     if (reopenMode === 'create') {
       setEditModal(false);
@@ -1427,16 +1513,23 @@ const Items = () => {
     route.params?.itemDraft,
     route.params?.categoryPick,
     categories,
+    defaultCreateType,
     navigation,
   ]);
 
   const applyStockFilter = useCallback(
     (results: Item[]) => {
+      const scopedResults = isAllServicesScreen
+        ? results.filter(
+            item => item?.type === 'Service' || item?.type === 'Non-Inventory',
+          )
+        : results;
+
       if (stockFilter === 'all') {
-        return results;
+        return scopedResults;
       }
 
-      return results.filter(item => {
+      return scopedResults.filter(item => {
         const inventory = item?.inventory || 0;
         if (stockFilter === 'out_of_stock') return inventory === 0;
         if (stockFilter === 'low_stock') return inventory > 0 && inventory < 10;
@@ -1444,7 +1537,7 @@ const Items = () => {
         return true;
       });
     },
-    [stockFilter],
+    [isAllServicesScreen, stockFilter],
   );
 
   const mergeUniqueItems = useCallback((existing: Item[], incoming: Item[]) => {
@@ -1553,7 +1646,7 @@ const Items = () => {
     // Ensure only one form modal is open at a time.
     setEditModal(false);
     setSelectedItem(null);
-    setCreateDraftItem(null);
+    setCreateDraftItem(createEmptyItemDraft(defaultCreateType));
     setCreateModal(true);
   };
 
@@ -1738,6 +1831,14 @@ const Items = () => {
       const itemType = draftItem.type?.trim() || 'Inventory';
       itemToCreate.type = itemType;
 
+      if (
+        (itemType === 'Service' || itemType === 'Non-Inventory') &&
+        draftItem.unit_cost !== undefined &&
+        draftItem.unit_cost !== null
+      ) {
+        itemToCreate.unit_cost = Number(draftItem.unit_cost) || 0;
+      }
+
       const response = await createItem(itemToCreate);
       if (response.status === 200 || response.status === 201) {
         setSuccessMessage(
@@ -1780,7 +1881,7 @@ const Items = () => {
             backgroundColor: colors.background,
           },
         ]}>
-        <TouchableOpacity
+        <QuickIconPressable
           style={[
             styles.headerRoundButton,
             {
@@ -1788,18 +1889,16 @@ const Items = () => {
               backgroundColor: colors.card,
             },
           ]}
-          onPress={() => navigation.goBack()}
-          activeOpacity={0.7}
-          accessibilityRole="button"
+          onPress={() => safeGoBack(navigation, 'Home')}
           accessibilityLabel="Go back">
           <Image
             source={icons.back as any}
             style={[styles.headerRoundIcon, { tintColor: colors.textPrimary }]}
             resizeMode="contain"
           />
-        </TouchableOpacity>
+        </QuickIconPressable>
         <Text style={[styles.allItemsTitle, { color: colors.textPrimary }]}>
-          All items
+          {screenTitle}
         </Text>
         <View style={styles.headerTrailing}>
           {canCreate(PAGE_NAME) ? (
@@ -1968,6 +2067,8 @@ const Items = () => {
         canEdit={canEdit(PAGE_NAME)}
         canDelete={canDelete(PAGE_NAME)}
         mode="create"
+        defaultCreateType={defaultCreateType}
+        allowInventoryType={!isAllServicesScreen}
       />
 
       {/* Edit Item Modal */}
@@ -2019,7 +2120,11 @@ const Items = () => {
               <Text style={styles.filterModalTitle}>Filter Items</Text>
               <TouchableOpacity
                 onPress={() => setFilterModal(false)}
-                style={styles.filterCloseButton}>
+                style={styles.filterCloseButton}
+                activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}
+                hitSlop={ICON_BUTTON_HIT_SLOP}
+                accessibilityRole="button"
+                accessibilityLabel="Close filters">
                 <Text style={styles.filterCloseIcon}>✕</Text>
               </TouchableOpacity>
             </View>

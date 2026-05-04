@@ -22,6 +22,7 @@ import {
   PaymentMethod,
   CustomerFormValues,
 } from '../../@types/customer';
+import {QuickIconPressable} from '../../Components';
 import {CustomerServices} from '../../services/CustomerServices';
 import Toast from 'react-native-toast-message';
 import Contacts from 'react-native-contacts';
@@ -347,16 +348,17 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
       onRequestClose={onClose}>
       <View style={styles.pageRoot}>
         <View style={styles.pageHeader}>
-          <TouchableOpacity
+          <QuickIconPressable
             onPress={onClose}
             style={styles.headerIconButton}
-            hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
+            hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
+            accessibilityLabel="Close">
             <Image
               source={icons.cross}
               style={styles.headerIcon}
               resizeMode="contain"
             />
-          </TouchableOpacity>
+          </QuickIconPressable>
 
           {((isEditMode && canEdit) || (!isEditMode && canCreate)) && (
             <TouchableOpacity
@@ -564,16 +566,17 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
           onRequestClose={() => setContactsModalVisible(false)}>
           <View style={styles.contactsScreen}>
             <View style={styles.contactsTopBar}>
-              <TouchableOpacity
+              <QuickIconPressable
                 onPress={() => setContactsModalVisible(false)}
                 style={styles.contactsBackButton}
-                hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
+                hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
+                accessibilityLabel="Go back">
                 <Image
                   source={icons.back}
                   style={styles.contactsBackIcon}
                   resizeMode="contain"
                 />
-              </TouchableOpacity>
+              </QuickIconPressable>
               <Text style={styles.contactsModalTitle}>Choose a Contact</Text>
               <View style={styles.contactsHeaderSpacer} />
             </View>

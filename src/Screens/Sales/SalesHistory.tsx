@@ -25,8 +25,17 @@ import {useNavigation} from '@react-navigation/native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import ReactNativeModal from 'react-native-modal';
 import Toast from 'react-native-toast-message';
-import {COLORS, FONTS, SIZES, icons} from '../../constants';
+import {QuickIconPressable} from '../../Components';
 import {
+  COLORS,
+  FONTS,
+  SIZES,
+  icons,
+  ICON_BUTTON_ACTIVE_OPACITY,
+  ICON_BUTTON_HIT_SLOP,
+} from '../../constants';
+import {
+  fetchMyUserSetup,
   fetchSalesData,
   fetchSalesSummary,
   fetchSalesUserSummary,
@@ -43,6 +52,7 @@ import PrintService, {
 } from '../../services/PrintService';
 import {useAuth} from '../../context/Store';
 import {usePermissions} from '../../hooks/usePermissions';
+import {safeGoBack} from '../../hooks/NavigationService';
 import {PAGE_NAMES} from '../../constants/pageNames';
 import {useTheme} from '../../context/ThemeContext';
 import SalesHistoryListItem, {
@@ -257,6 +267,8 @@ const SalesHistory = () => {
   const [summaryFromApi, setSummaryFromApi] =
     useState<SalesHistorySummary | null>(null);
   const [userSummaries, setUserSummaries] = useState<SalesUserSummaryRow[]>([]);
+  /** Mirrors web Sales History: User Setup → canViewOnlyTheirSales + ?user= JWT user_id */
+  const [restrictToOwnSales, setRestrictToOwnSales] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
   const [showDetail, setShowDetail] = useState(false);
   const [selectedItem, setSelectedItem] = useState<SalesInvoice | null>(null);
@@ -328,6 +340,26 @@ const SalesHistory = () => {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const setup = await fetchMyUserSetup();
+        if (cancelled) {
+          return;
+        }
+        setRestrictToOwnSales(setup?.canViewOnlyTheirSales ?? true);
+      } catch {
+        if (!cancelled) {
+          setRestrictToOwnSales(true);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
     }
@@ -374,6 +406,13 @@ const SalesHistory = () => {
         filters.search = q;
       }
 
+      if (restrictToOwnSales) {
+        const uid = Number.parseInt(String(auth.user_id || ''), 10);
+        if (Number.isFinite(uid)) {
+          filters.user = uid;
+        }
+      }
+
       const response = await fetchSalesData(filters);
       const results = (response?.results || []) as SalesInvoice[];
 
@@ -391,6 +430,7 @@ const SalesHistory = () => {
           status: statusFilter !== 'All' ? statusFilter : undefined,
           paymentMethod: filters.paymentMethod,
           search: q || undefined,
+          ...(filters.user != null ? {user: filters.user} : {}),
         };
         const [summary, users] = await Promise.all([
           fetchSalesSummary(summaryFilters),
@@ -420,6 +460,8 @@ const SalesHistory = () => {
     paymentStatusFilter,
     paymentMethodIdFilter,
     debouncedSearchQuery,
+    restrictToOwnSales,
+    auth.user_id,
   ]);
 
   useEffect(() => {
@@ -437,6 +479,8 @@ const SalesHistory = () => {
     paymentMethodIdFilter,
     debouncedSearchQuery,
     hasAccess,
+    restrictToOwnSales,
+    auth.user_id,
   ]);
 
   const onRefresh = useCallback(() => {
@@ -604,7 +648,6 @@ const SalesHistory = () => {
               phone: c.phone || '',
               email: c.email || '',
               tin: c.tin || '',
-              vatNo: c.vatNo || '',
             };
           }
         } catch {
@@ -752,6 +795,10 @@ const SalesHistory = () => {
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => setShowFilters(false)}
+              activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}
+              hitSlop={ICON_BUTTON_HIT_SLOP}
+              accessibilityRole="button"
+              accessibilityLabel="Close filters"
               style={[styles.bottomSheetCloseButton, t.sheetCloseBtn]}>
               <Text style={[styles.bottomSheetCloseText, t.sheetCloseText]}>
                 ✕
@@ -948,15 +995,15 @@ const SalesHistory = () => {
         },
         t.headerBorder,
       ]}>
-      <TouchableOpacity
+      <QuickIconPressable
         style={[styles.headerRoundButton, t.headerRoundButton]}
-        onPress={() => navigation.goBack()}
-        activeOpacity={0.7}>
+        onPress={() => safeGoBack(navigation, 'Home')}
+        accessibilityLabel="Go back">
         <Image
           source={icons.back as any}
           style={[styles.headerRoundIcon, t.headerRoundIcon]}
         />
-      </TouchableOpacity>
+      </QuickIconPressable>
       <Text style={[styles.topTitle, t.topTitle]}>Sales History</Text>
       <View style={styles.headerTrailingSpacer} />
     </View>
@@ -1056,6 +1103,10 @@ const SalesHistory = () => {
             </Text>
             <TouchableOpacity
               onPress={closeDetail}
+              activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}
+              hitSlop={ICON_BUTTON_HIT_SLOP}
+              accessibilityRole="button"
+              accessibilityLabel="Close invoice detail"
               style={[styles.bottomSheetCloseButton, t.sheetCloseBtn]}>
               <Text style={[styles.bottomSheetCloseText, t.sheetCloseText]}>
                 ✕

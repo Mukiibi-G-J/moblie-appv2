@@ -5,6 +5,8 @@ import {
   FlatList,
   Image,
   ImageSourcePropType,
+  Platform,
+  StatusBar,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -16,14 +18,16 @@ import {
 } from 'react-native';
 import {useNavigation, useIsFocused} from '@react-navigation/native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import {COLORS, FONTS, SIZES} from '../../constants/theme';
-import icons from '../../constants/icons';
+import {COLORS, FONTS, SIZES, icons} from '../../constants';
+import PurchaseHistoryListItem from './PurchaseHistoryListItem';
 import {fetchPurchasesData} from '../../services/app.services';
 import {usePermissions} from '../../hooks/usePermissions';
 import {PAGE_NAMES} from '../../constants/pageNames';
 import {useTheme} from '../../context/ThemeContext';
 import {useTabContext} from '../../context/Store';
+import {QuickIconPressable} from '../../Components';
 import MainBottomTabBar from '../../Components/MainBottomTabBar';
+import {safeGoBack} from '../../hooks/NavigationService';
 
 type PurchaseHistoryFilter = 'today' | 'last7days' | 'last30days';
 
@@ -59,10 +63,37 @@ const PurchaseHistory = () => {
   const navigation = useNavigation();
   const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
-  const {colors} = useTheme();
+  const {colors, isDark} = useTheme();
   const {selectedTab, setSelectedTab} = useTabContext();
+
+  const t = useMemo(
+    () => ({
+      summaryPrimary: isDark
+        ? {
+            backgroundColor: 'rgba(9, 146, 104, 0.2)',
+            borderColor: 'rgba(74, 222, 128, 0.35)',
+          }
+        : {backgroundColor: '#F0FFF7', borderColor: '#C7F1DA'},
+      summarySecondary: isDark
+        ? {
+            backgroundColor: 'rgba(47, 83, 216, 0.22)',
+            borderColor: 'rgba(147, 180, 255, 0.35)',
+          }
+        : {backgroundColor: '#F2F5FF', borderColor: '#D3DBFF'},
+      summaryLabel: {color: colors.textSecondary},
+      summaryValuePrimary: {color: isDark ? '#4ADE80' : '#099268'},
+      summaryValueSecondary: {color: isDark ? '#93B4FF' : '#2F53D8'},
+      summarySubtext: {color: colors.textSecondary},
+      filterSummaryRow: {backgroundColor: colors.screenMuted},
+      filterSummaryLabel: {color: colors.textSecondary},
+      filterSummaryValue: {color: colors.textPrimary},
+    }),
+    [colors, isDark],
+  );
   const {canRead, canCreate, canEdit} = usePermissions();
   const PAGE_NAME = PAGE_NAMES.PURCHASES;
+  /** Boolean — stable across renders unless auth changes (unlike `canRead` fn reference). */
+  const canReadPurchases = canRead(PAGE_NAME);
 
   const [activeFilter, setActiveFilter] =
     useState<PurchaseHistoryFilter>('today');
@@ -121,7 +152,7 @@ const PurchaseHistory = () => {
   }, [activeFilter]);
 
   const loadPurchases = async () => {
-    if (!canRead(PAGE_NAME)) {
+    if (!canReadPurchases) {
       return;
     }
     setIsLoading(true);
@@ -169,7 +200,7 @@ const PurchaseHistory = () => {
   };
 
   useEffect(() => {
-    if (!canRead(PAGE_NAME)) {
+    if (!canReadPurchases) {
       return;
     }
     const debounceTimer = setTimeout(() => {
@@ -177,61 +208,70 @@ const PurchaseHistory = () => {
     }, 500);
 
     return () => clearTimeout(debounceTimer);
-  }, [startDate, endDate, currentPage, statusFilter, searchQuery, canRead]);
+  }, [
+    startDate,
+    endDate,
+    currentPage,
+    statusFilter,
+    searchQuery,
+    canReadPurchases,
+  ]);
 
-  // Reload data when screen is focused
+  // Reload when screen gains focus (e.g. return from Purchase creation)
   useEffect(() => {
-    if (!canRead(PAGE_NAME) || !isFocused) {
+    if (!canReadPurchases || !isFocused) {
       return;
     }
     loadPurchases();
-  }, [isFocused, canRead]);
+  }, [isFocused, canReadPurchases]);
 
   const onRefresh = useCallback(async () => {
-    if (!canRead(PAGE_NAME)) {
+    if (!canReadPurchases) {
       return;
     }
     setRefreshing(true);
     setCurrentPage(1);
     await loadPurchases();
     setRefreshing(false);
-  }, [startDate, endDate, statusFilter, searchQuery, canRead]);
+  }, [startDate, endDate, statusFilter, searchQuery, canReadPurchases]);
 
   const onSelectTab = (tab: string) => {
     setSelectedTab(tab);
     navigation.navigate('Home' as never);
   };
 
-  if (!canRead(PAGE_NAME)) {
+  if (!canReadPurchases) {
     return (
       <View style={[styles.container, {backgroundColor: colors.background}]}>
         <View
           style={[
-            styles.topHeader,
+            styles.allItemsHeader,
             {
-              paddingTop: Math.max(insets.top, 12),
+              paddingTop: Math.max(insets.top, 10),
               backgroundColor: colors.background,
-              borderBottomColor: colors.border,
             },
           ]}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
+          <QuickIconPressable
+            onPress={() => safeGoBack(navigation, 'Home')}
             style={[
-              styles.headerCircleBtn,
-              {backgroundColor: colors.backButtonBg},
+              styles.headerRoundButton,
+              {
+                borderColor: colors.border,
+                backgroundColor: colors.card,
+              },
             ]}
-            hitSlop={8}
+            hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
             accessibilityLabel="Go back">
             <Image
               source={icons.back}
-              style={[styles.headerBackIcon, {tintColor: colors.textPrimary}]}
+              style={[styles.headerRoundIcon, {tintColor: colors.textPrimary}]}
               resizeMode="contain"
             />
-          </TouchableOpacity>
-          <Text style={[styles.headerTitle, {color: colors.textPrimary}]}>
-            Purchase history
+          </QuickIconPressable>
+          <Text style={[styles.screenTitle, {color: colors.textPrimary}]}>
+            Purchases
           </Text>
-          <View style={styles.headerTitleSpacer} />
+          <View style={styles.headerTrailingSpacer} />
         </View>
         <View
           style={[
@@ -271,13 +311,29 @@ const PurchaseHistory = () => {
   };
 
   const handleClearFilter = () => {
+    setActiveFilter('today');
     setStatusFilter('Open');
     setSearchQuery('');
     setCurrentPage(1);
     setFilterModalVisible(false);
   };
 
-  const hasActiveFilters = statusFilter !== 'Open' || searchQuery.trim() !== '';
+  const hasActiveFilters =
+    activeFilter !== 'today' ||
+    statusFilter !== 'Open' ||
+    searchQuery.trim() !== '';
+
+  const activeFilterLabel = useMemo(() => {
+    const dateLabel =
+      FILTERS.find(f => f.id === activeFilter)?.label ?? 'Today';
+    const statusLabel =
+      statusFilter === 'all' ? 'All statuses' : `${statusFilter} only`;
+    const parts = [dateLabel, statusLabel];
+    if (searchQuery.trim()) {
+      parts.push(`Search: "${searchQuery.trim()}"`);
+    }
+    return parts.join(' · ');
+  }, [activeFilter, statusFilter, searchQuery]);
 
   const renderPagination = () => {
     if (totalPages <= 1) return null;
@@ -354,94 +410,28 @@ const PurchaseHistory = () => {
     return totalAmount / purchases.length;
   }, [purchases.length, totalAmount]);
 
-  const renderFilterPills = () => (
-    <View style={styles.filterRow}>
-      {FILTERS.map(filter => {
-        const isActive = activeFilter === filter.id;
-        return (
-          <TouchableOpacity
-            key={filter.id}
-            style={[
-              styles.filterPill,
-              {
-                backgroundColor: colors.card,
-                borderColor: colors.border,
-              },
-              isActive && styles.filterPillActive,
-            ]}
-            onPress={() => setActiveFilter(filter.id)}
-            activeOpacity={0.7}>
-            <Text
-              style={[
-                styles.filterLabel,
-                {color: colors.textSecondary},
-                isActive && styles.filterLabelActive,
-              ]}>
-              {filter.label}
-            </Text>
-          </TouchableOpacity>
-        );
-      })}
-    </View>
-  );
-
-  const renderSummaryCards = () => (
-    <View style={styles.summaryRow}>
-      <View
-        style={[
-          styles.summaryCard,
-          {backgroundColor: colors.card, borderColor: colors.border},
-        ]}>
-        <View style={styles.summaryCardIcon}>
-          <Image
-            source={icons.salesCount as ImageSourcePropType}
-            style={styles.summaryCardIconImage}
-            resizeMode="contain"
-          />
-        </View>
-        <Text style={[styles.summaryLabel, {color: colors.textSecondary}]}>
-          Purchase Count
+  const renderSummary = () => (
+    <View style={styles.summaryContainer}>
+      <View style={[styles.summaryCard, t.summaryPrimary, {borderWidth: 1}]}>
+        <Text style={[styles.summaryCardLabel, t.summaryLabel]}>
+          Total amount
         </Text>
-        <Text style={[styles.summaryValue, {color: colors.textPrimary}]}>
-          {totalCount || purchases.length}
-        </Text>
-      </View>
-      <View
-        style={[
-          styles.summaryCard,
-          {backgroundColor: colors.card, borderColor: colors.border},
-        ]}>
-        <View style={[styles.summaryCardIcon, styles.revenueIcon]}>
-          <Image
-            source={icons.revenue as ImageSourcePropType}
-            style={styles.summaryCardIconImage}
-            resizeMode="contain"
-          />
-        </View>
-        <Text style={[styles.summaryLabel, {color: colors.textSecondary}]}>
-          Total Amount
-        </Text>
-        <Text style={[styles.summaryValue, {color: colors.textPrimary}]}>
+        <Text style={[styles.summaryValuePrimary, t.summaryValuePrimary]}>
           UGX {Math.round(totalAmount).toLocaleString()}
         </Text>
-      </View>
-      <View
-        style={[
-          styles.summaryCard,
-          {backgroundColor: colors.card, borderColor: colors.border},
-        ]}>
-        <View style={[styles.summaryCardIcon, styles.avgIcon]}>
-          <Image
-            source={icons.average as ImageSourcePropType}
-            style={styles.summaryCardIconImage}
-            resizeMode="contain"
-          />
-        </View>
-        <Text style={[styles.summaryLabel, {color: colors.textSecondary}]}>
-          Avg Purchase
+        <Text style={[styles.summarySubtext, t.summarySubtext]}>
+          {totalCount || purchases.length} invoice(s) · this page
         </Text>
-        <Text style={[styles.summaryValue, {color: colors.textPrimary}]}>
+      </View>
+      <View style={[styles.summaryCard, t.summarySecondary, {borderWidth: 1}]}>
+        <Text style={[styles.summaryCardLabel, t.summaryLabel]}>
+          Avg. purchase
+        </Text>
+        <Text style={[styles.summaryValueSecondary, t.summaryValueSecondary]}>
           UGX {Math.round(averagePurchase).toLocaleString()}
+        </Text>
+        <Text style={[styles.summarySubtext, t.summarySubtext]}>
+          Per invoice (visible rows)
         </Text>
       </View>
     </View>
@@ -477,91 +467,19 @@ const PurchaseHistory = () => {
     (navigation as any).navigate('PurchaseCreation', {purchase});
   };
 
-  const renderHistoryItem = ({item}: {item: PurchaseInvoice}) => (
-    <TouchableOpacity
-      style={[
-        styles.historyCard,
-        {backgroundColor: colors.card, borderColor: colors.border},
-      ]}
-      onPress={() => {
-        if (item.status === 'Posted' || !canEdit(PAGE_NAME)) {
-          setSelectedItem(item);
-          setModalVisible(true);
-        } else {
-          handleEditPurchase(item);
-        }
-      }}
-      activeOpacity={0.7}>
-      <View style={styles.historyCardHeader}>
-        <View style={styles.historyCardLeft}>
-          <Text
-            style={[styles.historyTitle, {color: colors.textPrimary}]}
-            numberOfLines={1}>
-            {item?.vendor_name || 'Unknown Vendor'}
-          </Text>
-          <Text style={[styles.historyInvoice, {color: colors.textSecondary}]}>
-            Invoice #{item?.invoice_no || '—'}
-          </Text>
-        </View>
-        <View style={styles.historyCardRight}>
-          <Text style={[styles.historyAmount, {color: COLORS.primary}]}>
-            UGX {(item?.total_amount || 0).toLocaleString()}
-          </Text>
-          {item?.status && (
-            <View
-              style={[
-                styles.statusBadge,
-                {backgroundColor: getStatusColor(item.status) + '20'},
-              ]}>
-              <View
-                style={[
-                  styles.statusDot,
-                  {backgroundColor: getStatusColor(item.status)},
-                ]}
-              />
-              <Text
-                style={[
-                  styles.statusText,
-                  {color: getStatusColor(item.status)},
-                ]}>
-                {item.status}
-              </Text>
-            </View>
-          )}
-        </View>
-      </View>
-      <View
-        style={[styles.historyCardFooter, {borderTopColor: colors.border}]}>
-        <View style={styles.historyMetaItem}>
-          <Image
-            source={icons.calender as ImageSourcePropType}
-            style={[styles.metaIcon, {tintColor: colors.textTertiary}]}
-            resizeMode="contain"
-          />
-          <Text style={[styles.historyMeta, {color: colors.textSecondary}]}>
-            {new Date(item?.document_date || '').toLocaleDateString()}
-          </Text>
-        </View>
-        {item?.vendor_invoice_no && (
-          <View style={styles.historyMetaItem}>
-            <Image
-              source={icons.calender as ImageSourcePropType}
-              style={[styles.metaIcon, {tintColor: colors.textTertiary}]}
-              resizeMode="contain"
-            />
-            <Text style={[styles.historyMeta, {color: colors.textSecondary}]}>
-              {item.vendor_invoice_no}
-            </Text>
-          </View>
-        )}
-      </View>
-    </TouchableOpacity>
-  );
+  const handlePurchaseRowPress = (item: PurchaseInvoice) => {
+    if (item.status === 'Posted' || !canEdit(PAGE_NAME)) {
+      setSelectedItem(item);
+      setModalVisible(true);
+    } else {
+      handleEditPurchase(item);
+    }
+  };
 
   const renderHistory = () => {
     if (isLoading) {
       return (
-        <View style={styles.loadingContainer}>
+        <View style={[styles.listFlex, styles.loadingContainer]}>
           <ActivityIndicator size="large" color={COLORS.primary} />
           <Text style={[styles.loadingText, {color: colors.textSecondary}]}>
             Loading purchases...
@@ -572,7 +490,7 @@ const PurchaseHistory = () => {
 
     if (error) {
       return (
-        <View style={styles.emptyContainer}>
+        <View style={[styles.listFlex, styles.emptyContainer]}>
           <View
             style={[
               styles.emptyIconContainer,
@@ -601,6 +519,7 @@ const PurchaseHistory = () => {
 
     return (
       <FlatList
+        style={styles.listFlex}
         data={purchases}
         keyExtractor={item =>
           `${
@@ -610,7 +529,12 @@ const PurchaseHistory = () => {
             Math.random().toString(36)
           }`
         }
-        renderItem={renderHistoryItem}
+        renderItem={({item}) => (
+          <PurchaseHistoryListItem
+            item={item}
+            onPress={() => handlePurchaseRowPress(item)}
+          />
+        )}
         contentContainerStyle={
           purchases.length ? styles.listContent : styles.emptyContent
         }
@@ -681,15 +605,15 @@ const PurchaseHistory = () => {
               <Text style={[styles.modalTitle, {color: colors.textPrimary}]}>
                 Invoice: {selectedItem.invoice_no || '—'}
               </Text>
-              <TouchableOpacity
+              <QuickIconPressable
                 style={styles.closeIconButton}
                 onPress={() => setModalVisible(false)}
-                activeOpacity={0.7}>
+                accessibilityLabel="Close">
                 <Image
                   source={icons.cross as ImageSourcePropType}
                   style={[styles.closeIcon, {tintColor: colors.textTertiary}]}
                 />
-              </TouchableOpacity>
+              </QuickIconPressable>
             </View>
 
             <ScrollView style={styles.modalScrollView}>
@@ -821,117 +745,124 @@ const PurchaseHistory = () => {
   };
 
   return (
-    <View style={[styles.container, {backgroundColor: colors.screenMuted}]}>
+    <View style={[styles.container, {backgroundColor: colors.background}]}>
       <View
         style={[
-          styles.topHeader,
+          styles.allItemsHeader,
           {
-            paddingTop: Math.max(insets.top, 12),
+            paddingTop: Math.max(
+              insets.top,
+              10,
+              Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0,
+            ),
             backgroundColor: colors.background,
-            borderBottomColor: colors.border,
           },
         ]}>
-        <TouchableOpacity
-          onPress={() => navigation.goBack()}
+        <QuickIconPressable
           style={[
-            styles.headerCircleBtn,
-            {backgroundColor: colors.backButtonBg},
+            styles.headerRoundButton,
+            {
+              borderColor: colors.border,
+              backgroundColor: colors.card,
+            },
           ]}
-          hitSlop={8}
+          onPress={() => safeGoBack(navigation, 'Home')}
           accessibilityLabel="Go back">
           <Image
-            source={icons.back}
-            style={[styles.headerBackIcon, {tintColor: colors.textPrimary}]}
+            source={icons.back as ImageSourcePropType}
+            style={[styles.headerRoundIcon, {tintColor: colors.textPrimary}]}
             resizeMode="contain"
           />
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, {color: colors.textPrimary}]}>
-          Purchase history
+        </QuickIconPressable>
+        <Text style={[styles.screenTitle, {color: colors.textPrimary}]}>
+          Purchases
         </Text>
-        <View style={styles.headerTitleSpacer} />
+        <View style={styles.headerTrailing}>
+          {canCreate(PAGE_NAME) ? (
+            <TouchableOpacity
+              onPress={() => (navigation as any).navigate('PurchaseCreation')}
+              style={styles.headerActionButton}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel="New purchase">
+              <Image
+                source={icons.plus as ImageSourcePropType}
+                style={styles.headerActionIcon}
+                resizeMode="contain"
+              />
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.headerTrailingSpacer} />
+          )}
+        </View>
       </View>
-      {/* Search Bar */}
+
       <View
         style={[
           styles.searchContainer,
-          {
-            backgroundColor: colors.background,
-            borderBottomColor: colors.border,
-          },
+          {backgroundColor: colors.background},
         ]}>
         <View
           style={[
-            styles.searchInputContainer,
-            {backgroundColor: colors.inputBackground},
+            styles.searchPill,
+            {
+              backgroundColor: colors.inputBackground,
+              borderColor: colors.border,
+            },
           ]}>
-          <View style={styles.searchIconContainer}>
-            <Image
-              source={icons.search as ImageSourcePropType}
-              style={[styles.searchIcon, {tintColor: colors.textTertiary}]}
-              resizeMode="contain"
-            />
-          </View>
+          <Image
+            source={icons.search as ImageSourcePropType}
+            style={[styles.searchIcon, {tintColor: colors.iconMuted}]}
+            resizeMode="contain"
+          />
           <TextInput
             style={[styles.searchInput, {color: colors.textPrimary}]}
-            placeholder="Search by vendor or invoice..."
+            placeholder="Search vendor or invoice"
             placeholderTextColor={colors.placeholder}
             value={searchQuery}
             onChangeText={handleSearch}
           />
-          {searchLoading && (
-            <View style={styles.searchLoadingContainer}>
+          {searchLoading ? (
+            <View style={styles.searchLoadingPill}>
               <ActivityIndicator size="small" color={COLORS.primary} />
             </View>
-          )}
-        </View>
-        <TouchableOpacity
-          style={[
-            styles.filterButton,
-            {backgroundColor: colors.inputBackground, borderColor: colors.border},
-            hasActiveFilters && styles.filterButtonActive,
-          ]}
-          onPress={() => setFilterModalVisible(true)}
-          activeOpacity={0.7}>
-          <Image
-            source={icons.filter as ImageSourcePropType}
-            style={[
-              styles.filterIcon,
-              {tintColor: colors.textTertiary},
-              hasActiveFilters && styles.filterIconActive,
-            ]}
-            resizeMode="contain"
-          />
-          {hasActiveFilters && <View style={styles.filterBadge} />}
-        </TouchableOpacity>
-      </View>
-
-      <View style={[styles.content, {backgroundColor: colors.screenMuted}]}>
-        {renderFilterPills()}
-        {renderSummaryCards()}
-        <View style={styles.historySection}>
-          <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionHeading, {color: colors.textPrimary}]}>
-              Purchase History
-            </Text>
-            {canCreate(PAGE_NAME) && (
-              <TouchableOpacity
-                style={styles.newPurchaseButton}
-                onPress={() => (navigation as any).navigate('PurchaseCreation')}
-                activeOpacity={0.7}>
-                <Image
-                  source={icons.plus as ImageSourcePropType}
-                  style={styles.newPurchaseIcon}
-                  resizeMode="contain"
-                />
-                <Text style={styles.newPurchaseButtonText}>New Purchase</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-          {renderHistory()}
+          ) : null}
+          <TouchableOpacity
+            style={styles.filterInlineHit}
+            onPress={() => setFilterModalVisible(true)}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Filter purchases">
+            <Image
+              source={icons.filter as ImageSourcePropType}
+              style={[
+                styles.filterIconInline,
+                {
+                  tintColor: hasActiveFilters
+                    ? COLORS.primary2
+                    : colors.iconMuted,
+                },
+              ]}
+              resizeMode="contain"
+            />
+            {hasActiveFilters ? <View style={styles.filterBadge} /> : null}
+          </TouchableOpacity>
         </View>
       </View>
 
-      {/* Pagination */}
+      <View style={[styles.filterSummaryRow, t.filterSummaryRow]}>
+        <Text style={[styles.filterSummaryLabel, t.filterSummaryLabel]}>
+          Active filters:
+        </Text>
+        <Text style={[styles.filterSummaryValue, t.filterSummaryValue]}>
+          {activeFilterLabel}
+        </Text>
+      </View>
+
+      {renderSummary()}
+
+      <View style={styles.listFlex}>{renderHistory()}</View>
+
       {renderPagination()}
 
       {renderDetailModal()}
@@ -956,21 +887,58 @@ const PurchaseHistory = () => {
               <Text style={[styles.filterModalTitle, {color: colors.textPrimary}]}>
                 Filter Purchases
               </Text>
-              <TouchableOpacity
+              <QuickIconPressable
                 onPress={() => setFilterModalVisible(false)}
-                style={styles.filterCloseButton}>
+                style={styles.filterCloseButton}
+                accessibilityLabel="Close">
                 <Image
                   source={icons.cross as ImageSourcePropType}
                   style={[styles.filterCloseIcon, {tintColor: colors.textTertiary}]}
                   resizeMode="contain"
                 />
-              </TouchableOpacity>
+              </QuickIconPressable>
             </View>
 
             <ScrollView
               style={styles.filterScrollView}
               showsVerticalScrollIndicator={false}>
-              {/* Status Filter */}
+              <View
+                style={[
+                  styles.filterSection,
+                  {borderBottomColor: colors.border},
+                ]}>
+                <Text
+                  style={[styles.filterSectionLabel, {color: colors.textPrimary}]}>
+                  Date range
+                </Text>
+                <View style={styles.stockFilterContainer}>
+                  {FILTERS.map(filter => (
+                    <TouchableOpacity
+                      key={filter.id}
+                      style={[
+                        styles.stockFilterButton,
+                        {
+                          backgroundColor: colors.inputBackground,
+                          borderColor: colors.border,
+                        },
+                        activeFilter === filter.id &&
+                          styles.stockFilterButtonActive,
+                      ]}
+                      onPress={() => setActiveFilter(filter.id)}
+                      activeOpacity={0.7}>
+                      <Text
+                        style={[
+                          styles.stockFilterButtonText,
+                          {color: colors.textSecondary},
+                          activeFilter === filter.id &&
+                            styles.stockFilterButtonTextActive,
+                        ]}>
+                        {filter.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
               <View
                 style={[
                   styles.filterSection,
@@ -1055,28 +1023,26 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  content: {
-    flex: 1,
-  },
-  topHeader: {
+  allItemsHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: SIZES.padding,
-    paddingBottom: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingBottom: 10,
   },
-  headerCircleBtn: {
+  headerRoundButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    justifyContent: 'center',
+    borderWidth: 1,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  headerBackIcon: {
+  headerRoundIcon: {
     width: 20,
     height: 20,
   },
-  headerTitle: {
+  screenTitle: {
     flex: 1,
     textAlign: 'center',
     ...FONTS.h3,
@@ -1084,8 +1050,28 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: -0.2,
   },
-  headerTitleSpacer: {
+  headerTrailing: {
     width: 40,
+    height: 40,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  headerTrailingSpacer: {
+    width: 40,
+    height: 40,
+  },
+  headerActionButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.primary2,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerActionIcon: {
+    width: 18,
+    height: 18,
+    tintColor: COLORS.white,
   },
   accessDeniedContainer: {
     flex: 1,
@@ -1107,244 +1093,110 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   searchContainer: {
-    padding: SIZES.base * 2,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: SIZES.padding,
+    paddingTop: 4,
+    paddingBottom: 12,
+  },
+  searchPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: SIZES.base,
-  },
-  searchInputContainer: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: SIZES.radius,
-    paddingHorizontal: SIZES.base * 1.5,
-    height: 48,
-  },
-  searchIconContainer: {
-    marginRight: SIZES.base,
-    justifyContent: 'center',
-    alignItems: 'center',
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    minHeight: 48,
+    borderWidth: StyleSheet.hairlineWidth * 2,
   },
   searchIcon: {
     width: 20,
     height: 20,
+    marginRight: 10,
   },
   searchInput: {
     flex: 1,
     ...FONTS.body3,
-    paddingVertical: 0,
+    paddingVertical: 12,
+    minHeight: 48,
   },
-  searchLoadingContainer: {
-    marginLeft: SIZES.base,
+  searchLoadingPill: {
+    marginRight: 8,
   },
-  filterButton: {
-    width: 48,
-    height: 48,
-    borderRadius: SIZES.radius,
+  filterInlineHit: {
+    position: 'relative',
+    padding: 8,
+    marginRight: -4,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: StyleSheet.hairlineWidth,
   },
-  filterButtonActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  filterIcon: {
+  filterIconInline: {
     width: 20,
     height: 20,
   },
-  filterIconActive: {
-    tintColor: COLORS.white,
-  },
   filterBadge: {
     position: 'absolute',
-    top: 6,
-    right: 6,
+    top: 4,
+    right: 4,
     width: 8,
     height: 8,
     borderRadius: 4,
     backgroundColor: COLORS.error,
   },
-  filterRow: {
+  filterSummaryRow: {
     flexDirection: 'row',
-    marginBottom: SIZES.base * 2,
-    paddingHorizontal: SIZES.base * 2,
-    gap: SIZES.base,
+    alignItems: 'flex-start',
+    borderRadius: SIZES.radius,
+    paddingHorizontal: SIZES.padding,
+    paddingVertical: SIZES.base / 2,
+    marginBottom: SIZES.base / 2,
   },
-  filterPill: {
-    paddingHorizontal: SIZES.base * 2,
-    paddingVertical: SIZES.base * 1.25,
-    borderRadius: SIZES.radius * 2,
-    backgroundColor: COLORS.white,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 2,
+  filterSummaryLabel: {
+    ...FONTS.body5,
+    fontSize: 12,
+    marginRight: 4,
   },
-  filterPillActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  filterLabel: {
+  filterSummaryValue: {
     ...FONTS.body4,
-    color: COLORS.gray2,
-    fontSize: 13,
-    fontWeight: '500',
+    fontSize: 12,
+    flex: 1,
   },
-  filterLabelActive: {
-    color: COLORS.white,
-    fontWeight: '600',
-  },
-  summaryRow: {
+  summaryContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: SIZES.base * 2,
-    marginBottom: SIZES.base * 1.5,
-    paddingHorizontal: SIZES.base * 2,
-    gap: SIZES.base,
+    paddingHorizontal: SIZES.padding,
+    paddingVertical: SIZES.base,
   },
   summaryCard: {
     flex: 1,
-    backgroundColor: COLORS.white,
+    padding: SIZES.base,
+    marginHorizontal: SIZES.base / 2,
     borderRadius: SIZES.radius,
-    padding: SIZES.base * 1.5,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
-    alignItems: 'center',
   },
-  summaryCardIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: COLORS.primary + '15',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: SIZES.base * 0.75,
-  },
-  revenueIcon: {
-    backgroundColor: COLORS.success + '15',
-  },
-  avgIcon: {
-    backgroundColor: COLORS.warning + '15',
-  },
-  summaryCardIconImage: {
-    width: 24,
-    height: 24,
-    tintColor: COLORS.primary,
-  },
-  summaryLabel: {
+  summaryCardLabel: {
     ...FONTS.body5,
-    color: COLORS.gray2,
-    marginBottom: SIZES.base * 0.25,
     fontSize: 10,
-    textAlign: 'center',
+    marginBottom: 2,
   },
-  summaryValue: {
-    ...FONTS.h4,
-    color: COLORS.black,
-    fontWeight: '600',
-    textAlign: 'center',
-    marginBottom: SIZES.base * 0.25,
-    fontSize: 16,
-  },
-  historySection: {
-    flex: 1,
-    paddingHorizontal: SIZES.base * 2,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: SIZES.base * 1.5,
-  },
-  sectionHeading: {
+  summaryValuePrimary: {
     ...FONTS.h3,
-    color: COLORS.black,
-    fontWeight: '600',
+    fontSize: 16,
+    marginBottom: 2,
+    fontWeight: '700',
+  },
+  summaryValueSecondary: {
+    ...FONTS.h3,
+    fontSize: 16,
+    marginBottom: 2,
+    fontWeight: '700',
+  },
+  summarySubtext: {
+    ...FONTS.body5,
+    fontSize: 10,
+  },
+  listFlex: {
     flex: 1,
-  },
-  newPurchaseButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: COLORS.primary,
-    paddingHorizontal: SIZES.base * 2,
-    paddingVertical: SIZES.base * 1.25,
-    borderRadius: SIZES.radius,
-    shadowColor: COLORS.primary,
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
-    gap: SIZES.base * 0.5,
-  },
-  newPurchaseIcon: {
-    width: 18,
-    height: 18,
-    tintColor: COLORS.white,
-  },
-  newPurchaseButtonText: {
-    ...FONTS.button,
-    color: COLORS.white,
-    fontSize: 14,
-    fontWeight: '600',
   },
   listContent: {
     paddingBottom: 100,
   },
   emptyContent: {
     flexGrow: 1,
-  },
-  historyCard: {
-    backgroundColor: COLORS.white,
-    borderRadius: SIZES.radius,
-    padding: SIZES.base * 2,
-    marginBottom: SIZES.base * 1.5,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
-    shadowColor: COLORS.black,
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  historyCardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: SIZES.base * 1.5,
-  },
-  historyCardLeft: {
-    flex: 1,
-    marginRight: SIZES.base,
-  },
-  historyCardRight: {
-    alignItems: 'flex-end',
-  },
-  historyTitle: {
-    ...FONTS.h4,
-    color: COLORS.black,
-    fontWeight: '600',
-    marginBottom: SIZES.base * 0.5,
-  },
-  historyInvoice: {
-    ...FONTS.body4,
-    color: COLORS.gray2,
-    fontSize: 12,
-  },
-  historyAmount: {
-    ...FONTS.h3,
-    color: COLORS.primary,
-    fontWeight: '600',
-    marginBottom: SIZES.base * 0.5,
   },
   statusBadge: {
     flexDirection: 'row',
@@ -1363,29 +1215,6 @@ const styles = StyleSheet.create({
     ...FONTS.body5,
     fontSize: 11,
     fontWeight: '600',
-  },
-  historyCardFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingTop: SIZES.base * 1.5,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.lightGray1,
-    gap: SIZES.base * 2,
-  },
-  historyMetaItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: SIZES.base * 0.5,
-  },
-  metaIcon: {
-    width: 16,
-    height: 16,
-    tintColor: COLORS.gray2,
-  },
-  historyMeta: {
-    ...FONTS.body5,
-    color: COLORS.gray2,
-    fontSize: 12,
   },
   loadingContainer: {
     flex: 1,

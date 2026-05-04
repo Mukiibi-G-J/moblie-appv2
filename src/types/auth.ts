@@ -19,6 +19,21 @@ export interface UserGroup {
   permission_sets: string[];
 }
 
+/** Field-level flags from JWT (`user_permissions`), aligned with web `DecodedToken`. */
+export interface UserJwtPermissions {
+  canSeeBuyingPrice: boolean;
+  canSeeProfitMargin: boolean;
+  canSeeItemCost: boolean;
+  canReversePurchaseInvoice?: boolean;
+  canReverseSalesInvoice?: boolean;
+}
+
+export const defaultUserJwtPermissions = (): UserJwtPermissions => ({
+  canSeeBuyingPrice: true,
+  canSeeProfitMargin: true,
+  canSeeItemCost: true,
+});
+
 export interface DecodedToken {
   // Basic user info
   user_id: number;
@@ -40,6 +55,20 @@ export interface DecodedToken {
   user_groups?: UserGroup[];
   permission_sets?: string[];
   page_permissions?: Record<string, PagePermissions>;
+  user_permissions?: Partial<UserJwtPermissions>;
+  // Branch switching (multi-branch)
+  /** Assigned branch from JWT (same as web `DecodedToken.global_dimension_1`). */
+  global_dimension_1?: {
+    id: number;
+    code: string;
+    description?: string;
+  } | null;
+  enable_multiple_branches?: boolean;
+  can_switch_branch?: boolean;
+
+  /** Company modules from JWT (web parity). */
+  enabled_modules?: string[];
+  schema_name?: string;
 
   // Token metadata
   exp?: number;
@@ -68,4 +97,17 @@ export interface AuthState {
   user_groups?: UserGroup[];
   permission_sets?: string[];
   page_permissions?: Record<string, PagePermissions>;
+  userPermissions: UserJwtPermissions;
+
+  // Branch switching (multi-branch)
+  global_dimension_1?: {
+    id: number;
+    code: string;
+    description?: string;
+  } | null;
+  enable_multiple_branches?: boolean;
+  can_switch_branch?: boolean;
+
+  enabled_modules?: string[];
+  schema_name?: string;
 }

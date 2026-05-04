@@ -51,7 +51,7 @@ const ItemsMenu = () => {
         key: 'all-services',
         label: 'All services',
         visible: true,
-        onPress: () => showComingSoon('All services'),
+        onPress: () => navigation.navigate('AllServices' as never),
       },
       {
         key: 'categories',
