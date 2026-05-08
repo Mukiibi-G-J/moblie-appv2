@@ -16,6 +16,7 @@ import Toast from 'react-native-toast-message';
 import { COLORS, FONTS, SIZES } from '../../constants/theme';
 import icons from '../../constants/icons';
 import { usePermissions } from '../../hooks/usePermissions';
+import { useTheme } from '../../context/ThemeContext';
 import { safeGoBack } from '../../hooks/NavigationService';
 import { PAGE_NAMES } from '../../constants/pageNames';
 import {
@@ -52,6 +53,7 @@ const ItemCategories = () => {
   const navigation = useNavigation();
   const route = useRoute < any > ();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
   const pickerMode = Boolean(route.params?.pickerMode);
   const returnScreen = route.params?.returnScreen || 'AllItems';
   const returnMode = route.params?.returnMode;
@@ -67,6 +69,39 @@ const ItemCategories = () => {
   );
   const [isFormModalVisible, setIsFormModalVisible] = useState(false);
   const [selectedCodes, setSelectedCodes] = useState < Set < string >> (new Set());
+
+  const listTheme = useMemo(
+    () => ({
+      page: { backgroundColor: colors.background },
+      topHeader: {
+        backgroundColor: colors.surface,
+        borderBottomColor: colors.border,
+      },
+      headerCircleBtn: { backgroundColor: colors.backButtonBg },
+      headerCircleIcon: { tintColor: colors.textPrimary },
+      headerTitle: { color: colors.textPrimary },
+      createRow: { backgroundColor: colors.surface },
+      createRowPlus: { tintColor: colors.textPrimary },
+      createRowLabel: { color: colors.textPrimary },
+      rowDivider: { backgroundColor: colors.border },
+      row: { backgroundColor: colors.surface },
+      thumb: { backgroundColor: colors.screenMuted },
+      thumbText: { color: colors.textSecondary },
+      rowTitle: { color: colors.textPrimary },
+      rowSubtitle: { color: colors.textSecondary },
+      deleteIcon: { tintColor: colors.iconMuted },
+      emptyIconContainer: { backgroundColor: colors.screenMuted },
+      emptyIconImage: { tintColor: colors.textSecondary },
+      emptyText: { color: colors.textPrimary },
+      emptySubtext: { color: colors.textSecondary },
+      loadingText: { color: colors.textSecondary },
+      accessDeniedMessage: { color: colors.textSecondary },
+      footerPill: { backgroundColor: colors.backButtonBg },
+      footerPillText: { color: colors.textSecondary },
+      spinner: colors.primary,
+    }),
+    [colors],
+  );
 
   const subcategoryCount = useMemo(() => {
     const map: Record<string, number> = {};
@@ -238,7 +273,7 @@ const ItemCategories = () => {
 
     return (
       <View>
-        <View style={[styles.row, { paddingLeft: SIZES.padding + indent }]}>
+        <View style={[styles.row, listTheme.row, { paddingLeft: SIZES.padding + indent }]}>
           <TouchableOpacity
             style={styles.checkboxHit}
             onPress={() => toggleSelected(item.code)}
@@ -258,14 +293,14 @@ const ItemCategories = () => {
               pickerMode ? toggleSelected(item.code) : handleEdit(item)
             }
             activeOpacity={0.65}>
-            <View style={styles.thumb}>
-              <Text style={styles.thumbText}>{initials}</Text>
+            <View style={[styles.thumb, listTheme.thumb]}>
+              <Text style={[styles.thumbText, listTheme.thumbText]}>{initials}</Text>
             </View>
             <View style={styles.rowTextCol}>
-              <Text style={styles.rowTitle} numberOfLines={1}>
+              <Text style={[styles.rowTitle, listTheme.rowTitle]} numberOfLines={1}>
                 {name}
               </Text>
-              <Text style={styles.rowSubtitle}>{subLabel}</Text>
+              <Text style={[styles.rowSubtitle, listTheme.rowSubtitle]}>{subLabel}</Text>
             </View>
           </TouchableOpacity>
 
@@ -286,7 +321,7 @@ const ItemCategories = () => {
                   activeOpacity={0.7}>
                   <Image
                     source={icons.delete_icon}
-                    style={styles.deleteIcon}
+                    style={[styles.deleteIcon, listTheme.deleteIcon]}
                     resizeMode="contain"
                   />
                 </TouchableOpacity>
@@ -296,22 +331,22 @@ const ItemCategories = () => {
             <View style={styles.rowActionsSpacer} />
           )}
         </View>
-        <View style={styles.rowDivider} />
+        <View style={[styles.rowDivider, listTheme.rowDivider]} />
       </View>
     );
   };
 
   const renderEmptyState = () => (
     <View style={styles.emptyContainer}>
-      <View style={styles.emptyIconContainer}>
+      <View style={[styles.emptyIconContainer, listTheme.emptyIconContainer]}>
         <Image
           source={icons.product}
-          style={styles.emptyIconImage}
+          style={[styles.emptyIconImage, listTheme.emptyIconImage]}
           resizeMode="contain"
         />
       </View>
-      <Text style={styles.emptyText}>No categories found</Text>
-      <Text style={styles.emptySubtext}>
+      <Text style={[styles.emptyText, listTheme.emptyText]}>No categories found</Text>
+      <Text style={[styles.emptySubtext, listTheme.emptySubtext]}>
         {canCreate(PAGE_NAME)
           ? 'Create your first category to get started.'
           : 'No categories available.'}
@@ -326,10 +361,10 @@ const ItemCategories = () => {
 
   if (!canRead(PAGE_NAME)) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, listTheme.page]}>
         <View style={styles.accessDeniedContainer}>
           <Text style={styles.accessDeniedTitle}>Access Denied</Text>
-          <Text style={styles.accessDeniedMessage}>
+          <Text style={[styles.accessDeniedMessage, listTheme.accessDeniedMessage]}>
             You don't have permission to view item categories.
           </Text>
         </View>
@@ -338,26 +373,26 @@ const ItemCategories = () => {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, listTheme.page]}>
       <View
         style={[
           styles.topHeader,
+          listTheme.topHeader,
           {
-            paddingTop: Math.max(insets.top, 10),
-            borderBottomColor: COLORS.lightGray1,
+            paddingTop: Math.max(insets.top + 8, 18),
           },
         ]}>
         <QuickIconPressable
-          style={styles.headerCircleBtn}
+          style={[styles.headerCircleBtn, listTheme.headerCircleBtn]}
           onPress={handleHeaderClose}
           accessibilityLabel="Close">
           <Image
             source={icons.cross}
-            style={styles.headerCircleIcon}
+            style={[styles.headerCircleIcon, listTheme.headerCircleIcon]}
             resizeMode="contain"
           />
         </QuickIconPressable>
-        <Text style={styles.headerTitle}>Categories</Text>
+        <Text style={[styles.headerTitle, listTheme.headerTitle]}>Categories</Text>
         <TouchableOpacity
           style={styles.donePill}
           onPress={handleHeaderDone}
@@ -369,24 +404,24 @@ const ItemCategories = () => {
       {canCreate(PAGE_NAME) ? (
         <>
           <TouchableOpacity
-            style={styles.createRow}
+            style={[styles.createRow, listTheme.createRow]}
             onPress={handleCreate}
             activeOpacity={0.65}>
             <Image
               source={icons.plus}
-              style={styles.createRowPlus}
+              style={[styles.createRowPlus, listTheme.createRowPlus]}
               resizeMode="contain"
             />
-            <Text style={styles.createRowLabel}>Create category</Text>
+            <Text style={[styles.createRowLabel, listTheme.createRowLabel]}>Create category</Text>
           </TouchableOpacity>
-          <View style={styles.rowDivider} />
+          <View style={[styles.rowDivider, listTheme.rowDivider]} />
         </>
       ) : null}
 
       {loading && categories.length === 0 ? (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color={COLORS.primary2} />
-          <Text style={styles.loadingText}>Loading categories…</Text>
+          <ActivityIndicator size="large" color={listTheme.spinner} />
+          <Text style={[styles.loadingText, listTheme.loadingText]}>Loading categories…</Text>
         </View>
       ) : (
         <FlatList
@@ -399,8 +434,8 @@ const ItemCategories = () => {
             <RefreshControl
               refreshing={refreshing}
               onRefresh={onRefresh}
-              colors={[COLORS.primary2]}
-              tintColor={COLORS.primary2}
+              colors={[listTheme.spinner]}
+              tintColor={listTheme.spinner}
             />
           }
           contentContainerStyle={
@@ -415,10 +450,11 @@ const ItemCategories = () => {
       <View
         style={[
           styles.footerPill,
+          listTheme.footerPill,
           { bottom: Math.max(insets.bottom, 12) + 8 },
         ]}
         pointerEvents="none">
-        <Text style={styles.footerPillText}>
+        <Text style={[styles.footerPillText, listTheme.footerPillText]}>
           Categories selected: {selectedCodes.size}
         </Text>
       </View>

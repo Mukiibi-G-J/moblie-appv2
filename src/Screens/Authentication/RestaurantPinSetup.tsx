@@ -7,7 +7,8 @@ import {
   View,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {useNavigation} from '@react-navigation/native';
+import {useNavigation, useRoute} from '@react-navigation/native';
+import type {RouteProp} from '@react-navigation/native';
 import AuthLayout from '../../Components/layouts/AuthLayout';
 import {COLORS} from '../../constants';
 import {useTheme} from '../../context/ThemeContext';
@@ -25,15 +26,24 @@ import {
   restaurantStaffEnroll,
   mapRestaurantEnrollError,
 } from '../../services/restaurantPinApi';
+import type {RootStackParamList} from '../../@types/types.dto';
 import Toast from 'react-native-toast-message';
 
 const ao = authOnboarding;
 const BRAND = '#0b5cff';
 const LOGIN_DRAFT_COMPANY_DISPLAY = '@zentro_login_draft_company_display';
 
+type RestaurantPinSetupRoute = RouteProp<
+  RootStackParamList,
+  'RestaurantPinSetup'
+>;
+
 const RestaurantPinSetup = () => {
   const {colors} = useTheme();
   const navigation = useNavigation<any>();
+  const route = useRoute<RestaurantPinSetupRoute>();
+  const fromSettings = route.params?.fromSettings === true;
+  const pinSetupMode = route.params?.pinSetupMode;
   const ctx = useAppContext();
   const [pin, setPin] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -45,11 +55,27 @@ const RestaurantPinSetup = () => {
     navigation.reset({index: 0, routes: [{name: 'Home'}]});
   }, [navigation]);
 
+  const leaveAfterDone = useCallback(() => {
+    if (fromSettings && navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    goHome();
+  }, [fromSettings, goHome, navigation]);
+
   const onNotNow = useCallback(async () => {
+    if (fromSettings) {
+      if (navigation.canGoBack()) {
+        navigation.goBack();
+      } else {
+        goHome();
+      }
+      return;
+    }
     await setRestaurantPinPromptDismissed(true);
     await setPinSetupPending(false);
     goHome();
-  }, [goHome]);
+  }, [fromSettings, goHome, navigation]);
 
   const finishEnroll = useCallback(async () => {
     const p = pin.trim();
@@ -88,15 +114,20 @@ const RestaurantPinSetup = () => {
       await AsyncStorage.removeItem(LOGIN_DRAFT_COMPANY_DISPLAY);
       Toast.show({
         type: 'success',
-        text1: 'Quick PIN enabled',
+        text1:
+          pinSetupMode === 'change'
+            ? 'Quick PIN updated'
+            : pinSetupMode === 'renew'
+              ? 'Quick PIN renewed'
+              : 'Quick PIN enabled',
       });
-      goHome();
+      leaveAfterDone();
     } catch (e) {
       setError(mapRestaurantEnrollError(e));
     } finally {
       setLoading(false);
     }
-  }, [confirm, ctx?.auth?.full_name, goHome, pin]);
+  }, [confirm, ctx?.auth?.full_name, leaveAfterDone, pin, pinSetupMode]);
 
   const append = (d: string) => {
     setError('');
@@ -142,16 +173,33 @@ const RestaurantPinSetup = () => {
     </View>
   );
 
-  return (
-    <AuthLayout
-      title="Set up quick PIN"
-      subtitle={
-        <Text style={{color: colors.textSecondary}}>
-          {step === 1
+  const title =
+    pinSetupMode === 'change'
+      ? 'Change quick PIN'
+      : pinSetupMode === 'renew'
+        ? 'Set up new PIN'
+        : 'Set up quick PIN';
+
+  const subtitleNode = (
+    <Text style={{color: colors.textSecondary}}>
+      {pinSetupMode === 'change'
+        ? step === 1
+          ? 'Choose a new 4–6 digit PIN. Your current PIN will stop working after you save.'
+          : 'Enter the same PIN again to confirm.'
+        : pinSetupMode === 'renew'
+          ? step === 1
+            ? 'Your previous PIN expired. Choose a new 4–6 digit PIN for this device.'
+            : 'Enter the same PIN again to confirm.'
+          : step === 1
             ? 'Choose a 4–6 digit PIN for fast sign-in on this device.'
             : 'Enter the same PIN again to confirm.'}
-        </Text>
-      }
+    </Text>
+  );
+
+  return (
+    <AuthLayout
+      title={title}
+      subtitle={subtitleNode}
       showBackButton={step === 2}
       onBackPress={() => {
         setStep(1);
@@ -183,12 +231,14 @@ const RestaurantPinSetup = () => {
         <TouchableOpacity
           style={styles.primaryBtn}
           onPress={() => void finishEnroll()}>
-          <Text style={styles.primaryBtnText}>Save PIN</Text>
+          <Text style={styles.primaryBtnText}>
+            {pinSetupMode === 'change' ? 'Save new PIN' : 'Save PIN'}
+          </Text>
         </TouchableOpacity>
       ) : null}
       <TouchableOpacity style={styles.linkBtn} onPress={onNotNow}>
         <Text style={[styles.linkText, {color: colors.textSecondary}]}>
-          Not now
+          {fromSettings ? 'Cancel' : 'Not now'}
         </Text>
       </TouchableOpacity>
     </AuthLayout>

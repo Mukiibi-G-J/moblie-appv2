@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   NavigationContainer,
   DarkTheme,
@@ -230,6 +230,7 @@ const AppNavigator = () => {
   const { branchSession } = useAppContext() as any;
   const [isLoading, setIsLoading] = useState(true);
   const [initialRoute, setInitialRoute] = useState('OnBoarding');
+  const isFirstRunRef = useRef(true);
 
   const guestInitialRouteName = useMemo(() => {
     if (GUEST_STACK_ROUTES.has(initialRoute)) {
@@ -241,6 +242,7 @@ const AppNavigator = () => {
   useEffect(() => {
     const initializeApp = async () => {
       try {
+        setIsLoading(true);
         const onboardingComplete = await AsyncStorage.getItem(
           '@onboarding_complete',
         );
@@ -280,7 +282,9 @@ const AppNavigator = () => {
             }
           }
         }
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        const delay = isFirstRunRef.current ? 2000 : 400;
+        isFirstRunRef.current = false;
+        await new Promise(resolve => setTimeout(resolve, delay));
       } catch (error) {
         console.error('Error during app initialization:', error);
       } finally {

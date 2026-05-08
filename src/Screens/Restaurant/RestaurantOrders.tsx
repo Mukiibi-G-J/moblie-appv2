@@ -16,8 +16,8 @@ import {FONTS, SIZES, COLORS} from '../../constants';
 import {useTheme} from '../../context/ThemeContext';
 import {useAuth} from '../../context/Store';
 import RestaurantScreenLayout from './RestaurantScreenLayout';
+import RestaurantCloseCheckoutSheet from './RestaurantCloseCheckoutSheet';
 import {
-  completeRestaurantOrder,
   fetchOrder,
   fetchOrders,
   fireOrder,
@@ -26,10 +26,14 @@ import {
   updateOrderItemStatus,
   type RestaurantOrder,
   type RestaurantOrderItem,
+  settleRestaurantOrder,
 } from '../../services/restaurantApi';
 import {buildReceiptText} from '../../utils/restaurantReceipt';
 import PrintService from '../../services/PrintService';
-import {restaurantOrderToReceiptData} from '../../services/restaurantReceiptAdapter';
+import {
+  receiptLabelFromPostedPayload,
+  restaurantOrderToReceiptData,
+} from '../../services/restaurantReceiptAdapter';
 
 const OPEN_ORDER_STATUSES = new Set([
   'new',
@@ -105,6 +109,7 @@ export default function RestaurantOrders() {
   const [detail, setDetail] = useState<RestaurantOrder | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
+  const [settleTarget, setSettleTarget] = useState<RestaurantOrder | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -269,19 +274,21 @@ export default function RestaurantOrders() {
     })();
   };
 
-  const performCloseOrder = async (shouldPrint: boolean) => {
-    if (!detail) {
-      return;
-    }
-    const snapshot = detail;
+  const settleAndMaybePrint = async (
+    order: RestaurantOrder,
+    shouldPrint: boolean,
+    paymentMethodId: number,
+  ) => {
     setActionBusy(true);
     try {
-      await completeRestaurantOrder(snapshot.id);
+      const payload = await settleRestaurantOrder(order, paymentMethodId);
+      const receiptId = receiptLabelFromPostedPayload(payload, order.no);
 
       let receiptPrinted = false;
       if (shouldPrint) {
-        const receiptData = restaurantOrderToReceiptData(snapshot, {
+        const receiptData = restaurantOrderToReceiptData(order, {
           username: auth.username || auth.user_id || 'Staff',
+          receiptIdOverride: receiptId,
         });
         receiptPrinted =
           await PrintService.getInstance().printReceipt(receiptData);
@@ -293,8 +300,8 @@ export default function RestaurantOrders() {
           });
           try {
             await Share.share({
-              message: buildReceiptText(snapshot),
-              title: `Receipt ${snapshot.no}`,
+              message: buildReceiptText(order),
+              title: `Receipt ${receiptId}`,
             });
           } catch {
             Toast.show({
@@ -308,19 +315,20 @@ export default function RestaurantOrders() {
 
       Toast.show({
         type: 'success',
-        text1: 'Order closed',
+        text1: 'Invoice posted',
         text2:
           shouldPrint && receiptPrinted
-            ? `${snapshot.no} · Receipt printed`
-            : snapshot.no,
+            ? `${order.no} · Receipt printed`
+            : order.no,
       });
+      setSettleTarget(null);
       setSelectedId(null);
       setDetail(null);
       await load();
     } catch (e: unknown) {
       Toast.show({
         type: 'error',
-        text1: 'Could not close order',
+        text1: 'Could not settle check',
         text2: messageFromCaught(e) || 'Request failed',
       });
     } finally {
@@ -341,24 +349,7 @@ export default function RestaurantOrders() {
       );
       return;
     }
-    const totalStr = Number(detail.total_amount || 0).toLocaleString(undefined, {
-      maximumFractionDigits: 0,
-    });
-    Alert.alert(
-      'Close order',
-      `${detail.no}\nTotal: ${totalStr}\n\nMark this check completed? It will leave the open-orders list.`,
-      [
-        {text: 'Cancel', style: 'cancel'},
-        {
-          text: 'Close only',
-          onPress: () => void performCloseOrder(false),
-        },
-        {
-          text: 'Close & print',
-          onPress: () => void performCloseOrder(true),
-        },
-      ],
-    );
+    setSettleTarget(detail);
   };
 
   const onDeleteCheck = () => {
@@ -419,6 +410,7 @@ export default function RestaurantOrders() {
   );
 
   return (
+    <>
     <RestaurantScreenLayout title="Orders">
       {loading ? (
         <View style={styles.centered}>
@@ -602,6 +594,32 @@ export default function RestaurantOrders() {
         </View>
       )}
     </RestaurantScreenLayout>
+    <RestaurantCloseCheckoutSheet
+      visible={settleTarget !== null}
+      orderNo={settleTarget?.no ?? ''}
+      itemCount={(settleTarget?.order_items || []).length}
+      totalAmount={Number(settleTarget?.total_amount || 0)}
+      primaryButtonColor={COLORS.primary}
+      chrome={{
+        surface: colors.card,
+        text: colors.textPrimary,
+        muted: colors.textSecondary,
+        border: colors.border,
+      }}
+      submitting={actionBusy}
+      onCancel={() => {
+        if (!actionBusy) {
+          setSettleTarget(null);
+        }
+      }}
+      onConfirm={(shouldPrint, paymentMethodId) => {
+        if (!settleTarget) {
+          return;
+        }
+        void settleAndMaybePrint(settleTarget, shouldPrint, paymentMethodId);
+      }}
+    />
+    </>
   );
 }
 

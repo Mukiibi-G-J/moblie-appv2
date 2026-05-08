@@ -1,27 +1,38 @@
 import { Platform } from 'react-native';
 import DeviceInfo from 'react-native-device-info';
 import {
-  APP_UPDATE_ANDROID_STORE_URL_FALLBACK,
+  APP_UPDATE_API_URL,
   APP_UPDATE_CHECK_IN_DEV,
-  APP_UPDATE_CONFIG_URL,
   APP_UPDATE_FAIL_OPEN_ON_FETCH_ERROR,
-  APP_UPDATE_IOS_STORE_URL_FALLBACK,
+  APP_DOWNLOAD_FALLBACK_URL,
+  APP_UPDATE_FETCH_TIMEOUT_MS,
 } from '../constants/appUpdateGate';
 
-export type AppUpdatePolicy = {
-  minBuild: number;
-  iosStoreUrl?: string;
-  androidStoreUrl?: string;
+export type AppVersionCheckResponse = {
+  latest_build: number;
+  latest_version: string;
+  min_required_build: number;
+  grace_period_ends_at: string;
+  download_url: string;
+  release_notes: string;
 };
 
-const FETCH_TIMEOUT_MS = 12000;
-
-export type AppUpdateCheckResult =
+export type AppUpdateStatus =
   | { status: 'allowed' }
-  | { status: 'update_required'; storeUrl: string };
+  | {
+      status: 'soft_update';
+      latestVersion: string;
+      downloadUrl: string;
+      releaseNotes: string;
+      gracePeriodEndsAt: Date;
+    }
+  | {
+      status: 'hard_block';
+      downloadUrl: string;
+    };
 
-function shouldRunRemoteCheck(): boolean {
-  if (!APP_UPDATE_CONFIG_URL.trim()) {
+function shouldRunCheck(): boolean {
+  if (!APP_UPDATE_API_URL.trim()) {
     return false;
   }
   if (__DEV__ && !APP_UPDATE_CHECK_IN_DEV) {
@@ -30,24 +41,11 @@ function shouldRunRemoteCheck(): boolean {
   return true;
 }
 
-function resolveStoreUrl(policy: Partial<AppUpdatePolicy>): string {
-  if (Platform.OS === 'ios') {
-    return (
-      policy.iosStoreUrl?.trim() ||
-      APP_UPDATE_IOS_STORE_URL_FALLBACK.trim() ||
-      ''
-    );
-  }
-  return (
-    policy.androidStoreUrl?.trim() ||
-    APP_UPDATE_ANDROID_STORE_URL_FALLBACK.trim() ||
-    ''
-  );
-}
-
-async function fetchPolicy(url: string): Promise<AppUpdatePolicy> {
+async function fetchVersionInfo(): Promise<AppVersionCheckResponse | null> {
+  const platform = Platform.OS === 'ios' ? 'ios' : 'android';
+  const url = `${APP_UPDATE_API_URL.trim()}?platform=${platform}`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), APP_UPDATE_FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(url, {
       method: 'GET',
@@ -55,69 +53,66 @@ async function fetchPolicy(url: string): Promise<AppUpdatePolicy> {
       signal: controller.signal,
     });
     if (!res.ok) {
-      throw new Error(`HTTP ${res.status}`);
+      return null;
     }
-    const data = (await res.json()) as unknown;
-    if (!data || typeof data !== 'object') {
-      throw new Error('Invalid JSON');
+    const data = await res.json();
+    if (data?.status === 'ok' && !data?.latest_build) {
+      return null;
     }
-    const o = data as Record<string, unknown>;
-    const rawMin = o.minBuild;
-    const minBuild =
-      typeof rawMin === 'number'
-        ? rawMin
-        : typeof rawMin === 'string'
-          ? parseInt(rawMin, 10)
-          : 0;
-    return {
-      minBuild: Number.isFinite(minBuild) ? Math.floor(minBuild) : 0,
-      iosStoreUrl:
-        typeof o.iosStoreUrl === 'string' ? o.iosStoreUrl : undefined,
-      androidStoreUrl:
-        typeof o.androidStoreUrl === 'string' ? o.androidStoreUrl : undefined,
-    };
+    return data as AppVersionCheckResponse;
+  } catch {
+    return null;
   } finally {
     clearTimeout(timer);
   }
 }
 
-export async function checkAppUpdatePolicy(): Promise<AppUpdateCheckResult> {
-  if (!shouldRunRemoteCheck()) {
+export async function checkAppUpdatePolicy(): Promise<AppUpdateStatus> {
+  if (!shouldRunCheck()) {
     return { status: 'allowed' };
   }
 
   const installedBuild = parseInt(DeviceInfo.getBuildNumber(), 10);
-  if (!Number.isFinite(installedBuild) || installedBuild < 0) {
+  if (!Number.isFinite(installedBuild) || installedBuild <= 0) {
     return { status: 'allowed' };
   }
 
-  let policy: AppUpdatePolicy;
-  try {
-    policy = await fetchPolicy(APP_UPDATE_CONFIG_URL.trim());
-  } catch {
-    if (APP_UPDATE_FAIL_OPEN_ON_FETCH_ERROR) {
-      return { status: 'allowed' };
-    }
-    const url = resolveStoreUrl({});
-    if (!url) {
-      return { status: 'allowed' };
-    }
-    return { status: 'update_required', storeUrl: url };
+  const info = await fetchVersionInfo();
+
+  if (!info) {
+    return APP_UPDATE_FAIL_OPEN_ON_FETCH_ERROR
+      ? { status: 'allowed' }
+      : { status: 'hard_block', downloadUrl: APP_DOWNLOAD_FALLBACK_URL };
   }
 
-  const minBuild =
-    typeof policy.minBuild === 'number' && Number.isFinite(policy.minBuild)
-      ? Math.floor(policy.minBuild)
-      : 0;
+  const latestBuild =
+    typeof info.latest_build === 'number' ? info.latest_build : 0;
+  const minRequired =
+    typeof info.min_required_build === 'number' ? info.min_required_build : 0;
+  const downloadUrl = info.download_url?.trim() || APP_DOWNLOAD_FALLBACK_URL;
 
-  if (minBuild <= 0 || installedBuild >= minBuild) {
+  if (installedBuild >= latestBuild) {
     return { status: 'allowed' };
   }
 
-  const storeUrl = resolveStoreUrl(policy);
-  if (!storeUrl) {
-    return { status: 'allowed' };
+  if (minRequired > 0 && installedBuild < minRequired) {
+    return { status: 'hard_block', downloadUrl };
   }
 
-  return { status: 'update_required', storeUrl };
+  const graceEndsAt = info.grace_period_ends_at
+    ? new Date(info.grace_period_ends_at)
+    : new Date(0);
+  const now = new Date();
+
+  if (now > graceEndsAt) {
+    return { status: 'hard_block', downloadUrl };
+  }
+
+  return {
+    status: 'soft_update',
+    latestVersion: info.latest_version || '',
+    downloadUrl,
+    releaseNotes: info.release_notes || '',
+    gracePeriodEndsAt: graceEndsAt,
+  };
 }

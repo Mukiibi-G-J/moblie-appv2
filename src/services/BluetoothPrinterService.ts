@@ -3,8 +3,19 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import {ThermalPrinter} from '@finan-me/react-native-thermal-printer';
 import Toast from 'react-native-toast-message';
 import type {ItemLabelPrintData, PrintReceiptData} from './PrintService';
+import type {KotData} from './UsbPrinterService';
 
 const BT_PRINTER_STORAGE_KEY = 'zentro_bluetooth_printer_v1';
+const RECEIPT_WIDTH_CHARS = 32; // 58mm, matches USB pad width
+
+function padReceiptLine(
+  left: string,
+  right: string,
+  cols: number = RECEIPT_WIDTH_CHARS,
+): string {
+  const gap = cols - left.length - right.length;
+  return left + (gap > 0 ? ' '.repeat(gap) : ' ') + right;
+}
 
 /** Heuristic score for names of built-in / POS Bluetooth thermal printers (non-Sunmi handhelds). */
 function scoreBuiltinPrinterName(name: string): number {
@@ -658,9 +669,212 @@ class BluetoothPrinterService {
   }
 
   /**
+   * Web-aligned compact receipt (sales history reprint): less vertical space, no marketing footer.
+   */
+  private buildCompactReceiptDocument(data: PrintReceiptData): any[] {
+    const document: any[] = [];
+    const companyName = data.companyInfo?.name || 'ZENTRO APP';
+    const receiptId = data.receiptId || 'N/A';
+    const saleDateRaw = data.saleDate || new Date().toISOString();
+
+    document.push({
+      type: 'text',
+      content: 'SALES RECEIPT',
+      style: {align: 'center', bold: true},
+    });
+    document.push({
+      type: 'text',
+      content: companyName,
+      style: {align: 'center', bold: true},
+    });
+    if (data.companyInfo?.address) {
+      document.push({
+        type: 'text',
+        content: data.companyInfo.address,
+        style: {align: 'center'},
+      });
+    }
+    if (data.companyInfo?.phone) {
+      document.push({
+        type: 'text',
+        content: `Tel: ${data.companyInfo.phone}`,
+        style: {align: 'center'},
+      });
+    }
+    if (data.companyInfo?.tin) {
+      document.push({
+        type: 'text',
+        content: `TIN: ${data.companyInfo.tin}`,
+        style: {align: 'center'},
+      });
+    }
+    if (data.companyInfo?.vatNo) {
+      document.push({
+        type: 'text',
+        content: `VAT No: ${data.companyInfo.vatNo}`,
+        style: {align: 'center'},
+      });
+    }
+
+    document.push({type: 'line'});
+    document.push({
+      type: 'text',
+      content: `Invoice: ${receiptId}`,
+      style: {align: 'center', bold: true},
+    });
+    document.push({
+      type: 'text',
+      content: `Date: ${this.formatCompactReceiptDate(saleDateRaw)}`,
+    });
+    document.push({
+      type: 'text',
+      content: `Cashier: ${data.username}`,
+    });
+    if (data.customerName) {
+      document.push({
+        type: 'text',
+        content: `Customer: ${data.customerName}`,
+      });
+    }
+
+    document.push({
+      type: 'text',
+      content: padReceiptLine('Qty', 'Amount'),
+      style: {bold: true},
+    });
+    document.push({type: 'line'});
+
+    for (const item of data.cartItems) {
+      const lineTotal =
+        item.line_total != null && Number.isFinite(Number(item.line_total))
+          ? Number(item.line_total)
+          : (Number(item.quantity) || 0) * (Number(item.unit_price) || 0);
+      const rawName = (item.item_name || 'Item').trim();
+      const shortName =
+        rawName.length > 24 ? `${rawName.slice(0, 21)}...` : rawName;
+      const left = `${item.quantity}x ${shortName}`;
+      document.push({
+        type: 'text',
+        content: padReceiptLine(left, this.formatPlainAmount(lineTotal)),
+      });
+    }
+
+    document.push({type: 'line'});
+
+    const tax = Number(data.tax) || 0;
+    const discount = Number(data.discount) || 0;
+    const total = Number(data.total) || 0;
+    const change = Number(data.change) || 0;
+    const tendered = Number(data.amountReceived);
+
+    if (tax > 0) {
+      document.push({
+        type: 'text',
+        content: padReceiptLine('Tax:', this.formatCurrency(tax)),
+      });
+    }
+    if (discount > 0) {
+      document.push({
+        type: 'text',
+        content: padReceiptLine(
+          'Discount:',
+          `-${this.formatPlainAmount(discount)}`,
+        ),
+      });
+    }
+    document.push({
+      type: 'text',
+      content: padReceiptLine('TOTAL:', this.formatPlainAmount(total)),
+      style: {bold: true},
+    });
+    if (Number.isFinite(tendered) && tendered > 0) {
+      document.push({
+        type: 'text',
+        content: padReceiptLine(
+          'Tendered:',
+          this.formatPlainAmount(tendered),
+        ),
+        style: {bold: true},
+      });
+    }
+    if (change > 0) {
+      document.push({
+        type: 'text',
+        content: padReceiptLine('Change:', this.formatPlainAmount(change)),
+        style: {bold: true},
+      });
+    }
+    if (data.paymentMethod && data.paymentMethod !== '—') {
+      document.push({
+        type: 'text',
+        content: padReceiptLine('Payment:', data.paymentMethod),
+      });
+    }
+
+    document.push({type: 'line'});
+    if (data.cartItems.length > 0) {
+      document.push({
+        type: 'text',
+        content: `THANK YOU (${data.cartItems.length} item${
+          data.cartItems.length === 1 ? '' : 's'
+        })`,
+        style: {align: 'center', bold: true},
+      });
+    } else {
+      document.push({
+        type: 'text',
+        content: 'THANK YOU',
+        style: {align: 'center', bold: true},
+      });
+    }
+    document.push({
+      type: 'text',
+      content: `${receiptId} ${this.formatCompactReceiptDate(saleDateRaw)} ${data.username}`,
+      style: {align: 'center'},
+    });
+
+    document.push({type: 'feed', lines: 1});
+    document.push({type: 'cut'});
+
+    return document;
+  }
+
+  private formatPlainAmount(amount: number): string {
+    const n = Math.round(Number(amount));
+    return Number.isFinite(n) ? n.toLocaleString('en-US') : '0';
+  }
+
+  private formatCompactReceiptDate(isoOrDate: string): string {
+    try {
+      const d = new Date(isoOrDate);
+      if (isNaN(d.getTime())) {
+        return String(isoOrDate).split('T')[0] || '';
+      }
+      return d
+        .toLocaleString('en-GB', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false,
+          timeZone: 'Africa/Kampala',
+        })
+        .replace(',', '');
+    } catch {
+      return String(isoOrDate).split('T')[0] || '';
+    }
+  }
+
+  /**
    * Build receipt document for ThermalPrinter API
    */
   private buildReceiptDocument(data: PrintReceiptData): any[] {
+    if (data.compactReceipt) {
+      return this.buildCompactReceiptDocument(data);
+    }
+
     const document: any[] = [];
 
     // Header - Center aligned
@@ -1067,6 +1281,98 @@ class BluetoothPrinterService {
           error?.message ||
           'Failed to print receipt. Please check printer connection.',
       });
+      return false;
+    }
+  }
+
+  /**
+   * Kitchen order ticket (KOT) — same thermal pipeline as receipt, no success toast
+   * (callers may print silently, e.g. on fire).
+   */
+  public async printKot(data: KotData): Promise<boolean> {
+    try {
+      if (!this.isConnected || !this.connectedDevice || !this.printerAddress) {
+        return false;
+      }
+
+      const hasPermissions = await this.requestBluetoothPermissions();
+      if (!hasPermissions) {
+        return false;
+      }
+
+      const docs: any[] = [
+        {
+          type: 'text',
+          content: 'KITCHEN ORDER',
+          style: {align: 'center', bold: true, size: 'double'},
+        },
+        {type: 'line'},
+        {
+          type: 'text',
+          content: `Order: ${data.order_no}`,
+          style: {align: 'center', bold: true},
+        },
+        {type: 'text', content: data.table_label, style: {align: 'center'}},
+        {type: 'text', content: data.order_type_display, style: {align: 'center'}},
+      ];
+      if (data.waiter_name) {
+        docs.push({
+          type: 'text',
+          content: `Server: ${data.waiter_name}`,
+          style: {align: 'center'},
+        });
+      }
+      docs.push({
+        type: 'text',
+        content: data.printed_at,
+        style: {align: 'center'},
+      });
+      docs.push({type: 'line'});
+      for (const item of data.items) {
+        docs.push({
+          type: 'text',
+          content: `${item.quantity}x  ${item.item_name}`,
+          style: {bold: true},
+        });
+        if (item.special_instructions) {
+          docs.push({
+            type: 'text',
+            content: `  ** ${item.special_instructions}`,
+          });
+        }
+        if (item.fire_state_display) {
+          docs.push({
+            type: 'text',
+            content: `  [${item.fire_state_display}]`,
+          });
+        }
+      }
+      docs.push({type: 'line'});
+      docs.push({
+        type: 'text',
+        content: '*** KITCHEN COPY ***',
+        style: {align: 'center', bold: true},
+      });
+      docs.push({type: 'feed', lines: 4});
+      docs.push({type: 'cut'});
+
+      const result = await ThermalPrinter.printReceipt({
+        printers: [
+          {
+            address: this.printerAddress,
+            options: {
+              paperWidthMm: 58,
+              encoding: 'utf8' as const,
+              marginMm: 1,
+            },
+          },
+        ],
+        documents: [docs],
+      });
+
+      return Boolean(result.success);
+    } catch (error) {
+      console.error('Bluetooth KOT print failed:', error);
       return false;
     }
   }

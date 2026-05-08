@@ -218,7 +218,12 @@ export type RootStackParamList = {
   Login: undefined;
   Home: undefined;
   RestaurantPinSignIn: undefined;
-  RestaurantPinSetup: undefined;
+  RestaurantPinSetup:
+    | {
+        fromSettings?: boolean;
+        pinSetupMode?: 'new' | 'change' | 'renew';
+      }
+    | undefined;
   SelectBranch: undefined;
   RestaurantHub: undefined;
   RestaurantPOS: undefined;

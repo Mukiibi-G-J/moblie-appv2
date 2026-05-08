@@ -6,15 +6,13 @@
 import React, {useCallback, useEffect, useRef} from 'react';
 import {useAppContext, useAuth} from '../context/Store';
 import {navigationRef} from '../hooks/NavigationService';
-import {shouldOfferRestaurantPinFromToken} from '../utils/restaurantPinOffer';
+import {shouldDefinitivelySkipRestaurantPinFromClientJwt} from '../utils/restaurantPinOffer';
 import {getRestaurantPinStatus} from '../services/restaurantPinApi';
 import {
   getRestaurantPinPromptDismissed,
   getRestaurantPinConfiguredThisSession,
   setRestaurantPinConfiguredThisSession,
 } from '../storage/restaurantDeviceStorage';
-
-let statusCheckedThisRestaurantVisit = false;
 
 function getActiveRouteName(state: any): string | undefined {
   if (!state?.routes || state.index == null) {
@@ -43,17 +41,6 @@ function isRestaurantModuleRoute(name?: string): boolean {
   return name.startsWith('Restaurant');
 }
 
-function syncRouteFlagFromState() {
-  const nav = navigationRef.current;
-  if (!nav?.isReady()) {
-    return;
-  }
-  const routeName = getActiveRouteName(nav.getRootState());
-  if (!isRestaurantModuleRoute(routeName)) {
-    statusCheckedThisRestaurantVisit = false;
-  }
-}
-
 const RestaurantPinRouteGate = () => {
   const {accessToken} = useAuth();
   const ctx = useAppContext();
@@ -63,10 +50,22 @@ const RestaurantPinRouteGate = () => {
   const accessTokenRef = useRef(accessToken);
   const branchPendingRef = useRef(branchPending);
   const authRef = useRef(auth);
+  const statusCheckedThisRestaurantVisitRef = useRef(false);
 
   accessTokenRef.current = accessToken;
   branchPendingRef.current = branchPending;
   authRef.current = auth;
+
+  const syncRouteFlagFromState = useCallback(() => {
+    const nav = navigationRef.current;
+    if (!nav?.isReady()) {
+      return;
+    }
+    const routeName = getActiveRouteName(nav.getRootState());
+    if (!isRestaurantModuleRoute(routeName)) {
+      statusCheckedThisRestaurantVisitRef.current = false;
+    }
+  }, []);
 
   const handleState = useCallback(() => {
     void (async () => {
@@ -93,7 +92,7 @@ const RestaurantPinRouteGate = () => {
         return;
       }
 
-      if (statusCheckedThisRestaurantVisit) {
+      if (statusCheckedThisRestaurantVisitRef.current) {
         return;
       }
       if (inFlightRef.current) {
@@ -101,29 +100,29 @@ const RestaurantPinRouteGate = () => {
       }
 
       if (await getRestaurantPinPromptDismissed()) {
-        statusCheckedThisRestaurantVisit = true;
+        statusCheckedThisRestaurantVisitRef.current = true;
         return;
       }
       if (await getRestaurantPinConfiguredThisSession()) {
-        statusCheckedThisRestaurantVisit = true;
+        statusCheckedThisRestaurantVisitRef.current = true;
         return;
       }
 
       if (
-        !shouldOfferRestaurantPinFromToken(
-          a?.role_center_modules,
+        shouldDefinitivelySkipRestaurantPinFromClientJwt(
           a?.enabled_modules,
+          a?.role_center_modules,
           a?.authority,
         )
       ) {
-        statusCheckedThisRestaurantVisit = true;
+        statusCheckedThisRestaurantVisitRef.current = true;
         return;
       }
 
       inFlightRef.current = true;
       try {
         const d = await getRestaurantPinStatus();
-        statusCheckedThisRestaurantVisit = true;
+        statusCheckedThisRestaurantVisitRef.current = true;
         if (!d?.eligible) {
           return;
         }
@@ -141,12 +140,12 @@ const RestaurantPinRouteGate = () => {
         }
         navReady?.navigate('RestaurantPinSetup' as never);
       } catch {
-        statusCheckedThisRestaurantVisit = false;
+        statusCheckedThisRestaurantVisitRef.current = false;
       } finally {
         inFlightRef.current = false;
       }
     })();
-  }, []);
+  }, [syncRouteFlagFromState]);
 
   useEffect(() => {
     let cancelled = false;
@@ -182,7 +181,14 @@ const RestaurantPinRouteGate = () => {
 
   useEffect(() => {
     handleState();
-  }, [accessToken, branchPending, auth?.user_id, handleState]);
+  }, [
+    accessToken,
+    branchPending,
+    auth?.user_id,
+    auth?.enabled_modules,
+    auth?.role_center_modules,
+    handleState,
+  ]);
 
   return null;
 };

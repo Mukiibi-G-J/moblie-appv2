@@ -21,7 +21,11 @@ import {
   RESTAURANT_PIN_SETUP_PENDING_KEY,
   RESTAURANT_SHOW_PIN_SETUP_IMMEDIATE_KEY,
   clearRestaurantPinRouteSessionFlags,
+  getRestaurantDevicePrefs,
+  setRestaurantDevicePrefs,
+  getOrCreateRestaurantDeviceId,
 } from '../storage/restaurantDeviceStorage';
+import {shouldOfferRestaurantPinFromToken} from '../utils/restaurantPinOffer';
 import {setVerifiedEmail} from '../utils/tenant';
 
 export interface AppContextType {
@@ -70,6 +74,43 @@ const getEmptyBranchSession = (): BranchSessionState => ({
   can_switch_branch: false,
 });
 
+async function autoRegisterRestaurantDeviceIfEligible(
+  user: AuthState,
+): Promise<void> {
+  try {
+    if (
+      !shouldOfferRestaurantPinFromToken(
+        user.role_center_modules,
+        user.enabled_modules,
+        user.authority,
+      )
+    ) {
+      return;
+    }
+    const existing = await getRestaurantDevicePrefs();
+    if (
+      existing?.isRestaurantDevice &&
+      existing.deviceId &&
+      existing.schemaName
+    ) {
+      return;
+    }
+    const tenant = user.schema_name;
+    if (!tenant) {
+      return;
+    }
+    const deviceId = await getOrCreateRestaurantDeviceId();
+    await setRestaurantDevicePrefs({
+      isRestaurantDevice: true,
+      deviceId,
+      schemaName: tenant.trim().toLowerCase(),
+      enrolledStaffName: user.full_name?.trim() || undefined,
+    });
+  } catch {
+    /* non-fatal — PIN screen is a convenience feature */
+  }
+}
+
 const getEmptyAuthState = (): AuthState => ({
   user_id: '',
   username: '',
@@ -85,6 +126,7 @@ const getEmptyAuthState = (): AuthState => ({
   permission_sets: [],
   page_permissions: {},
   userPermissions: defaultUserJwtPermissions(),
+  enabled_modules: ['pos'],
 });
 
 export const AppProvider = ({children}: {children: React.ReactNode}) => {
@@ -281,7 +323,7 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
       enable_multiple_branches: decodedToken.enable_multiple_branches,
       can_switch_branch: decodedToken.can_switch_branch,
       global_dimension_1: decodedToken.global_dimension_1 ?? null,
-      enabled_modules: decodedToken.enabled_modules,
+      enabled_modules: decodedToken.enabled_modules || ['pos'],
       schema_name: decodedToken.schema_name,
     };
   }, []);
@@ -304,6 +346,8 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
       await AsyncStorage.multiSet(storageItems);
 
       setAuth(user);
+
+      await autoRegisterRestaurantDeviceIfEligible(user);
 
       await Promise.all([
         AsyncStorage.setItem(

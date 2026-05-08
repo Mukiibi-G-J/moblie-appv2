@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {USBPrinter} from 'react-native-thermal-receipt-printer';
+import type {PrintReceiptData} from './PrintService';
 
 export interface UsbDevice {
   device_name: string;
@@ -16,6 +17,34 @@ function padLine(left: string, right: string): string {
   return left + (gap > 0 ? ' '.repeat(gap) : ' ') + right;
 }
 
+function plainAmount(n: number): string {
+  const r = Math.round(Number(n));
+  return Number.isFinite(r) ? r.toLocaleString('en-US') : '0';
+}
+
+function compactReceiptDate(isoOrDate: string): string {
+  try {
+    const d = new Date(isoOrDate);
+    if (isNaN(d.getTime())) {
+      return String(isoOrDate).split('T')[0] || '';
+    }
+    return d
+      .toLocaleString('en-GB', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false,
+        timeZone: 'Africa/Kampala',
+      })
+      .replace(',', '');
+  } catch {
+    return String(isoOrDate).split('T')[0] || '';
+  }
+}
+
 function normalizeUsbDevice(raw: {
   device_name: string;
   vendor_id?: string | number;
@@ -26,6 +55,22 @@ function normalizeUsbDevice(raw: {
     vendor_id: Number(raw.vendor_id),
     product_id: Number(raw.product_id),
   };
+}
+
+export interface KotItem {
+  item_name: string;
+  quantity: number;
+  special_instructions?: string | null;
+  fire_state_display?: string | null;
+}
+
+export interface KotData {
+  order_no: string;
+  table_label: string;
+  order_type_display: string;
+  waiter_name?: string;
+  printed_at: string;
+  items: KotItem[];
 }
 
 class UsbPrinterService {
@@ -126,23 +171,88 @@ class UsbPrinterService {
     return `UGX ${Number(amount).toLocaleString('en-US', {maximumFractionDigits: 0})}`;
   }
 
-  async printReceipt(data: {
-    cartItems: Array<{item_name: string; quantity: number; unit_price: number}>;
-    total: number;
-    username: string;
-    receiptId?: string;
-    saleDate?: string;
-    subtotal?: number;
-    tax?: number;
-    discount?: number;
-    paymentMethod?: string;
-    change?: number;
-    customerName?: string;
-    companyInfo?: {name?: string; address?: string; tin?: string};
-  }): Promise<boolean> {
+  private printCompactReceiptUsb(data: PrintReceiptData): string {
+    const companyName = data.companyInfo?.name || 'ZENTRO APP';
+    const receiptId = data.receiptId || `R${Date.now()}`;
+    const saleDateRaw = data.saleDate || new Date().toISOString();
+    let text = '';
+    text += `<CB>SALES RECEIPT</CB>\n`;
+    text += `<C><B>${companyName}</B></C>\n`;
+    if (data.companyInfo?.address) {
+      text += `<C>${data.companyInfo.address}</C>\n`;
+    }
+    if (data.companyInfo?.phone) {
+      text += `<C>Tel: ${data.companyInfo.phone}</C>\n`;
+    }
+    if (data.companyInfo?.tin) {
+      text += `<C>TIN: ${data.companyInfo.tin}</C>\n`;
+    }
+    if (data.companyInfo?.vatNo) {
+      text += `<C>VAT No: ${data.companyInfo.vatNo}</C>\n`;
+    }
+    text += `<C>${LINE}</C>\n`;
+    text += `<C><B>Invoice: ${receiptId}</B></C>\n`;
+    text += `<C>Date: ${compactReceiptDate(saleDateRaw)}</C>\n`;
+    text += `<C>Cashier: ${data.username}</C>\n`;
+    if (data.customerName) {
+      text += `<C>Customer: ${data.customerName}</C>\n`;
+    }
+    text += `${padLine('Qty', 'Amount')}\n`;
+    text += `${LINE}\n`;
+    for (const item of data.cartItems) {
+      const lineTotal =
+        item.line_total != null && Number.isFinite(Number(item.line_total))
+          ? Number(item.line_total)
+          : (Number(item.quantity) || 0) * (Number(item.unit_price) || 0);
+      const raw = (item.item_name || 'Item').trim();
+      const name =
+        raw.length > 24 ? raw.slice(0, 21) + '\u2026' : raw;
+      const left = `${item.quantity}x ${name}`;
+      text += `${padLine(left, plainAmount(lineTotal))}\n`;
+    }
+    text += `${LINE}\n`;
+    const tax = Number(data.tax) || 0;
+    const discount = Number(data.discount) || 0;
+    if (tax > 0) {
+      text += `${padLine('Tax:', this.fmt(tax))}\n`;
+    }
+    if (discount > 0) {
+      text += `${padLine('Discount:', `-${plainAmount(discount)}`)}\n`;
+    }
+    text += `<B>${padLine('TOTAL:', plainAmount(data.total))}</B>\n`;
+    const tendered = Number(data.amountReceived);
+    if (Number.isFinite(tendered) && tendered > 0) {
+      text += `<B>${padLine('Tendered:', plainAmount(tendered))}</B>\n`;
+    }
+    if (data.change && data.change > 0) {
+      text += `<B>${padLine('Change:', plainAmount(data.change))}</B>\n`;
+    }
+    if (data.paymentMethod && data.paymentMethod !== '—') {
+      text += `${padLine('Payment:', data.paymentMethod)}\n`;
+    }
+    text += `<C>${LINE}</C>\n`;
+    if (data.cartItems.length > 0) {
+      text += `<C><B>THANK YOU (${data.cartItems.length} item${
+        data.cartItems.length === 1 ? '' : 's'
+      })</B></C>\n`;
+    } else {
+      text += `<C><B>THANK YOU</B></C>\n`;
+    }
+    text += `<C>${receiptId} ${compactReceiptDate(saleDateRaw)} ${data.username}</C>\n`;
+    text += '\n';
+    return text;
+  }
+
+  async printReceipt(data: PrintReceiptData): Promise<boolean> {
     try {
       if (!this.connectedDevice) {
         return false;
+      }
+
+      if (data.compactReceipt) {
+        const text = this.printCompactReceiptUsb(data);
+        USBPrinter.printText(text);
+        return true;
       }
 
       const companyName = data.companyInfo?.name || 'ZENTRO APP';
@@ -206,6 +316,42 @@ class UsbPrinterService {
       return true;
     } catch (error) {
       console.error('USB print failed:', error);
+      return false;
+    }
+  }
+
+  async printKot(data: KotData): Promise<boolean> {
+    try {
+      if (!this.connectedDevice) {
+        return false;
+      }
+      let text = '';
+      text += '<CB>KITCHEN ORDER</CB>\n';
+      text += `<C>${LINE}</C>\n`;
+      text += `<C>Order: ${data.order_no}</C>\n`;
+      text += `<C>${data.table_label}</C>\n`;
+      text += `<C>${data.order_type_display}</C>\n`;
+      if (data.waiter_name) {
+        text += `<C>Server: ${data.waiter_name}</C>\n`;
+      }
+      text += `<C>${data.printed_at}</C>\n`;
+      text += `<C>${LINE}</C>\n`;
+      for (const item of data.items) {
+        text += `<B>${item.quantity}x ${item.item_name}</B>\n`;
+        if (item.special_instructions) {
+          text += `  ** ${item.special_instructions}\n`;
+        }
+        if (item.fire_state_display) {
+          text += `  [${item.fire_state_display}]\n`;
+        }
+      }
+      text += `${LINE}\n`;
+      text += '<C>*** KITCHEN COPY ***</C>\n';
+      text += '\n\n\n\n';
+      USBPrinter.printText(text);
+      return true;
+    } catch (error) {
+      console.error('USB KOT print failed:', error);
       return false;
     }
   }

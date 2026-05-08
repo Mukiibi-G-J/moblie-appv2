@@ -19,10 +19,10 @@ import {FONTS, SIZES, COLORS, icons} from '../../constants';
 import {useTheme} from '../../context/ThemeContext';
 import {useAppContext, useAuth} from '../../context/Store';
 import RestaurantScreenLayout from './RestaurantScreenLayout';
+import RestaurantCloseCheckoutSheet from './RestaurantCloseCheckoutSheet';
 import {
   addItemsToOrder,
   cancelEmptyOrder,
-  completeRestaurantOrder,
   createRestaurantOrder,
   deleteOrCancelOrderItem,
   fetchActiveMenus,
@@ -42,9 +42,14 @@ import {
   type RestaurantOrderItem,
   type RestaurantTable,
   updateOrderItemStatus,
+  settleRestaurantOrder,
 } from '../../services/restaurantApi';
 import PrintService from '../../services/PrintService';
-import {restaurantOrderToReceiptData} from '../../services/restaurantReceiptAdapter';
+import {
+  receiptLabelFromPostedPayload,
+  restaurantOrderToReceiptData,
+} from '../../services/restaurantReceiptAdapter';
+import type {KotData} from '../../services/UsbPrinterService';
 import {
   groupTablesByFloorAndSection,
   singleGroupAllTables,
@@ -269,6 +274,20 @@ function mergeOrderIntoPayload(
   return payloadFromOrders(table, nextList);
 }
 
+function primaryImageUriForOrderLine(
+  li: RestaurantOrderItem,
+  menuItems: PosTreeMenuItem[],
+): string | null | undefined {
+  if (li.primary_image_url) {
+    return li.primary_image_url;
+  }
+  const sku = (li.item_no ?? li.item ?? '').trim();
+  if (!sku) {
+    return null;
+  }
+  return menuItems.find(mi => mi.item_no === sku)?.primary_image_url ?? null;
+}
+
 function MenuItemThumbnail({
   uri,
   fallbackLetter,
@@ -357,6 +376,7 @@ export default function RestaurantPOS() {
   const [closeSheetOpen, setCloseSheetOpen] = useState(false);
   const [orderToClose, setOrderToClose] = useState<RestaurantOrder | null>(null);
   const [closingInProgress, setClosingInProgress] = useState(false);
+  const [isPrintingKot, setIsPrintingKot] = useState(false);
 
   const inPosSession = selectedTable != null || isQuickSale;
 
@@ -846,6 +866,28 @@ export default function RestaurantPOS() {
     }
   };
 
+  function buildKotData(
+    order: RestaurantOrder,
+    kitchenItems: RestaurantOrderItem[],
+  ): KotData {
+    const tableLabel = order.table_number
+      ? `Table ${order.table_number}`
+      : 'Quick sale / Takeout';
+    return {
+      order_no: order.no,
+      table_label: tableLabel,
+      order_type_display: order.order_type_display || '',
+      waiter_name: order.waiter_name || undefined,
+      printed_at: new Date().toLocaleString(),
+      items: kitchenItems.map(i => ({
+        item_name: i.item_name || i.item || '',
+        quantity: Number(i.quantity) || 1,
+        special_instructions: i.special_instructions || null,
+        fire_state_display: i.fire_state_display || null,
+      })),
+    };
+  }
+
   const onFire = async () => {
     if (!activeOrderId) {
       return;
@@ -900,6 +942,10 @@ export default function RestaurantPOS() {
         text1: 'Order fired',
         text2: parts.join(' · '),
       });
+      if (kitchenItems.length > 0) {
+        const kotData = buildKotData(order, kitchenItems);
+        void PrintService.getInstance().printKot(kotData).catch(() => {});
+      }
     } catch (e: unknown) {
       Toast.show({
         type: 'error',
@@ -929,37 +975,43 @@ export default function RestaurantPOS() {
     setCloseSheetOpen(true);
   };
 
-  const confirmClose = async (shouldPrint: boolean) => {
+  const confirmClose = async (
+    shouldPrint: boolean,
+    paymentMethodId: number,
+  ) => {
     if (!orderToClose) {
       return;
     }
+    const snap = orderToClose;
     setClosingInProgress(true);
     try {
-      await completeRestaurantOrder(orderToClose.id);
+      const payload = await settleRestaurantOrder(snap, paymentMethodId);
+      const receiptId = receiptLabelFromPostedPayload(payload, snap.no);
 
       if (shouldPrint) {
-        const receiptData = restaurantOrderToReceiptData(orderToClose, {
+        const receiptData = restaurantOrderToReceiptData(snap, {
           username: auth.username || auth.user_id || 'Staff',
+          receiptIdOverride: receiptId,
         });
         const printed =
           await PrintService.getInstance().printReceipt(receiptData);
         if (!printed) {
           Toast.show({
             type: 'info',
-            text1: 'Order closed',
+            text1: 'Check settled',
             text2: 'Could not print — check printer in Settings.',
           });
         } else {
           Toast.show({
             type: 'success',
-            text1: 'Order closed & receipt printed',
+            text1: 'Invoice posted & receipt printed',
           });
         }
       } else {
         Toast.show({
           type: 'success',
-          text1: 'Order closed',
-          text2: orderToClose.no,
+          text1: 'Invoice posted',
+          text2: snap.no,
         });
       }
 
@@ -970,7 +1022,7 @@ export default function RestaurantPOS() {
     } catch (e: unknown) {
       Toast.show({
         type: 'error',
-        text1: 'Could not close order',
+        text1: 'Could not settle check',
         text2: messageFromCaught(e) || '',
       });
     } finally {
@@ -985,6 +1037,41 @@ export default function RestaurantPOS() {
     }
     return orders.find(o => sameOrderId(o.id, activeOrderId));
   }, [posData, activeOrderId]);
+
+  const onPrintKot = async () => {
+    if (!activeOrder) {
+      return;
+    }
+    const kitchenItems = (activeOrder.order_items || []).filter(
+      i => i.routes_to_kitchen !== false,
+    );
+    if (kitchenItems.length === 0) {
+      Toast.show({
+        type: 'info',
+        text1: 'No kitchen items',
+        text2: 'All items on this check bypass the kitchen.',
+      });
+      return;
+    }
+    setIsPrintingKot(true);
+    try {
+      const kotData = buildKotData(activeOrder, kitchenItems);
+      const printed = await PrintService.getInstance().printKot(kotData);
+      if (!printed) {
+        Toast.show({
+          type: 'info',
+          text1: 'KOT not printed',
+          text2: 'Check printer in Settings.',
+        });
+      } else {
+        Toast.show({type: 'success', text1: 'KOT printed'});
+      }
+    } catch {
+      Toast.show({type: 'error', text1: 'KOT print failed'});
+    } finally {
+      setIsPrintingKot(false);
+    }
+  };
 
   /** Table picker chrome width for tile grid */
   const pickerCols = screenW >= 400 ? 3 : 2;
@@ -1300,6 +1387,25 @@ export default function RestaurantPOS() {
             <Text style={styles.btnText}>New check</Text>
           </Pressable>
           <Pressable
+            onPress={() => void onPrintKot()}
+            disabled={!activeOrder || isPrintingKot}
+            style={[
+              styles.stickyOutlineBtn,
+              {
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+                opacity: activeOrder && !isPrintingKot ? 1 : 0.4,
+              },
+            ]}>
+            {isPrintingKot ? (
+              <ActivityIndicator size="small" color={colors.textPrimary} />
+            ) : (
+              <Text style={[styles.btnTextDark, {color: colors.textPrimary}]}>
+                Print KOT
+              </Text>
+            )}
+          </Pressable>
+          <Pressable
             onPress={() => void onFire()}
             disabled={!activeOrderId}
             style={[
@@ -1433,7 +1539,7 @@ export default function RestaurantPOS() {
                   key={li.id}
                   style={[styles.checkLineRow, {borderBottomColor: colors.border}]}>
                   <MenuItemThumbnail
-                    uri={null}
+                    uri={primaryImageUriForOrderLine(li, menuItems)}
                     fallbackLetter={li.item_name || li.item || '?'}
                     borderColor={colors.border}
                   />
@@ -1847,113 +1953,29 @@ export default function RestaurantPOS() {
       </View>
     </Modal>
 
-      <Modal
-        visible={closeSheetOpen}
-        animationType="slide"
-        transparent
-        statusBarTranslucent={Platform.OS === 'android'}
-        onRequestClose={() =>
-          !closingInProgress && setCloseSheetOpen(false)
-        }>
-        <View style={styles.sheetModalRoot}>
-          <Pressable
-            style={styles.sheetBackdrop}
-            onPress={() => !closingInProgress && setCloseSheetOpen(false)}
-          />
-          <View
-            style={[
-              styles.closeSheetSurface,
-              {
-                backgroundColor: POS.surface,
-                paddingBottom: Math.max(insets.bottom, 12),
-              },
-            ]}>
-            <View style={[styles.sheetHeader, {borderBottomColor: POS.border}]}>
-              <Text style={[styles.sheetTitle, {color: POS.text}]}>
-                Close order
-              </Text>
-              {!closingInProgress ? (
-                <Pressable
-                  onPress={() => setCloseSheetOpen(false)}
-                  hitSlop={{top: 12, bottom: 12, left: 12, right: 12}}>
-                  <Text style={{fontSize: 20, color: POS.muted}}>✕</Text>
-                </Pressable>
-              ) : null}
-            </View>
-
-            <View style={{padding: 20, gap: 14}}>
-              {orderToClose ? (
-                <View
-                  style={[styles.closeSummary, {borderColor: POS.border}]}>
-                  <Text style={[styles.closeSummaryNo, {color: POS.text}]}>
-                    {orderToClose.no}
-                  </Text>
-                  <Text
-                    style={{...FONTS.body4, color: POS.muted, marginTop: 2}}>
-                    {(orderToClose.order_items || []).length} item(s)
-                  </Text>
-                  <Text style={[styles.closeSummaryTotal, {color: POS.text}]}>
-                    Total:{' '}
-                    {Number(orderToClose.total_amount || 0).toLocaleString(
-                      undefined,
-                      {maximumFractionDigits: 0},
-                    )}
-                  </Text>
-                </View>
-              ) : null}
-
-              {closingInProgress ? (
-                <View style={{alignItems: 'center', padding: 20, gap: 8}}>
-                  <ActivityIndicator color={COLORS.primary} />
-                  <Text style={{...FONTS.body4, color: POS.muted}}>
-                    Closing order…
-                  </Text>
-                </View>
-              ) : (
-                <>
-                  <Pressable
-                    onPress={() => void confirmClose(true)}
-                    style={[
-                      styles.closeActionBtn,
-                      {backgroundColor: COLORS.primary},
-                    ]}>
-                    <Text style={styles.closeActionBtnTxt}>
-                      🖨  Close & print receipt
-                    </Text>
-                  </Pressable>
-
-                  <Pressable
-                    onPress={() => void confirmClose(false)}
-                    style={[
-                      styles.closeActionBtn,
-                      styles.closeActionBtnOutline,
-                      {
-                        borderColor: colors.border,
-                        backgroundColor: colors.card,
-                      },
-                    ]}>
-                    <Text
-                      style={[
-                        styles.closeActionBtnTxt,
-                        {color: colors.textPrimary},
-                      ]}>
-                      Close without printing
-                    </Text>
-                  </Pressable>
-
-                  <Pressable
-                    onPress={() => setCloseSheetOpen(false)}
-                    style={{alignItems: 'center', paddingVertical: 10}}>
-                    <Text style={{...FONTS.body4, color: POS.muted}}>
-                      Cancel
-                    </Text>
-                  </Pressable>
-                </>
-              )}
-            </View>
-          </View>
-        </View>
-      </Modal>
+    <RestaurantCloseCheckoutSheet
+      visible={closeSheetOpen}
+      orderNo={orderToClose?.no ?? ''}
+      itemCount={(orderToClose?.order_items || []).length}
+      totalAmount={Number(orderToClose?.total_amount || 0)}
+      primaryButtonColor={COLORS.primary}
+      chrome={{
+        surface: POS.surface,
+        text: POS.text,
+        muted: POS.muted,
+        border: POS.border,
+      }}
+      submitting={closingInProgress}
+      onCancel={() => {
+        if (closingInProgress) {
+          return;
+        }
+        setCloseSheetOpen(false);
+      }}
+      onConfirm={(shouldPrint, paymentMethodId) =>
+        void confirmClose(shouldPrint, paymentMethodId)
+      }
+    />
     </>
   );
 }
@@ -2057,17 +2079,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.12,
     shadowRadius: 12,
     elevation: 24,
-  },
-  closeSheetSurface: {
-    width: '100%',
-    maxHeight: '70%',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: -3},
-    shadowOpacity: 0.12,
-    shadowRadius: 12,
-    elevation: 16,
   },
   sheetHeader: {
     flexDirection: 'row',
@@ -2406,20 +2417,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginTop: -2,
   },
-  closeSummary: {
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 14,
-    gap: 4,
-  },
-  closeSummaryNo: {...FONTS.h3, fontWeight: '700'},
-  closeSummaryTotal: {...FONTS.body3, fontWeight: '700', marginTop: 8},
-  closeActionBtn: {
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderRadius: 12,
-    alignItems: 'center',
-  },
-  closeActionBtnOutline: {borderWidth: 1},
-  closeActionBtnTxt: {...FONTS.body3, fontWeight: '700', color: '#fff'},
 });

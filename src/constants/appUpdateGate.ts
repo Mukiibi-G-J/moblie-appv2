@@ -1,24 +1,25 @@
 /**
- * Remote minimum native build (Android versionCode / iOS CFBundleVersion).
- * Host a JSON file at APP_UPDATE_CONFIG_URL, for example:
- * { "minBuild": 42, "iosStoreUrl": "https://apps.apple.com/app/id...", "androidStoreUrl": "https://play.google.com/store/apps/details?id=..." }
- *
- * Leave APP_UPDATE_CONFIG_URL empty to disable the check (typical for local dev until you host the file).
+ * Backend version-check endpoint.
+ * The app calls this on every launch to determine if an update is needed.
+ * Example: 'https://zentroapp-backend.com/api/app/version-check/'
  */
-export const APP_UPDATE_CONFIG_URL = '';
+export const APP_UPDATE_API_URL =
+  'https://zentroapp-backend.com/api/app/version-check/';
 
-/** When true, the remote check also runs in __DEV__. Default false so Metro builds are not blocked. */
+/** When true, the remote check also runs in __DEV__. Default false. */
 export const APP_UPDATE_CHECK_IN_DEV = false;
 
 /**
- * Used when the JSON omits a store URL, or when fetch fails and APP_UPDATE_FAIL_OPEN_ON_FETCH_ERROR is false.
- * Set your real store links before enabling fail-closed behavior.
+ * Fallback download link if the API returns no download_url.
+ * Set this to your landing page or direct APK link.
  */
-export const APP_UPDATE_IOS_STORE_URL_FALLBACK = '';
-export const APP_UPDATE_ANDROID_STORE_URL_FALLBACK = '';
+export const APP_DOWNLOAD_FALLBACK_URL = 'https://zentroapp-backend.com/download/';
 
 /**
- * If the config request fails (network, timeout, invalid JSON), allow the app to open.
- * Set false only if you always set platform fallbacks above and accept blocking when offline.
+ * If the version check request fails (network, timeout), allow the app to open.
+ * Recommended: true - a network failure should not block users from using the app.
  */
 export const APP_UPDATE_FAIL_OPEN_ON_FETCH_ERROR = true;
+
+/** Request timeout in milliseconds for the version check call. */
+export const APP_UPDATE_FETCH_TIMEOUT_MS = 10000;

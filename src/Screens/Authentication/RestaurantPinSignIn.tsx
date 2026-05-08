@@ -156,7 +156,9 @@ const RestaurantPinSignIn = () => {
       title={brandTitle}
       subtitle={
         <Text style={{color: colors.textSecondary}}>
-          Enter your PIN, {pinPromptName}
+          {(resolvedStaffName || '').trim()
+            ? `Welcome back, ${pinPromptName}`
+            : 'Enter your PIN to sign in'}
         </Text>
       }>
       <View style={styles.dotsRow}>

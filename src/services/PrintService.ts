@@ -3,13 +3,15 @@ import Toast from 'react-native-toast-message';
 import PrinterSunmi from 'react-native-printer-sunmi';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BluetoothPrinterService from './BluetoothPrinterService';
-import UsbPrinterService from './UsbPrinterService';
+import UsbPrinterService, {KotData} from './UsbPrinterService';
 
 // Types for printing
 export interface PrintItem {
   item_name: string;
   quantity: number;
   unit_price: number;
+  /** Line total from API when it differs from qty × unit_price */
+  line_total?: number;
   date_sold?: string;
   bar_code_no?: string;
 }
@@ -35,9 +37,16 @@ export interface PrintReceiptData {
   tax?: number;
   discount?: number;
   paymentMethod?: string;
+  /** Cash tendered (shown on compact receipts when set). */
+  amountReceived?: number;
   change?: number;
   customerName?: string;
   companyInfo?: CompanyInfo;
+  /**
+   * Short layout aligned with web thermal receipts (Sales history reprint).
+   * Tighter header/footer, one line per item + amount, no QR / marketing block.
+   */
+  compactReceipt?: boolean;
 }
 
 /** Single item shelf / barcode label (Bluetooth thermal or Sunmi). */
@@ -359,6 +368,97 @@ class PrintService {
     }
   }
 
+  public async printKot(data: KotData): Promise<boolean> {
+    try {
+      const savedType = await this.getSavedPrinterType();
+
+      if (savedType === 'usb') {
+        if (Platform.OS !== 'android') {
+          return false;
+        }
+        if (!this.usbService.isConnected()) {
+          Toast.show({
+            type: 'error',
+            text1: 'USB Printer not connected',
+            text2: 'Connect a USB printer in Settings.',
+          });
+          return false;
+        }
+        return await this.usbService.printKot(data);
+      }
+
+      const resolved = await this.resolvePrinterType(savedType);
+      this.printerType = resolved;
+
+      if (resolved === 'sunmi') {
+        return await this.printKotSunmi(data);
+      }
+
+      await this.ensureBluetoothSession(savedType);
+      if (!this.bluetoothService.isPrinterConnected()) {
+        Toast.show({
+          type: 'info',
+          text1: 'Printer not connected',
+          text2: 'Connect a printer in Settings.',
+        });
+        return false;
+      }
+      return await this.bluetoothService.printKot(data);
+    } catch (error) {
+      console.error('KOT print failed:', error);
+      return false;
+    }
+  }
+
+  private async printKotSunmi(data: KotData): Promise<boolean> {
+    try {
+      const ok = await this.initializeSunmiPrinter();
+      if (!ok) {
+        return false;
+      }
+
+      PrinterSunmi.initLine({align: 'CENTER'});
+      PrinterSunmi.printText('KITCHEN ORDER', {textSize: 32, bold: true});
+      PrinterSunmi.printDividingLine('SOLID', 1);
+      PrinterSunmi.printText(`Order: ${data.order_no}`, {textSize: 24, bold: true});
+      PrinterSunmi.printText(data.table_label, {textSize: 22});
+      PrinterSunmi.printText(data.order_type_display, {textSize: 22});
+      if (data.waiter_name) {
+        PrinterSunmi.printText(`Server: ${data.waiter_name}`, {textSize: 20});
+      }
+      PrinterSunmi.printText(data.printed_at, {textSize: 18});
+      PrinterSunmi.printDividingLine('SOLID', 1);
+
+      PrinterSunmi.initLine({align: 'LEFT'});
+      for (const item of data.items) {
+        PrinterSunmi.printText(`${item.quantity}x  ${item.item_name}`, {
+          textSize: 26,
+          bold: true,
+        });
+        if (item.special_instructions) {
+          PrinterSunmi.printText(`  ** ${item.special_instructions}`, {
+            textSize: 20,
+          });
+        }
+        if (item.fire_state_display) {
+          PrinterSunmi.printText(`  [${item.fire_state_display}]`, {
+            textSize: 18,
+          });
+        }
+      }
+
+      PrinterSunmi.initLine({align: 'CENTER'});
+      PrinterSunmi.printDividingLine('SOLID', 1);
+      PrinterSunmi.printText('*** KITCHEN COPY ***', {textSize: 22, bold: true});
+      PrinterSunmi.addText('\n\n\n\n');
+      PrinterSunmi.printTrans();
+      return true;
+    } catch (error) {
+      console.error('Sunmi KOT print failed:', error);
+      return false;
+    }
+  }
+
   /**
    * Print receipt using Sunmi printer
    */
@@ -371,12 +471,13 @@ class PrintService {
       }
 
       console.log('Starting to print receipt on Sunmi printer...');
+      const compact = !!data.compactReceipt;
 
-      await this.printHeader(data.companyInfo);
-      await this.printReceiptInfo(data);
-      await this.printItems(data.cartItems);
-      await this.printTotals(data);
-      await this.printFooter(data.receiptId, data.companyInfo);
+      await this.printHeader(data.companyInfo, compact);
+      await this.printReceiptInfo(data, compact);
+      await this.printItems(data.cartItems, compact);
+      await this.printTotals(data, compact);
+      await this.printFooter(data, compact);
 
       console.log('Committing print job...');
       PrinterSunmi.printTrans();
@@ -538,12 +639,33 @@ class PrintService {
   /**
    * Print receipt header
    */
-  private async printHeader(companyInfo?: CompanyInfo): Promise<void> {
+  private async printHeader(companyInfo?: CompanyInfo, compact?: boolean): Promise<void> {
     try {
       console.log('Printing header...');
       PrinterSunmi.initLine({ align: 'CENTER' });
       console.log('Header line initialized');
-      
+
+      if (compact) {
+        PrinterSunmi.printText('SALES RECEIPT', {textSize: 18, bold: true});
+        const companyName = companyInfo?.name || 'ZENTRO APP';
+        PrinterSunmi.printText(companyName, {textSize: 16, bold: true});
+        if (companyInfo?.address) {
+          PrinterSunmi.printText(companyInfo.address, {textSize: 14});
+        }
+        if (companyInfo?.phone) {
+          PrinterSunmi.printText(`Tel: ${companyInfo.phone}`, {textSize: 14});
+        }
+        if (companyInfo?.tin) {
+          PrinterSunmi.printText(`TIN: ${companyInfo.tin}`, {textSize: 14});
+        }
+        if (companyInfo?.vatNo) {
+          PrinterSunmi.printText(`VAT No: ${companyInfo.vatNo}`, {textSize: 14});
+        }
+        PrinterSunmi.printDividingLine('SOLID', 1);
+        console.log('Header completed (compact)');
+        return;
+      }
+
       // Print logo if available
       if (companyInfo?.logo) {
         try {
@@ -696,20 +818,36 @@ class PrintService {
   /**
    * Print receipt information
    */
-  private async printReceiptInfo(data: PrintReceiptData): Promise<void> {
+  private async printReceiptInfo(data: PrintReceiptData, compact?: boolean): Promise<void> {
     try {
       console.log('Printing receipt info...');
     const receiptId = data.receiptId || this.generateReceiptId();
-    const saleDate = data.saleDate || new Date().toLocaleString();
+    const saleDate = data.saleDate || new Date().toISOString();
     
       PrinterSunmi.initLine({ align: 'CENTER' });
       console.log('Receipt info line initialized');
+
+      if (compact) {
+        PrinterSunmi.printText(`Invoice: ${receiptId}`, {textSize: 15, bold: true});
+        PrinterSunmi.printText(
+          `Date: ${PrintService.formatReceiptDateDisplay(saleDate)}`,
+          {textSize: 14},
+        );
+        PrinterSunmi.printText(`Cashier: ${data.username}`, {textSize: 14});
+        if (data.customerName) {
+          PrinterSunmi.printText(`Customer: ${data.customerName}`, {textSize: 14});
+        }
+        PrinterSunmi.printDividingLine('SOLID', 1);
+        console.log('Receipt info completed (compact)');
+        return;
+      }
+
       PrinterSunmi.printText(`Receipt #: ${receiptId}`, { textSize: 22, bold: true });
       PrinterSunmi.printText(`Date: ${saleDate.split('T')[0]}`, { textSize: 22, bold: true });
       PrinterSunmi.printText(`Cashier: ${data.username}`, { textSize: 22, bold: true });
       console.log('Receipt info text added');
     
-    if (data.customerName) {
+      if (data.customerName) {
         PrinterSunmi.printText(`Customer: ${data.customerName}`, { textSize: 22, bold: true });
       }
       
@@ -724,9 +862,40 @@ class PrintService {
   /**
    * Print items list
    */
-  private async printItems(items: PrintItem[]): Promise<void> {
+  private async printItems(items: PrintItem[], compact?: boolean): Promise<void> {
     try {
       console.log('Printing items...');
+
+      if (compact) {
+        PrinterSunmi.initLine({align: 'LEFT'});
+        PrinterSunmi.printTexts([
+          {text: 'Qty', span: 2, style: {bold: true, textSize: 14}},
+          {text: 'Amount', span: 2, style: {align: 'RIGHT', bold: true, textSize: 14}},
+        ]);
+        PrinterSunmi.printDividingLine('SOLID', 1);
+        for (const item of items) {
+          const lineTotal =
+            item.line_total != null && Number.isFinite(Number(item.line_total))
+              ? Number(item.line_total)
+              : item.quantity * item.unit_price;
+          const rawName = (item.item_name || 'Item').trim();
+          const shortName =
+            rawName.length > 22 ? `${rawName.slice(0, 19)}...` : rawName;
+          const left = `${item.quantity}x ${shortName}`;
+          PrinterSunmi.printTexts([
+            {text: left, span: 2, style: {textSize: 14}},
+            {
+              text: PrintService.formatReceiptPlainAmount(lineTotal),
+              span: 2,
+              style: {align: 'RIGHT', textSize: 14},
+            },
+          ]);
+        }
+        PrinterSunmi.printDividingLine('SOLID', 1);
+        console.log('Items section completed (compact)');
+        return;
+      }
+
       PrinterSunmi.printText('ITEMS:', { textSize: 24, bold: true });
       console.log('Items header printed');
 
@@ -766,14 +935,80 @@ class PrintService {
   /**
    * Print totals section
    */
-  private async printTotals(data: PrintReceiptData): Promise<void> {
+  private async printTotals(data: PrintReceiptData, compact?: boolean): Promise<void> {
     try {
       console.log('Printing totals...');
     const subtotal = data.subtotal || data.total;
     const tax = data.tax || 0;
     const discount = data.discount || 0;
     const total = data.total;
-    const change = data.change || 0;
+    const change = Number(data.change) || 0;
+    const tendered = Number(data.amountReceived);
+
+    if (compact) {
+      PrinterSunmi.initLine({align: 'LEFT'});
+      if (tax > 0) {
+        PrinterSunmi.printTexts([
+          {text: 'Tax:', span: 2, style: {textSize: 14}},
+          {
+            text: this.formatCurrency(tax),
+            span: 2,
+            style: {align: 'RIGHT', textSize: 14},
+          },
+        ]);
+      }
+      if (discount > 0) {
+        PrinterSunmi.printTexts([
+          {text: 'Discount:', span: 2, style: {textSize: 14}},
+          {
+            text: `-${PrintService.formatReceiptPlainAmount(discount)}`,
+            span: 2,
+            style: {align: 'RIGHT', textSize: 14},
+          },
+        ]);
+      }
+      PrinterSunmi.printTexts([
+        {text: 'TOTAL:', span: 2, style: {bold: true, textSize: 16}},
+        {
+          text: PrintService.formatReceiptPlainAmount(total),
+          span: 2,
+          style: {align: 'RIGHT', bold: true, textSize: 16},
+        },
+      ]);
+      if (Number.isFinite(tendered) && tendered > 0) {
+        PrinterSunmi.printTexts([
+          {text: 'Tendered:', span: 2, style: {bold: true, textSize: 14}},
+          {
+            text: PrintService.formatReceiptPlainAmount(tendered),
+            span: 2,
+            style: {align: 'RIGHT', bold: true, textSize: 14},
+          },
+        ]);
+      }
+      if (change > 0) {
+        PrinterSunmi.printTexts([
+          {text: 'Change:', span: 2, style: {bold: true, textSize: 14}},
+          {
+            text: PrintService.formatReceiptPlainAmount(change),
+            span: 2,
+            style: {align: 'RIGHT', bold: true, textSize: 14},
+          },
+        ]);
+      }
+      if (data.paymentMethod && data.paymentMethod !== '—') {
+        PrinterSunmi.printTexts([
+          {text: 'Payment:', span: 2, style: {textSize: 14}},
+          {
+            text: data.paymentMethod,
+            span: 2,
+            style: {align: 'RIGHT', textSize: 14},
+          },
+        ]);
+      }
+      PrinterSunmi.printDividingLine('SOLID', 1);
+      console.log('Totals section completed (compact)');
+      return;
+    }
 
       PrinterSunmi.printText('TOTALS:', { textSize: 24, bold: true });
       console.log('Totals header printed');
@@ -833,11 +1068,32 @@ class PrintService {
   /**
    * Print receipt footer
    */
-  private async printFooter(receiptId?: string, companyInfo?: CompanyInfo): Promise<void> {
+  private async printFooter(data: PrintReceiptData, compact?: boolean): Promise<void> {
     try {
       console.log('Printing footer...');
       PrinterSunmi.initLine({ align: 'CENTER' });
-      
+      const receiptId = data.receiptId;
+      const companyInfo = data.companyInfo;
+
+      if (compact) {
+        const n = data.cartItems?.length ?? 0;
+        const thankYou =
+          n > 0
+            ? `THANK YOU (${n} item${n === 1 ? '' : 's'})`
+            : 'THANK YOU';
+        PrinterSunmi.printText(thankYou, {textSize: 15, bold: true});
+        const inv = receiptId || '—';
+        const dateStr = PrintService.formatReceiptDateDisplay(
+          data.saleDate || new Date().toISOString(),
+        );
+        PrinterSunmi.printText(`${inv} ${dateStr} ${data.username}`, {
+          textSize: 12,
+        });
+        PrinterSunmi.addText('\n');
+        console.log('Footer completed (compact)');
+        return;
+      }
+
       // Thank you message
       PrinterSunmi.printText('Thank you for your purchase!', { textSize: 22, bold: true });
       PrinterSunmi.printText('Please come again', { textSize: 22, bold: true });
@@ -883,6 +1139,36 @@ class PrintService {
     return `UGX ${safeAmount.toLocaleString('en-US', {
       maximumFractionDigits: 0,
     })}`;
+  }
+
+  /** Plain amount for narrow thermal columns (matches web receipt number formatting). */
+  static formatReceiptPlainAmount(amount: number): string {
+    const n = Math.round(Number(amount));
+    return Number.isFinite(n) ? n.toLocaleString('en-US') : '0';
+  }
+
+  /** Web-aligned receipt date (Africa/Kampala, 24h). */
+  static formatReceiptDateDisplay(isoOrDate: string): string {
+    try {
+      const d = new Date(isoOrDate);
+      if (isNaN(d.getTime())) {
+        return String(isoOrDate).split('T')[0] || '';
+      }
+      return d
+        .toLocaleString('en-GB', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false,
+          timeZone: 'Africa/Kampala',
+        })
+        .replace(',', '');
+    } catch {
+      return String(isoOrDate).split('T')[0] || '';
+    }
   }
 
   private async printReceiptUsb(data: PrintReceiptData): Promise<boolean> {

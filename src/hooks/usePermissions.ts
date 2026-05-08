@@ -21,6 +21,13 @@
 import {useAuth} from '../context/Store';
 import {PagePermissions} from '../types/auth';
 
+const MODULE_ENABLED_ALIASES: Record<string, string[]> = {
+  // Match web nav config where moduleCode can differ from enabled_modules key.
+  items: ['inventory'],
+  suppliers: ['purchases'],
+  userManagement: ['user_management'],
+};
+
 export const usePermissions = () => {
   const {auth} = useAuth();
 
@@ -34,7 +41,21 @@ export const usePermissions = () => {
    * @returns true if module should be visible
    */
   const isModuleVisible = (moduleCode: string): boolean => {
-    // Superuser sees everything
+    const enabledModules = Array.isArray(auth.enabled_modules)
+      ? auth.enabled_modules
+      : ['pos'];
+    // Company/module subscription gate: when backend provides enabled_modules,
+    // never show modules that are not enabled for this tenant.
+    if (Array.isArray(enabledModules)) {
+      const aliases = MODULE_ENABLED_ALIASES[moduleCode] || [];
+      const enabledKeys = [moduleCode, ...aliases];
+      const isEnabled = enabledKeys.some(key => enabledModules.includes(key));
+      if (!isEnabled) {
+        return false;
+      }
+    }
+
+    // Superuser sees everything among enabled modules
     if (auth.is_superuser) return true;
 
     const roleCenterModules = auth.role_center_modules || [];

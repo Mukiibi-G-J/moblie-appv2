@@ -45,12 +45,17 @@ export type RestaurantOrderItem = {
   special_instructions?: string;
   fire_state?: string;
   fire_state_display?: string;
+  /** From API after serializer update; menu fallback used if absent. */
+  primary_image_url?: string | null;
 };
 
 export type RestaurantOrder = {
   id: number;
   no: string;
-  table: number;
+  /** Table FK; null for counter / quick sale. */
+  table?: number | null;
+  /** Bill-to sales customer FK when set on the order header. */
+  customer?: number | null;
   table_number?: string;
   customer_name?: string;
   waiter: number;
@@ -288,7 +293,102 @@ export async function updateOrderItemStatus(itemId: number, status: string) {
   return res.data;
 }
 
-/** Complete/close a restaurant order (header status → completed). */
+/** Posted sales invoice envelope from checkout-and-post / counter-checkout */
+export type RestaurantPostedInvoicePayload = {
+  message: string;
+  invoice: Record<string, unknown>;
+  receipt_no: string;
+};
+
+/**
+ * Table / dine-in close: create sales invoice, take payment, post G/L + inventory.
+ * Backend resolves walk-in customer when order has no bill-to and request omits customer_id.
+ */
+export async function checkoutAndPostOrder(
+  orderId: number,
+  body: {
+    customer_id?: number | null;
+    combine_orders?: boolean;
+    payment_method_id: number;
+    amount_received?: number | null;
+    change_amount?: number | null;
+  },
+): Promise<RestaurantPostedInvoicePayload> {
+  const client = await tenantClient();
+  const res = await client.post<RestaurantPostedInvoicePayload>(
+    `${API}/orders/${orderId}/checkout-and-post/`,
+    {
+      combine_orders: body.combine_orders ?? false,
+      payment_method_id: body.payment_method_id,
+      amount_received:
+        body.amount_received !== undefined ? body.amount_received : undefined,
+      change_amount:
+        body.change_amount !== undefined ? body.change_amount : undefined,
+      ...(body.customer_id != null ? {customer_id: body.customer_id} : {}),
+    },
+  );
+  return res.data;
+}
+
+/** Quick sale / counter: pay + post in one step (no table orders only). */
+export async function counterCheckoutOrder(
+  orderId: number,
+  body: {
+    payment_method_id: number;
+    customer_id?: number | null;
+    amount_received?: number | null;
+    change_amount?: number | null;
+  },
+): Promise<RestaurantPostedInvoicePayload> {
+  const client = await tenantClient();
+  const res = await client.post<RestaurantPostedInvoicePayload>(
+    `${API}/orders/${orderId}/counter-checkout/`,
+    body,
+  );
+  return res.data;
+}
+
+/** Route to counter-checkout (no table FK) or checkout-and-post (seated). */
+export async function settleRestaurantOrder(
+  order: RestaurantOrder,
+  paymentMethodId: number,
+  opts?: {amount_received?: number; change_amount?: number},
+): Promise<RestaurantPostedInvoicePayload> {
+  const total = Math.round(Number(order.total_amount || 0));
+  const tendered = opts?.amount_received ?? total;
+  const change = opts?.change_amount ?? Math.max(0, tendered - total);
+  const body = {
+    payment_method_id: paymentMethodId,
+    amount_received: tendered,
+    change_amount: change,
+  };
+
+  const tbl = order.table;
+  const noTable = tbl === null || tbl === undefined;
+
+  if (noTable) {
+    return counterCheckoutOrder(order.id, {
+      ...body,
+      customer_id:
+        order.customer != null && order.customer !== undefined
+          ? Number(order.customer)
+          : undefined,
+    });
+  }
+
+  return checkoutAndPostOrder(order.id, {
+    ...body,
+    combine_orders: false,
+    ...(order.customer != null && order.customer !== undefined
+      ? {customer_id: Number(order.customer)}
+      : {}),
+  });
+}
+
+/**
+ * Legacy: marks order completed only — does not invoice or post.
+ * Prefer checkoutAndPostOrder / counterCheckoutOrder for cashier close-out.
+ */
 export async function completeRestaurantOrder(
   orderId: number,
 ): Promise<RestaurantOrder> {

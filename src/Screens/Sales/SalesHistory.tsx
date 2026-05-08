@@ -104,6 +104,8 @@ type SalesInvoice = SalesHistoryListItemData & {
   user_name?: string;
   lines?: SalesLine[];
   created_at?: string;
+  amount_received?: number | string;
+  change_amount?: number | string;
 };
 
 function isPostedSale(status?: string) {
@@ -116,11 +118,17 @@ function mapSalesInvoiceToReceiptData(
   username: string,
 ): PrintReceiptData {
   const lines = invoice.lines || [];
-  let cartItems = lines.map(line => ({
-    item_name: line.item_name || 'Item',
-    quantity: Number.parseFloat(String(line.quantity)) || 0,
-    unit_price: Number.parseFloat(String(line.unit_price)) || 0,
-  }));
+  let cartItems = lines.map(line => {
+    const quantity = Number.parseFloat(String(line.quantity)) || 0;
+    const unit_price = Number.parseFloat(String(line.unit_price)) || 0;
+    const ta = Number.parseFloat(String(line.total_amount));
+    return {
+      item_name: line.item_name || 'Item',
+      quantity,
+      unit_price,
+      line_total: Number.isFinite(ta) ? ta : undefined,
+    };
+  });
   const subFromLines = cartItems.reduce(
     (s, i) => s + i.quantity * i.unit_price,
     0,
@@ -133,6 +141,7 @@ function mapSalesInvoiceToReceiptData(
         item_name: 'Invoice total',
         quantity: 1,
         unit_price: total,
+        line_total: total,
       },
     ];
   }
@@ -145,18 +154,28 @@ function mapSalesInvoiceToReceiptData(
       ? rawDate
       : new Date(rawDate).toISOString();
 
+  const cn = invoice.customer_name?.trim();
+  const customerName =
+    cn && cn.toLowerCase() !== 'general' ? cn : undefined;
+
+  const ar = Number(invoice.amount_received);
+  const ch = Number(invoice.change_amount);
+
   return {
     receiptId: invoice.invoice_no || String(invoice.id ?? ''),
     username,
-    customerName: invoice.customer_name?.trim() || 'Walk-in customer',
+    customerName,
     cartItems,
     subtotal: total,
     total,
     tax: 0,
     discount: 0,
     paymentMethod: invoice.payment_method_name || '—',
+    amountReceived: Number.isFinite(ar) && ar > 0 ? ar : undefined,
+    change: Number.isFinite(ch) && ch > 0 ? ch : undefined,
     saleDate,
     companyInfo,
+    compactReceipt: true,
   };
 }
 

@@ -5,17 +5,18 @@ import {
   StyleSheet,
   Pressable,
   Linking,
-  Platform,
   StatusBar,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, FONTS, SIZES } from '../constants/theme';
 
-type Props = { storeUrl: string };
+type Props = { downloadUrl: string };
 
-export function AppUpdateRequiredScreen({ storeUrl }: Props) {
-  const openStore = () => {
-    Linking.openURL(storeUrl).catch(() => {});
+export function AppUpdateRequiredScreen({ downloadUrl }: Props) {
+  const openDownload = () => {
+    if (downloadUrl) {
+      Linking.openURL(downloadUrl).catch(() => {});
+    }
   };
 
   return (
@@ -24,16 +25,18 @@ export function AppUpdateRequiredScreen({ storeUrl }: Props) {
       <View style={styles.container}>
         <Text style={[FONTS.h2, styles.title]}>Update required</Text>
         <Text style={[FONTS.body4, styles.body]}>
-          This version is no longer supported. Install the latest version from
-          the {Platform.OS === 'ios' ? 'App Store' : 'Play Store'} to continue.
+          This version is no longer supported. Please install the latest version
+          from the link below to continue using the app.
         </Text>
         <Pressable
           style={({ pressed }) => [
             styles.button,
             pressed && styles.buttonPressed,
           ]}
-          onPress={openStore}>
-          <Text style={[FONTS.button, styles.buttonText]}>Open store</Text>
+          onPress={openDownload}>
+          <Text style={[FONTS.button, styles.buttonText]}>
+            Download latest version
+          </Text>
         </Pressable>
       </View>
     </SafeAreaView>
