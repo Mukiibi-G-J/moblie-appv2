@@ -68,7 +68,15 @@ const SelectBranch = () => {
       const preferred = preferredCode
         ? normalized.find((b) => b.code === preferredCode)
         : undefined;
-      setSelectedId(preferred?.id ?? normalized[0]?.id ?? null);
+      const sessionBranch = ctx?.branchSession?.active_branch;
+      const jwtBranch = ctx?.auth?.global_dimension_1;
+      setSelectedId(
+        sessionBranch?.id ??
+          jwtBranch?.id ??
+          preferred?.id ??
+          normalized[0]?.id ??
+          null,
+      );
     } catch (e) {
       setBranches([]);
       setSelectedId(null);

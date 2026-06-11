@@ -1,4 +1,4 @@
-import React, {useState, useCallback, useEffect} from 'react';
+import React, {useState, useCallback} from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View,
@@ -8,11 +8,17 @@ import {
   ActivityIndicator,
   Image,
 } from 'react-native';
-import {useNavigation} from '@react-navigation/native';
+import {useNavigation, useFocusEffect} from '@react-navigation/native';
 import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {icons} from '../../constants';
 import AuthLayout from '../../Components/layouts/AuthLayout';
 import FormInput from '../../Components/FormInput2';
+import LoginMethodToggle, {
+  type LoginMethod,
+} from '../../Components/LoginMethodToggle';
+import CustomPhoneInput, {
+  UGANDA_DIAL_CODE,
+} from '../../Components/CustomPhoneInput';
 import {COLORS} from '../../constants';
 import {authService} from '../../services/auth.services';
 import {restaurantCompanyLookup} from '../../services/restaurantPinApi';
@@ -30,9 +36,16 @@ import {
 import {
   getEmail,
   getTenant,
-  getVerifiedEmail,
   setVerifiedEmail,
 } from '../../utils/tenant';
+import {
+  LOGIN_DRAFT_TENANT,
+  LOGIN_DRAFT_EMAIL,
+  LOGIN_DRAFT_PASSWORD,
+  LOGIN_DRAFT_LOGIN_METHOD,
+  type LoginDraftMethod,
+} from '../../utils/loginCredentials';
+import {showAuthSupportAlert} from '../../utils/authSupport';
 import {radii} from '../../design-system/theme';
 import {authOnboarding} from '../../design-system/authOnboardingTokens';
 import {useTheme} from '../../context/ThemeContext';
@@ -46,10 +59,32 @@ type LoginNav = NativeStackNavigationProp<RootStackParamList, 'SignIn'>;
 
 const emailLooksValid = (value: string) => /\S+@\S+\.\S+/.test(value.trim());
 
-/** Last sign-in attempt (wrong credentials): refill fields after error and across app restarts. */
-const LOGIN_DRAFT_TENANT = '@zentro_login_draft_tenant';
-const LOGIN_DRAFT_EMAIL = '@zentro_login_draft_email';
-const LOGIN_DRAFT_PASSWORD = '@zentro_login_draft_password';
+const E164_RE = /^\+[1-9]\d{1,14}$/;
+
+function inferLoginMethod(value: string): LoginMethod {
+  const v = value.trim();
+  if (!v) {
+    return 'email';
+  }
+  if (v.includes('@')) {
+    return 'email';
+  }
+  const digits = v.replace(/\D/g, '');
+  if (digits.length >= 9) {
+    return 'phone';
+  }
+  return 'email';
+}
+
+function nationalFromStoredPhone(value: string): string {
+  let d = value.replace(/\D/g, '');
+  if (d.startsWith('256')) {
+    d = d.slice(3);
+  }
+  d = d.replace(/^0+/, '');
+  return d.slice(0, 9);
+}
+
 const LOGIN_DRAFT_COMPANY_DISPLAY = '@zentro_login_draft_company_display';
 
 const Login = () => {
@@ -57,8 +92,11 @@ const Login = () => {
   const navigation = useNavigation<LoginNav>();
   const context = useAppContext();
   const [step, setStep] = useState<1 | 2>(1);
+  const [loginMethod, setLoginMethod] = useState<LoginMethod>('email');
   const [tenant, setTenant] = useState('');
   const [email, setEmail] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [isPhoneValid, setIsPhoneValid] = useState(false);
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [tenantError, setTenantError] = useState('');
@@ -67,12 +105,25 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [passwordError, setPasswordError] = useState('');
 
+  const buildLoginPhone = useCallback(() => {
+    const digits = phoneNumber.replace(/\D/g, '');
+    return `${UGANDA_DIAL_CODE}${digits}`;
+  }, [phoneNumber]);
+
+  const resolveLoginCredential = useCallback(() => {
+    if (loginMethod === 'phone') {
+      return buildLoginPhone();
+    }
+    return email.trim();
+  }, [loginMethod, email, buildLoginPhone]);
+
   const saveLoginDraft = useCallback(
     async (includePassword: boolean) => {
       try {
         const pairs: [string, string][] = [
           [LOGIN_DRAFT_TENANT, tenant.trim()],
-          [LOGIN_DRAFT_EMAIL, email.trim()],
+          [LOGIN_DRAFT_EMAIL, resolveLoginCredential()],
+          [LOGIN_DRAFT_LOGIN_METHOD, loginMethod],
         ];
         if (includePassword) {
           pairs.push([LOGIN_DRAFT_PASSWORD, password]);
@@ -82,7 +133,7 @@ const Login = () => {
         /* ignore */
       }
     },
-    [tenant, email, password],
+    [tenant, resolveLoginCredential, loginMethod, password],
   );
 
   const clearStoredLoginPassword = useCallback(async () => {
@@ -93,64 +144,63 @@ const Login = () => {
     }
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const rows = await AsyncStorage.multiGet([
-          LOGIN_DRAFT_TENANT,
-          LOGIN_DRAFT_EMAIL,
-          LOGIN_DRAFT_PASSWORD,
-        ]);
-        if (cancelled) {
-          return;
-        }
-        const map = Object.fromEntries(rows) as Record<string, string | undefined>;
-        const t = map[LOGIN_DRAFT_TENANT];
-        const e = map[LOGIN_DRAFT_EMAIL];
-        const p = map[LOGIN_DRAFT_PASSWORD];
-        if (t) {
-          setTenant(t);
-        }
-        if (e) {
-          setEmail(e);
-        }
-        if (p) {
-          setPassword(p);
-        }
-        if (t && e && p) {
-          setStep(2);
-        }
-      } catch {
-        /* ignore */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      void (async () => {
+        try {
+          const rows = await AsyncStorage.multiGet([
+            LOGIN_DRAFT_TENANT,
+            LOGIN_DRAFT_EMAIL,
+            LOGIN_DRAFT_PASSWORD,
+            LOGIN_DRAFT_LOGIN_METHOD,
+          ]);
+          if (cancelled) {
+            return;
+          }
+          const map = Object.fromEntries(rows) as Record<
+            string,
+            string | undefined
+          >;
+          const storedTenant = ((await getTenant()) || '').trim();
+          const storedEmail = ((await getEmail()) || '').trim();
+          const p = map[LOGIN_DRAFT_PASSWORD];
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const verifiedFlag = await getVerifiedEmail();
-        const storedEmail = await getEmail();
-        const t = await getTenant();
-        if (cancelled || !storedEmail?.trim() || !t?.trim()) {
-          return;
+          let t = storedTenant || map[LOGIN_DRAFT_TENANT]?.trim() || '';
+          let e = storedEmail || map[LOGIN_DRAFT_EMAIL]?.trim() || '';
+          const storedMethod =
+            (map[LOGIN_DRAFT_LOGIN_METHOD] as LoginDraftMethod | undefined) ||
+            inferLoginMethod(e);
+
+          if (t) {
+            setTenant(t);
+          }
+          setLoginMethod(storedMethod);
+          if (storedMethod === 'phone') {
+            setPhoneNumber(nationalFromStoredPhone(e));
+            setEmail('');
+          } else if (e) {
+            setEmail(e);
+            setPhoneNumber('');
+          }
+          if (p) {
+            setPassword(p);
+            if (t && e) {
+              setStep(2);
+            }
+          } else {
+            setPassword('');
+            setStep(1);
+          }
+        } catch {
+          /* ignore */
         }
-        if (verifiedFlag === 'false') {
-          navigation.navigate('Otp', {email: storedEmail.trim()});
-        }
-      } catch {
-        /* ignore */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [navigation]);
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, []),
+  );
 
   const goBackToCredentials = useCallback(() => {
     setPassword('');
@@ -160,8 +210,19 @@ const Login = () => {
     void clearStoredLoginPassword();
   }, [clearStoredLoginPassword]);
 
+  const handleLoginMethodChange = useCallback((method: LoginMethod) => {
+    setLoginMethod(method);
+    if (method === 'email') {
+      setPhoneNumber('');
+      setIsPhoneValid(false);
+    } else {
+      setEmail('');
+    }
+  }, []);
+
   const handleLogin = async () => {
-    if (!tenant || !email || !password) {
+    const credential = resolveLoginCredential();
+    if (!tenant || !credential || !password) {
       Toast.show({
         type: 'error',
         text1: 'Please enter your password',
@@ -177,11 +238,15 @@ const Login = () => {
     try {
       const response = await authService.login({
         tenant: schemaTenant,
-        email,
+        email: credential,
         password,
       });
       if (response) {
-        await context?.login({email, password, tenant: schemaTenant});
+        await context?.login({
+          email: credential,
+          password,
+          tenant: schemaTenant,
+        });
 
         const access = await AsyncStorage.getItem('accessToken');
         if (!access) {
@@ -197,8 +262,9 @@ const Login = () => {
 
         const dec = jwtDecode(access) as DecodedToken;
         if (dec.verified === false) {
+          const otpEmail = (dec.email || credential).trim();
           await setVerifiedEmail(false);
-          await AsyncStorage.setItem('email', email.trim());
+          await AsyncStorage.setItem('email', otpEmail);
           setLoading(false);
           Toast.show({
             type: 'info',
@@ -207,7 +273,7 @@ const Login = () => {
           });
           navigation.reset({
             index: 0,
-            routes: [{name: 'Otp', params: {email: email.trim()}}],
+            routes: [{name: 'Otp', params: {email: otpEmail}}],
           });
           return;
         }
@@ -275,7 +341,7 @@ const Login = () => {
         errorMessage = error.message;
       } else if (error.response?.status === 401) {
         errorMessage =
-          'Invalid credentials. Please check your email and password.';
+          'Invalid email, phone number, or password. Please try again.';
       } else if (error.response?.status === 404) {
         errorMessage = 'Company not found. Please check your company name.';
       }
@@ -316,13 +382,16 @@ const Login = () => {
 
   const continueToPassword = async () => {
     const t = tenant.trim();
-    const e = email.trim();
+    const credential = resolveLoginCredential();
 
-    if (!t || !e) {
+    if (!t || !credential) {
       Toast.show({
         type: 'error',
         text1: 'Missing information',
-        text2: 'Enter company name and email',
+        text2:
+          loginMethod === 'phone'
+            ? 'Enter company name and phone number'
+            : 'Enter company name and email',
       });
       return;
     }
@@ -336,11 +405,20 @@ const Login = () => {
       return;
     }
 
-    if (!emailLooksValid(e)) {
+    if (loginMethod === 'email') {
+      if (!emailLooksValid(credential)) {
+        Toast.show({
+          type: 'error',
+          text1: 'Invalid email',
+          text2: 'Enter a valid email address',
+        });
+        return;
+      }
+    } else if (!isPhoneValid || !E164_RE.test(credential)) {
       Toast.show({
         type: 'error',
-        text1: 'Invalid email',
-        text2: 'Enter a valid email address',
+        text1: 'Invalid phone number',
+        text2: 'Enter a complete phone number',
       });
       return;
     }
@@ -406,7 +484,7 @@ const Login = () => {
       <Text
         style={[styles.identityEmail, {color: colors.textPrimary}]}
         numberOfLines={1}>
-        {email.trim()}
+        {resolveLoginCredential()}
       </Text>
       <TouchableOpacity
         onPress={goBackToCredentials}
@@ -423,9 +501,25 @@ const Login = () => {
       title={step === 1 ? 'Sign in' : 'Welcome back'}
       subtitle={step === 2 ? identitySubtitle : undefined}
       showBackButton={showBack && !!onBack}
-      onBackPress={onBack}>
+      onBackPress={onBack}
+      headerRight={
+        <TouchableOpacity
+          onPress={showAuthSupportAlert}
+          hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
+          accessibilityRole="button"
+          accessibilityLabel="Help and support">
+          <Text style={[styles.helpLink, {color: colors.textPrimary}]}>
+            Help
+          </Text>
+        </TouchableOpacity>
+      }>
       {step === 1 ? (
         <>
+          <LoginMethodToggle
+            value={loginMethod}
+            onChange={handleLoginMethodChange}
+          />
+
           <FormInput
             label="Company Name"
             value={tenant}
@@ -447,22 +541,45 @@ const Login = () => {
             autoCapitalize="none"
           />
 
-          <FormInput
-            label="Email Address"
-            value={email}
-            onChangeText={setEmail}
-            placeholder="Enter email"
-            required
-            helpText="We'll never share your email"
-            startIcon={
-              <Image
-                source={icons.email}
-                style={{width: 20, height: 20, tintColor: colors.iconMuted}}
+          {loginMethod === 'email' ? (
+            <FormInput
+              label="Email Address"
+              value={email}
+              onChangeText={setEmail}
+              placeholder="Enter email"
+              required
+              helpText="We'll never share your email"
+              startIcon={
+                <Image
+                  source={icons.email}
+                  style={{width: 20, height: 20, tintColor: colors.iconMuted}}
+                />
+              }
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+          ) : (
+            <View style={styles.phoneField}>
+              <Text style={[styles.phoneLabel, {color: colors.textPrimary}]}>
+                Phone number <Text style={styles.requiredMark}>*</Text>
+              </Text>
+              <CustomPhoneInput
+                value={phoneNumber}
+                onChangeText={setPhoneNumber}
+                onValidationChange={setIsPhoneValid}
               />
-            }
-            keyboardType="email-address"
-            autoCapitalize="none"
-          />
+              {!isPhoneValid && phoneNumber.length > 0 ? (
+                <Text style={[styles.phoneError, {color: COLORS.error}]}>
+                  Enter a valid phone number
+                </Text>
+              ) : (
+                <Text
+                  style={[styles.phoneHelp, {color: colors.textSecondary}]}>
+                  e.g. {UGANDA_DIAL_CODE}750440865
+                </Text>
+              )}
+            </View>
+          )}
 
           <TouchableOpacity
             style={[
@@ -627,6 +744,30 @@ const styles = StyleSheet.create({
   },
   iconButton: {
     padding: 8,
+  },
+  helpLink: {
+    fontSize: ao.typo.caption,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+  },
+  phoneField: {
+    marginBottom: ao.sectionSpacing.betweenFields,
+  },
+  phoneLabel: {
+    fontSize: ao.typo.caption,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  requiredMark: {
+    color: COLORS.error,
+  },
+  phoneHelp: {
+    fontSize: ao.typo.micro,
+    marginTop: 6,
+  },
+  phoneError: {
+    fontSize: ao.typo.micro,
+    marginTop: 6,
   },
 });
 

@@ -12,6 +12,7 @@ import {
   SearchMode,
   MobileSettingsPatchPayload,
 } from '../services/mobileSettings.service';
+import {isSubscriptionExpiredError} from '../utils/subscriptionExpired';
 
 interface SearchModeState {
   searchMode: SearchMode;
@@ -94,11 +95,13 @@ export const SearchModeProvider: React.FC<{children: React.ReactNode}> = ({
     barcodeBeepEnabled: boolean;
   } | null>(null);
   const skipNextSyncRef = useRef(false);
+  const subscriptionBlockedRef = useRef(false);
 
   useEffect(() => {
     const loadSettingsFromBackend = async () => {
       try {
         const settings = await fetchMobileSettings();
+        subscriptionBlockedRef.current = false;
         const normalized = {
           searchMode: settings.searchMode,
           barcodeScannerEnabled: settings.barcodeScannerEnabled,
@@ -108,6 +111,11 @@ export const SearchModeProvider: React.FC<{children: React.ReactNode}> = ({
         lastSyncedRef.current = normalized;
         lastUpdatedAtRef.current = settings.updatedAt;
       } catch (error) {
+        if (isSubscriptionExpiredError(error)) {
+          subscriptionBlockedRef.current = true;
+          dispatch({type: 'SET_LOADING', payload: false});
+          return;
+        }
         console.error('Error loading mobile settings from backend:', error);
         dispatch({type: 'SET_LOADING', payload: false});
       }
@@ -117,7 +125,7 @@ export const SearchModeProvider: React.FC<{children: React.ReactNode}> = ({
   }, []);
 
   useEffect(() => {
-    if (state.isLoading) {
+    if (state.isLoading || subscriptionBlockedRef.current) {
       return;
     }
 
@@ -157,6 +165,10 @@ export const SearchModeProvider: React.FC<{children: React.ReactNode}> = ({
         };
         lastUpdatedAtRef.current = updated.updatedAt;
       } catch (error: any) {
+        if (isSubscriptionExpiredError(error)) {
+          subscriptionBlockedRef.current = true;
+          return;
+        }
         const conflictCode = error?.response?.data?.code;
         if (error?.response?.status === 409 || conflictCode === 'settings_conflict') {
           try {
@@ -183,7 +195,9 @@ export const SearchModeProvider: React.FC<{children: React.ReactNode}> = ({
               position: 'bottom',
             });
           } catch (refreshError) {
-            console.error('Error refreshing settings after conflict:', refreshError);
+            if (!isSubscriptionExpiredError(refreshError)) {
+              console.error('Error refreshing settings after conflict:', refreshError);
+            }
           }
           return;
         }

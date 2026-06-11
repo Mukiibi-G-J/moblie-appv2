@@ -13,9 +13,13 @@ import {
   ScrollView,
   Image,
 } from 'react-native';
+import {useNavigation} from '@react-navigation/native';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import {COLORS, FONTS, SIZES} from '../../constants/theme';
 import icons from '../../constants/icons';
+import {useTheme} from '../../context/ThemeContext';
+import {safeGoBack} from '../../hooks/NavigationService';
 import {usePermissions} from '../../hooks/usePermissions';
 import {PAGE_NAMES} from '../../constants/pageNames';
 import {VendorServices} from '../../services/VendorServices';
@@ -33,22 +37,11 @@ const isProtectedGeneralVendor = (vendor?: Vendor | null) =>
   vendor?.no === 'VENDOR-000001';
 
 const Suppliers: React.FC = () => {
+  const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
+  const {colors} = useTheme();
   const {canRead, canCreate, canEdit, canDelete} = usePermissions();
   const PAGE_NAME = PAGE_NAMES.SUPPLIERS;
-
-  // Early return if no read permission
-  if (!canRead(PAGE_NAME)) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.accessDeniedContainer}>
-          <Text style={styles.accessDeniedTitle}>Access Denied</Text>
-          <Text style={styles.accessDeniedMessage}>
-            You don't have permission to view suppliers.
-          </Text>
-        </View>
-      </View>
-    );
-  }
 
   // State management
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -321,22 +314,78 @@ const Suppliers: React.FC = () => {
     );
   };
 
-  return (
-    <View style={styles.container}>
-      <View style={styles.headerSection}>
-        <View style={styles.titleRow}>
-          <Text style={styles.screenTitle}>Suppliers</Text>
+  const renderTopHeader = (showTrailingMenu = true) => (
+    <View
+      style={[
+        styles.allItemsHeader,
+        {
+          paddingTop: Math.max(insets.top, 10),
+          backgroundColor: colors.background,
+        },
+      ]}>
+      <QuickIconPressable
+        style={[
+          styles.headerRoundButton,
+          {
+            borderColor: colors.border,
+            backgroundColor: colors.card,
+          },
+        ]}
+        onPress={() => safeGoBack(navigation, 'Home')}
+        accessibilityLabel="Go back">
+        <Image
+          source={icons.back}
+          style={[styles.headerRoundIcon, {tintColor: colors.textPrimary}]}
+          resizeMode="contain"
+        />
+      </QuickIconPressable>
+      <Text style={[styles.allItemsTitle, {color: colors.textPrimary}]}>
+        Suppliers
+      </Text>
+      <View style={styles.headerTrailing}>
+        {showTrailingMenu ? (
           <TouchableOpacity
-            style={styles.moreButton}
+            style={[
+              styles.headerRoundButton,
+              {
+                borderColor: colors.border,
+                backgroundColor: colors.card,
+              },
+            ]}
             onPress={() => setFilterModalVisible(true)}
-            activeOpacity={0.75}>
+            activeOpacity={0.75}
+            accessibilityLabel="Open filters">
             <Image
               source={icons.menu}
-              style={styles.moreButtonIcon}
+              style={[styles.headerMenuIcon, {tintColor: colors.textPrimary}]}
               resizeMode="contain"
             />
           </TouchableOpacity>
+        ) : (
+          <View style={styles.headerTrailingSpacer} />
+        )}
+      </View>
+    </View>
+  );
+
+  if (!canRead(PAGE_NAME)) {
+    return (
+      <View style={[styles.container, {backgroundColor: colors.background}]}>
+        {renderTopHeader(false)}
+        <View style={styles.accessDeniedContainer}>
+          <Text style={styles.accessDeniedTitle}>Access Denied</Text>
+          <Text style={styles.accessDeniedMessage}>
+            You don't have permission to view suppliers.
+          </Text>
         </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={[styles.container, {backgroundColor: colors.background}]}>
+      <View style={[styles.headerSection, {backgroundColor: colors.background}]}>
+        {renderTopHeader(true)}
 
         <View style={styles.searchContainer}>
         <View style={styles.searchInputContainer}>
@@ -584,35 +633,48 @@ const styles = StyleSheet.create({
     paddingBottom: 180,
   },
   headerSection: {
-    backgroundColor: COLORS.white,
-    paddingHorizontal: 20,
-    paddingTop: 18,
+    paddingHorizontal: SIZES.padding,
     paddingBottom: 12,
   },
-  titleRow: {
+  allItemsHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 18,
+    paddingBottom: 10,
   },
-  screenTitle: {
-    ...FONTS.h1,
-    color: COLORS.black,
-    fontSize: 24,
-    fontWeight: '700',
-  },
-  moreButton: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: COLORS.transparentPrimary,
+  headerRoundButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  moreButtonIcon: {
-    width: 22,
-    height: 22,
-    tintColor: COLORS.primary3,
+  headerRoundIcon: {
+    width: 20,
+    height: 20,
+  },
+  allItemsTitle: {
+    flex: 1,
+    textAlign: 'center',
+    ...FONTS.h3,
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+  },
+  headerTrailing: {
+    width: 40,
+    height: 40,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  headerTrailingSpacer: {
+    width: 40,
+    height: 40,
+  },
+  headerMenuIcon: {
+    width: 18,
+    height: 18,
   },
   searchContainer: {
     flexDirection: 'row',

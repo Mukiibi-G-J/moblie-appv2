@@ -69,6 +69,40 @@ export async function fetchUserProfileBranchFields(): Promise<UserProfileBranchF
 
 type SalesSetupBranchValue = {id: number; code: string; description: string};
 
+export type SalesSetupBranchConfig = {
+  enable_multiple_branches: boolean;
+  branch_values: BranchListRow[];
+};
+
+function mapSetupBranchValues(raw: unknown): BranchListRow[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw
+    .map((v: any) => ({
+      id: Number(v?.id),
+      code: String(v?.code ?? '').trim(),
+      description: String(v?.description ?? v?.code ?? '').trim(),
+    }))
+    .filter((v) => Number.isFinite(v.id) && v.code.length > 0)
+    .map((v) => ({
+      ...v,
+      description: v.description || v.code,
+    }));
+}
+
+/** Same source as web `SalesServices.getSalesSetup()` for branch picker. */
+export async function fetchSalesSetupBranchConfig(): Promise<SalesSetupBranchConfig> {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const api = createAxiosInstance(tenant);
+  const res = await api.get('/api/sales/setup/');
+  const d = res?.data ?? {};
+  return {
+    enable_multiple_branches: d?.enable_multiple_branches === true,
+    branch_values: mapSetupBranchValues(d?.branch_values),
+  };
+}
+
 async function fetchSalesSetupBranchValues(): Promise<SalesSetupBranchValue[]> {
   const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
   const api = createAxiosInstance(tenant);

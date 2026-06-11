@@ -45,6 +45,12 @@ type MenuRow = {
   visible: boolean;
 };
 
+type MenuSection = {
+  key: string;
+  title: string;
+  rows: MenuRow[];
+};
+
 const quickPressProps = {
   delayPressIn: 0 as const,
   delayHoverIn: 0 as const,
@@ -233,236 +239,308 @@ const MoreMenu: React.FC = () => {
     }
   }, [app, branches, setSelectedTab, switchSelectedId]);
 
-  const rows: MenuRow[] = useMemo(
-    () => [
+  const handleSupportPress = useCallback(async () => {
+    const normalizeDigits = (raw: string) => raw.replace(/[^\d]/g, '');
+
+    const callNumber = async (raw: string) => {
+      const telUrl = `tel:${raw}`;
+      const canOpen = await Linking.canOpenURL(telUrl);
+      if (!canOpen) {
+        Toast.show({
+          type: 'error',
+          text1: 'Unable to place call',
+          text2: `This device cannot call ${raw}.`,
+        });
+        return;
+      }
+      await Linking.openURL(telUrl);
+    };
+
+    const openWhatsApp = async (raw: string) => {
+      const digits = normalizeDigits(raw);
+      const waUrl = `https://wa.me/${digits}`;
+      const canOpen = await Linking.canOpenURL(waUrl);
+      if (!canOpen) {
+        Toast.show({
+          type: 'error',
+          text1: 'Unable to open WhatsApp',
+          text2: `Could not open WhatsApp for ${raw}.`,
+        });
+        return;
+      }
+      await Linking.openURL(waUrl);
+    };
+
+    Alert.alert(
+      'Help & Support',
+      'Choose support channel:',
+      [
+        {
+          text: `Call ${SUPPORT_NUMBERS[0]}`,
+          onPress: () => {
+            void callNumber(SUPPORT_NUMBERS[0]);
+          },
+        },
+        {
+          text: `WhatsApp ${SUPPORT_NUMBERS[0]}`,
+          onPress: () => {
+            void openWhatsApp(SUPPORT_NUMBERS[0]);
+          },
+        },
+        {
+          text: `Call ${SUPPORT_NUMBERS[1]}`,
+          onPress: () => {
+            void callNumber(SUPPORT_NUMBERS[1]);
+          },
+        },
+        {
+          text: `WhatsApp ${SUPPORT_NUMBERS[1]}`,
+          onPress: () => {
+            void openWhatsApp(SUPPORT_NUMBERS[1]);
+          },
+        },
+        {text: 'Cancel', style: 'cancel'},
+      ],
+      {cancelable: true},
+    );
+  }, []);
+
+  const menuSections: MenuSection[] = useMemo(() => {
+    const sectionDefs: MenuSection[] = [
       {
-        key: 'companyBilling',
-        label: 'Company & Billing',
-        icon: icons.company,
-        visible: true,
-        onPress: () => navigate('BusinessDetails', undefined),
+        key: 'sales',
+        title: 'Sales & reports',
+        rows: [
+          {
+            key: 'salesHistory',
+            label: 'Sales History',
+            icon: icons.reports,
+            visible:
+              isModuleVisible('sales') &&
+              hasAnyPageAccess(PAGE_NAMES.SALES_HISTORY),
+            onPress: () => navigate('SalesHistory', undefined),
+          },
+          {
+            key: 'reports',
+            label: 'Reports',
+            icon: icons.reports,
+            visible:
+              isModuleVisible('reports') &&
+              hasAnyPageAccess(PAGE_NAMES.REPORTS),
+            onPress: () => navigate('Reports', undefined),
+          },
+        ],
       },
       {
-        key: 'salesHistory',
-        label: 'Sales History',
-        icon: icons.reports,
-        visible:
-          isModuleVisible('sales') && hasAnyPageAccess(PAGE_NAMES.SALES_HISTORY),
-        onPress: () => navigate('SalesHistory', undefined),
+        key: 'inventory',
+        title: 'Inventory',
+        rows: [
+          {
+            key: 'items',
+            label: 'Items',
+            icon: icons.product,
+            visible:
+              isModuleVisible('items') && hasAnyPageAccess(PAGE_NAMES.ITEMS),
+            onPress: () => navigate('Items', undefined),
+          },
+          {
+            key: 'stockAdjustments',
+            label: 'Stock adjustments',
+            icon: icons.itemJournal,
+            visible:
+              isModuleVisible('inventory') &&
+              hasAnyPageAccess(PAGE_NAMES.ITEM_JOURNAL),
+            onPress: () => navigate('ItemJournal', undefined),
+          },
+          {
+            key: 'openingBalance',
+            label: 'Opening balance',
+            icon: icons.itemJournal,
+            visible:
+              isModuleVisible('inventory') &&
+              hasAnyPageAccess(PAGE_NAMES.ITEM_JOURNAL),
+            onPress: () => navigate('OpeningBalanceJournal', undefined),
+          },
+        ],
       },
       {
-        key: 'reports',
-        label: 'Reports',
-        icon: icons.reports,
-        visible: isModuleVisible('reports') && hasAnyPageAccess(PAGE_NAMES.REPORTS),
-        onPress: () => navigate('Reports', undefined),
-      },
-      {
-        key: 'items',
-        label: 'Items',
-        icon: icons.product,
-        visible: isModuleVisible('items') && hasAnyPageAccess(PAGE_NAMES.ITEMS),
-        onPress: () => navigate('Items', undefined),
-      },
-      {
-        key: 'stockAdjustments',
-        label: 'Stock adjustments',
-        icon: icons.itemJournal,
-        visible:
-          isModuleVisible('inventory') &&
-          hasAnyPageAccess(PAGE_NAMES.ITEM_JOURNAL),
-        onPress: () => navigate('ItemJournal', undefined),
-      },
-      {
-        key: 'customers',
-        label: 'Customers',
-        icon: icons.profile,
-        visible:
-          isModuleVisible('customers') &&
-          hasAnyPageAccess(PAGE_NAMES.CUSTOMER_MANAGEMENT),
-        onPress: () => navigate('Customers', undefined),
-      },
-      {
-        key: 'suppliers',
-        label: 'Suppliers',
-        icon: icons.company,
-        visible:
-          isModuleVisible('suppliers') &&
-          hasAnyPageAccess(PAGE_NAMES.SUPPLIERS),
-        onPress: () => navigate('Suppliers', undefined),
-      },
-      {
-        key: 'purchases',
-        label: 'Purchases',
-        icon: icons.cart,
-        visible:
-          isModuleVisible('purchases') &&
-          hasAnyPageAccess(PAGE_NAMES.PURCHASES),
-        onPress: () => navigate('Purchases', undefined),
+        key: 'people',
+        title: 'Customers & suppliers',
+        rows: [
+          {
+            key: 'customers',
+            label: 'Customers',
+            icon: icons.profile,
+            visible:
+              isModuleVisible('customers') &&
+              hasAnyPageAccess(PAGE_NAMES.CUSTOMER_MANAGEMENT),
+            onPress: () => navigate('Customers', undefined),
+          },
+          {
+            key: 'suppliers',
+            label: 'Suppliers',
+            icon: icons.company,
+            visible:
+              isModuleVisible('suppliers') &&
+              hasAnyPageAccess(PAGE_NAMES.SUPPLIERS),
+            onPress: () => navigate('Suppliers', undefined),
+          },
+          {
+            key: 'purchases',
+            label: 'Purchases',
+            icon: icons.cart,
+            visible:
+              isModuleVisible('purchases') &&
+              hasAnyPageAccess(PAGE_NAMES.PURCHASES),
+            onPress: () => navigate('Purchases', undefined),
+          },
+        ],
       },
       {
         key: 'expenses',
-        label: 'Expenses',
-        icon: icons.coupon,
-        visible:
-          isModuleVisible('expenses') && hasAnyPageAccess(PAGE_NAMES.EXPENSES),
-        onPress: () => navigate('Expenses', undefined),
-      },
-      {
-        key: 'restaurant',
-        label: 'Restaurant',
-        icon: icons.tray,
-        visible:
-          isModuleVisible('restaurant') &&
-          RESTAURANT_MODULE_ENTRY_PAGE_NAMES.some(p => hasAnyPageAccess(p)),
-        onPress: () => navigate('RestaurantHub', undefined),
-      },
-      {
-        key: 'bankAccounts',
-        label: constants.screens.bankAccounts,
-        icon: icons.wallet,
-        visible:
-          isModuleVisible('payments') &&
-          hasAnyPageAccess(PAGE_NAMES.BANK_ACCOUNT_MANAGEMENT),
-        onPress: () => navigate('BankAccounts', undefined),
-      },
-      {
-        key: 'loans',
-        label: constants.screens.loans,
-        icon: icons.wallet,
-        visible:
-          isModuleVisible('payments') &&
-          hasAnyPageAccess(PAGE_NAMES.LOAN_REGISTRATION),
-        onPress: () => navigate('Loans', undefined),
-      },
-      {
-        key: 'prepayments',
-        label: constants.screens.prepayments,
-        icon: icons.coupon,
-        visible:
-          isModuleVisible('payments') &&
-          hasAnyPageAccess(PAGE_NAMES.PREPAYMENTS),
-        onPress: () => navigate('Prepayments', undefined),
+        title: 'Expenses',
+        rows: [
+          {
+            key: 'expenses',
+            label: 'Expenses',
+            icon: icons.coupon,
+            visible:
+              isModuleVisible('expenses') &&
+              hasAnyPageAccess(PAGE_NAMES.EXPENSES),
+            onPress: () => navigate('Expenses', undefined),
+          },
+        ],
       },
       {
         key: 'payments',
-        label: constants.screens.payments,
-        icon: icons.wallet,
-        visible:
-          isModuleVisible('payments') &&
-          hasAnyPageAccess(PAGE_NAMES.PAYMENTS),
-        onPress: () => navigate('Payments', undefined),
+        title: 'Payments & banking',
+        rows: [
+          {
+            key: 'bankAccounts',
+            label: constants.screens.bankAccounts,
+            icon: icons.wallet,
+            visible:
+              isModuleVisible('payments') &&
+              hasAnyPageAccess(PAGE_NAMES.BANK_ACCOUNT_MANAGEMENT),
+            onPress: () => navigate('BankAccounts', undefined),
+          },
+          {
+            key: 'payments',
+            label: constants.screens.payments,
+            icon: icons.wallet,
+            visible:
+              isModuleVisible('payments') &&
+              hasAnyPageAccess(PAGE_NAMES.PAYMENTS),
+            onPress: () => navigate('Payments', undefined),
+          },
+          {
+            key: 'prepayments',
+            label: constants.screens.prepayments,
+            icon: icons.coupon,
+            visible:
+              isModuleVisible('payments') &&
+              hasAnyPageAccess(PAGE_NAMES.PREPAYMENTS),
+            onPress: () => navigate('Prepayments', undefined),
+          },
+          {
+            key: 'loans',
+            label: constants.screens.loans,
+            icon: icons.wallet,
+            visible:
+              isModuleVisible('payments') &&
+              hasAnyPageAccess(PAGE_NAMES.LOAN_REGISTRATION),
+            onPress: () => navigate('Loans', undefined),
+          },
+          {
+            key: 'loanRepayments',
+            label: constants.screens.loanRepayments,
+            icon: icons.wallet,
+            visible:
+              isModuleVisible('payments') &&
+              hasAnyPageAccess(PAGE_NAMES.LOAN_REPAYMENT),
+            onPress: () => navigate('LoanRepayments', undefined),
+          },
+        ],
       },
       {
-        key: 'loanRepayments',
-        label: constants.screens.loanRepayments,
-        icon: icons.wallet,
-        visible:
-          isModuleVisible('payments') &&
-          hasAnyPageAccess(PAGE_NAMES.LOAN_REPAYMENT),
-        onPress: () => navigate('LoanRepayments', undefined),
+        key: 'restaurant',
+        title: 'Restaurant',
+        rows: [
+          {
+            key: 'restaurant',
+            label: 'Restaurant',
+            icon: icons.tray,
+            visible:
+              isModuleVisible('restaurant') &&
+              RESTAURANT_MODULE_ENTRY_PAGE_NAMES.some(p =>
+                hasAnyPageAccess(p),
+              ),
+            onPress: () => navigate('RestaurantHub', undefined),
+          },
+        ],
       },
       {
-        key: 'userManagement',
-        label: constants.screens.userManagement,
-        icon: icons.profile,
-        visible:
-          isModuleVisible('userManagement') &&
-          hasAnyPageAccess(PAGE_NAMES.USER_MANAGEMENT),
-        onPress: () => navigate('UserManagement', undefined),
+        key: 'company',
+        title: 'Company',
+        rows: [
+          {
+            key: 'companyBilling',
+            label: 'Company & Billing',
+            icon: icons.company,
+            visible: true,
+            onPress: () => navigate('BusinessDetails', undefined),
+          },
+          {
+            key: 'userManagement',
+            label: constants.screens.userManagement,
+            icon: icons.profile,
+            visible:
+              isModuleVisible('userManagement') &&
+              hasAnyPageAccess(PAGE_NAMES.USER_MANAGEMENT),
+            onPress: () => navigate('UserManagement', undefined),
+          },
+        ],
       },
       {
-        key: 'settings',
-        label: 'Settings',
-        icon: icons.setting,
-        visible: true,
-        onPress: () => navigate('Settings', undefined),
+        key: 'app',
+        title: 'App',
+        rows: [
+          {
+            key: 'settings',
+            label: 'Settings',
+            icon: icons.setting,
+            visible: true,
+            onPress: () => navigate('Settings', undefined),
+          },
+          {
+            key: 'support',
+            label: 'Help & Support',
+            icon: icons.help,
+            visible: true,
+            onPress: () => {
+              void handleSupportPress();
+            },
+          },
+          {
+            key: 'logout',
+            label: 'Logout',
+            icon: icons.logout,
+            visible: true,
+            onPress: () => {
+              logout();
+            },
+          },
+        ],
       },
-      {
-        key: 'support',
-        label: 'Help & Support',
-        icon: icons.help,
-        visible: true,
-        onPress: async () => {
-          const normalizeDigits = (raw: string) => raw.replace(/[^\d]/g, '');
+    ];
 
-          const callNumber = async (raw: string) => {
-            const telUrl = `tel:${raw}`;
-            const canOpen = await Linking.canOpenURL(telUrl);
-            if (!canOpen) {
-              Toast.show({
-                type: 'error',
-                text1: 'Unable to place call',
-                text2: `This device cannot call ${raw}.`,
-              });
-              return;
-            }
-            await Linking.openURL(telUrl);
-          };
-
-          const openWhatsApp = async (raw: string) => {
-            const digits = normalizeDigits(raw);
-            const waUrl = `https://wa.me/${digits}`;
-            const canOpen = await Linking.canOpenURL(waUrl);
-            if (!canOpen) {
-              Toast.show({
-                type: 'error',
-                text1: 'Unable to open WhatsApp',
-                text2: `Could not open WhatsApp for ${raw}.`,
-              });
-              return;
-            }
-            await Linking.openURL(waUrl);
-          };
-
-          Alert.alert(
-            'Help & Support',
-            'Choose support channel:',
-            [
-              {
-                text: `Call ${SUPPORT_NUMBERS[0]}`,
-                onPress: () => {
-                  void callNumber(SUPPORT_NUMBERS[0]);
-                },
-              },
-              {
-                text: `WhatsApp ${SUPPORT_NUMBERS[0]}`,
-                onPress: () => {
-                  void openWhatsApp(SUPPORT_NUMBERS[0]);
-                },
-              },
-              {
-                text: `Call ${SUPPORT_NUMBERS[1]}`,
-                onPress: () => {
-                  void callNumber(SUPPORT_NUMBERS[1]);
-                },
-              },
-              {
-                text: `WhatsApp ${SUPPORT_NUMBERS[1]}`,
-                onPress: () => {
-                  void openWhatsApp(SUPPORT_NUMBERS[1]);
-                },
-              },
-              { text: 'Cancel', style: 'cancel' },
-            ],
-            { cancelable: true },
-          );
-        },
-      },
-      {
-        key: 'logout',
-        label: 'Logout',
-        icon: icons.logout,
-        visible: true,
-        onPress: () => {
-          logout();
-        },
-      },
-    ],
-    [isModuleVisible, hasAnyPageAccess, logout],
-  );
-
-  const visibleRows = rows.filter(r => r.visible);
+    return sectionDefs
+      .map(section => ({
+        ...section,
+        rows: section.rows.filter(row => row.visible),
+      }))
+      .filter(section => section.rows.length > 0);
+  }, [isModuleVisible, hasAnyPageAccess, logout, handleSupportPress]);
 
   return (
     <ScrollView
@@ -873,34 +951,58 @@ const MoreMenu: React.FC = () => {
         </Pressable>
       </Modal>
 
-      <View style={styles.listWrap}>
-        {visibleRows.map((row, index) => (
-          <View key={row.key}>
-            <Pressable
-              {...quickPressProps}
-              style={({ pressed }) => [
-                styles.row,
-                pressed && styles.rowPressed,
-              ]}
-              onPress={row.onPress}
-              android_ripple={
-                Platform.OS === 'android'
-                  ? { color: 'rgba(0,0,0,0.1)' }
-                  : undefined
-              }>
-              <Image
-                source={row.icon as any}
-                style={[styles.rowIcon, { tintColor: colors.textSecondary }]}
-              />
-              <Text style={[styles.rowLabel, { color: colors.textPrimary }]}>
-                {row.label}
-              </Text>
-            </Pressable>
-            {index < visibleRows.length - 1 ? (
-              <View
-                style={[styles.divider, { backgroundColor: colors.border }]}
-              />
-            ) : null}
+      <View style={styles.menuSections}>
+        {menuSections.map(section => (
+          <View key={section.key} style={styles.sectionBlock}>
+            <Text
+              style={[styles.sectionTitle, {color: colors.textSecondary}]}>
+              {section.title}
+            </Text>
+            <View
+              style={[
+                styles.sectionCard,
+                {
+                  backgroundColor: colors.card,
+                  borderColor: colors.border,
+                },
+              ]}>
+              {section.rows.map((row, index) => (
+                <View key={row.key}>
+                  <Pressable
+                    {...quickPressProps}
+                    style={({pressed}) => [
+                      styles.row,
+                      pressed && styles.rowPressed,
+                    ]}
+                    onPress={row.onPress}
+                    android_ripple={
+                      Platform.OS === 'android'
+                        ? {color: 'rgba(0,0,0,0.1)'}
+                        : undefined
+                    }>
+                    <Image
+                      source={row.icon as any}
+                      style={[
+                        styles.rowIcon,
+                        {tintColor: colors.textSecondary},
+                      ]}
+                    />
+                    <Text
+                      style={[styles.rowLabel, {color: colors.textPrimary}]}>
+                      {row.label}
+                    </Text>
+                  </Pressable>
+                  {index < section.rows.length - 1 ? (
+                    <View
+                      style={[
+                        styles.divider,
+                        {backgroundColor: colors.border},
+                      ]}
+                    />
+                  ) : null}
+                </View>
+              ))}
+            </View>
           </View>
         ))}
       </View>
@@ -1031,18 +1133,34 @@ const styles = StyleSheet.create({
     height: 22,
     resizeMode: 'contain',
   },
-  listWrap: {
-    marginHorizontal: 0,
+  menuSections: {
+    paddingHorizontal: SIZES.padding,
+    gap: 20,
+  },
+  sectionBlock: {
+    gap: 8,
+  },
+  sectionTitle: {
+    ...FONTS.body5,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    paddingHorizontal: 2,
+  },
+  sectionCard: {
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
   },
   divider: {
     height: StyleSheet.hairlineWidth,
-    alignSelf: 'stretch',
+    marginLeft: SIZES.padding + 24 + 16,
   },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 18,
-    paddingHorizontal: SIZES.padding,
+    paddingVertical: 15,
+    paddingHorizontal: 14,
   },
   rowPressed: {
     opacity: 0.65,

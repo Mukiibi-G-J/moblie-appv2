@@ -14,10 +14,20 @@ import { useRoute, useNavigation } from '@react-navigation/native';
 import { resendOtp, verifyOtp } from '../../services/auth.services';
 import Toast from 'react-native-toast-message';
 import { getEmail, setVerifiedEmail } from '../../utils/tenant';
-import { useAppContext } from '../../context/Store';
+import { useAppContext, AppContextType } from '../../context/Store';
 import { useTheme } from '../../context/ThemeContext';
 import { radii } from '../../design-system/theme';
 import type { AxiosError } from 'axios';
+import { jwtDecode } from 'jwt-decode';
+import { DecodedToken } from '../../types/auth';
+import { shouldOfferRestaurantPinFromToken } from '../../utils/restaurantPinOffer';
+import { getRestaurantPinStatus } from '../../services/restaurantPinApi';
+import {
+    setPinSetupPending,
+    RESTAURANT_SHOW_PIN_SETUP_IMMEDIATE_KEY,
+} from '../../storage/restaurantDeviceStorage';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LOGIN_DRAFT_PASSWORD } from '../../utils/loginCredentials';
 
 const RESEND_TIMER_SECONDS = 30;
 const OTP_LENGTH = 6;
@@ -30,7 +40,7 @@ const Otp = () => {
         (route.params as { email?: string } | undefined)?.email?.trim() || '';
     const [email, setEmail] = useState(routeEmail);
     const navigation = useNavigation();
-    const ctx = useAppContext();
+    const ctx = useAppContext() as AppContextType | null;
 
     const [otpCode, setOtpCode] = useState('');
     const [isTimerActive, setIsTimerActive] = useState(false);
@@ -136,16 +146,54 @@ const Otp = () => {
         setSubmitting(true);
         try {
             const response = await verifyOtp(email, otpCode);
-            if (response.status === 200) {
-                await setVerifiedEmail(true);
-                await ctx?.logout();
-                Toast.show({
-                    text1: 'Account verified',
-                    text2: 'Sign in with your email and password.',
-                    type: 'success',
-                });
-                navigation.navigate('SignIn' as never);
+            const access = response.data?.access;
+            const refresh = response.data?.refresh;
+
+            if (response.status !== 200 || !access || !refresh) {
+                throw new Error('Missing session tokens after verification');
             }
+
+            await ctx?.loginWithTokens(access, refresh);
+            await setVerifiedEmail(true);
+            await AsyncStorage.removeItem(LOGIN_DRAFT_PASSWORD);
+
+            const dec = jwtDecode(access) as DecodedToken;
+            try {
+                if (
+                    shouldOfferRestaurantPinFromToken(
+                        dec.role_center_modules,
+                        dec.enabled_modules,
+                        dec.authority,
+                    )
+                ) {
+                    const status = await getRestaurantPinStatus(access);
+                    if (status.eligible && (!status.has_pin || status.pin_expired)) {
+                        const willShowBranchPicker =
+                            dec.enable_multiple_branches === true &&
+                            dec.can_switch_branch !== false;
+                        const branchPendingRaw = await AsyncStorage.getItem(
+                            'branch.branchSelectionPending',
+                        );
+                        const branchPending = branchPendingRaw === '1';
+                        if (willShowBranchPicker && branchPending) {
+                            await setPinSetupPending(true);
+                        } else {
+                            await AsyncStorage.setItem(
+                                RESTAURANT_SHOW_PIN_SETUP_IMMEDIATE_KEY,
+                                '1',
+                            );
+                        }
+                    }
+                }
+            } catch {
+                /* non-fatal */
+            }
+
+            Toast.show({
+                text1: 'Account verified',
+                text2: 'Welcome! Taking you to your dashboard…',
+                type: 'success',
+            });
         } catch (err: unknown) {
             const ax = err as AxiosError<{ message?: string }>;
             const msg =

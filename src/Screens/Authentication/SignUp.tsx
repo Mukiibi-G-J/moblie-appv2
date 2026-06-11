@@ -15,12 +15,12 @@ import FormInput2 from "../../Components/FormInput2";
 import { COLORS, FONTS, icons } from "../../constants";
 import { useTheme } from "../../context/ThemeContext";
 import utils from "../../utils/utils";
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import CustomPhoneInput, {
     UGANDA_DIAL_CODE,
 } from "../../Components/CustomPhoneInput";
 import Toast from "react-native-toast-message";
-import { setTenant } from "../../utils/tenant";
+import { seedLoginCredentialsAfterSignup } from "../../utils/loginCredentials";
 import {
     savePendingCompanyCreation,
     clearPendingCompanyCreation,
@@ -39,6 +39,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 /** Primary CTA — match Login Continue / Sign in */
 const SIGNUP_PRIMARY = "#0b5cff";
+const COMPANY_VALIDATION_DEBOUNCE_MS = 400;
 
 const ORG_SIZE_OPTIONS = [
     { label: "Solo", value: "solo" },
@@ -120,7 +121,11 @@ const SignUp = ({ navigation }) => {
     const [businessObjectiveId, setBusinessObjectiveId] = useState("1");
 
     const [companyValidationMessage, setCompanyValidationMessage] = useState("");
+    const [companyValidationErrors, setCompanyValidationErrors] = useState<string[]>([]);
     const [isCompanyNameValid, setIsCompanyNameValid] = useState(false);
+    const [isCheckingCompanyName, setIsCheckingCompanyName] = useState(false);
+    const latestCompanyNameRef = useRef("");
+    const validationInFlightRef = useRef(0);
     const companyValidateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const [phase, setPhase] = useState<"idle" | "submitting" | "provisioning">("idle");
@@ -152,42 +157,121 @@ const SignUp = ({ navigation }) => {
         };
     }, []);
 
-    useEffect(() => {
-        const name = form.company_name.trim();
-        if (companyValidateTimer.current) {
-            clearTimeout(companyValidateTimer.current);
-        }
-        if (name.length < 3) {
-            setCompanyValidationMessage("");
+    const applyCompanyValidation = useCallback(async (value: string) => {
+        const trimmed = value.trim();
+        if (!trimmed || trimmed.length < 3) {
             setIsCompanyNameValid(false);
+            setCompanyValidationMessage("");
+            setCompanyValidationErrors([]);
             return;
         }
-        if (!isValidTenantSlug(name)) {
+        if (!isValidTenantSlug(trimmed)) {
+            setIsCompanyNameValid(false);
             setCompanyValidationMessage(
                 "Use only letters, numbers, and underscores (no spaces). Minimum 3 characters.",
             );
-            setIsCompanyNameValid(false);
+            setCompanyValidationErrors([]);
             return;
         }
-        companyValidateTimer.current = setTimeout(async () => {
-            try {
-                const { data } = await validateCompanyNameApi(name);
-                setCompanyValidationMessage(data.message || "");
-                setIsCompanyNameValid(data.isValid === true);
-            } catch (e: any) {
-                const msg =
-                    e?.response?.data?.message ||
-                    "Unable to validate company name. Try again.";
-                setCompanyValidationMessage(msg);
-                setIsCompanyNameValid(false);
+
+        validationInFlightRef.current += 1;
+        setIsCheckingCompanyName(true);
+        setIsCompanyNameValid(false);
+        setCompanyValidationMessage("");
+        setCompanyValidationErrors([]);
+
+        try {
+            const { data } = await validateCompanyNameApi(trimmed);
+            if (trimmed !== latestCompanyNameRef.current) {
+                return;
             }
-        }, 450);
+            setIsCompanyNameValid(data.isValid === true);
+            setCompanyValidationMessage(data.message || "");
+            setCompanyValidationErrors(data.errors || []);
+        } catch (e: any) {
+            if (trimmed !== latestCompanyNameRef.current) {
+                return;
+            }
+            const body = e?.response?.data;
+            if (
+                body &&
+                typeof body === "object" &&
+                typeof body.message === "string"
+            ) {
+                setIsCompanyNameValid(body.isValid === true);
+                setCompanyValidationMessage(body.message);
+                setCompanyValidationErrors(
+                    Array.isArray(body.errors) ? body.errors : [],
+                );
+                return;
+            }
+            const msg =
+                e?.customMessage ||
+                (e?.message === "Network Error"
+                    ? "Cannot reach the server. Check api.config.ts and that Django is running."
+                    : null) ||
+                "Unable to validate company name. Try again.";
+            setIsCompanyNameValid(false);
+            setCompanyValidationMessage(msg);
+            setCompanyValidationErrors([]);
+        } finally {
+            validationInFlightRef.current -= 1;
+            if (validationInFlightRef.current === 0) {
+                setIsCheckingCompanyName(false);
+            }
+        }
+    }, []);
+
+    const scheduleCompanyValidation = useCallback(
+        (value: string) => {
+            const trimmed = value.trim();
+            latestCompanyNameRef.current = trimmed;
+
+            if (companyValidateTimer.current) {
+                clearTimeout(companyValidateTimer.current);
+                companyValidateTimer.current = null;
+            }
+
+            if (!trimmed) {
+                setIsCompanyNameValid(false);
+                setCompanyValidationMessage("");
+                setCompanyValidationErrors([]);
+                setIsCheckingCompanyName(false);
+                return;
+            }
+
+            if (trimmed.length < 3) {
+                setIsCompanyNameValid(false);
+                setCompanyValidationMessage("");
+                setCompanyValidationErrors([]);
+                setIsCheckingCompanyName(false);
+                return;
+            }
+
+            if (!isValidTenantSlug(trimmed)) {
+                setIsCompanyNameValid(false);
+                setCompanyValidationMessage(
+                    "Use only letters, numbers, and underscores (no spaces). Minimum 3 characters.",
+                );
+                setCompanyValidationErrors([]);
+                setIsCheckingCompanyName(false);
+                return;
+            }
+
+            companyValidateTimer.current = setTimeout(() => {
+                void applyCompanyValidation(trimmed);
+            }, COMPANY_VALIDATION_DEBOUNCE_MS);
+        },
+        [applyCompanyValidation],
+    );
+
+    useEffect(() => {
         return () => {
             if (companyValidateTimer.current) {
                 clearTimeout(companyValidateTimer.current);
             }
         };
-    }, [form.company_name]);
+    }, []);
 
     function buildCompanyPhone(): string {
         const digits = phoneNumber.replace(/\D/g, "");
@@ -200,6 +284,7 @@ const SignUp = ({ navigation }) => {
             !!form.password &&
             !!form.company_name.trim() &&
             isCompanyNameValid &&
+            !isCheckingCompanyName &&
             !errors.emailError &&
             !errors.passwordError
         );
@@ -312,14 +397,14 @@ const SignUp = ({ navigation }) => {
                 },
             });
 
-            await setTenant(schemaName, form.email.trim());
+            await seedLoginCredentialsAfterSignup(schemaName, form.email.trim());
             await clearPendingCompanyCreation();
             Toast.show({
                 text1: "Company created",
                 text2: "Sign in with your email and password.",
                 type: "success",
             });
-            navigation.navigate("SignIn");
+            navigation.replace("SignIn");
         } catch (error: any) {
             const taskStatus = error?.taskStatus as { state?: string } | undefined;
             if (taskStatus?.state === "FAILURE") {
@@ -368,8 +453,11 @@ const SignUp = ({ navigation }) => {
             value: form.company_name,
             autoCompleteType: "off" as const,
             errorMsg: errors.companyNameError,
-            onChange: (value: string) =>
-                setForm({ ...form, company_name: value.replace(/\s/g, "") }),
+            onChange: (value: string) => {
+                const cleaned = value.replace(/\s/g, "");
+                setForm({ ...form, company_name: cleaned });
+                scheduleCompanyValidation(cleaned);
+            },
         },
         {
             label: "Email",
@@ -534,16 +622,45 @@ const SignUp = ({ navigation }) => {
                                     containerStyle={styles.inputNoExtraBottom}
                                 />
                                 {form.company_name.trim().length >= 3 ? (
-                                    <Text
-                                        style={{
-                                            color: isCompanyNameValid ? COLORS.success : COLORS.red,
-                                            ...FONTS.body4,
-                                            marginTop: 8,
-                                        }}
-                                    >
-                                        {companyValidationMessage ||
-                                            (isCompanyNameValid ? "Name looks good" : "")}
-                                    </Text>
+                                    <View style={{ marginTop: 8 }}>
+                                        {isCheckingCompanyName ? (
+                                            <Text
+                                                style={{
+                                                    color: colors.textSecondary,
+                                                    ...FONTS.body4,
+                                                }}
+                                            >
+                                                Checking…
+                                            </Text>
+                                        ) : null}
+                                        {companyValidationMessage && !isCheckingCompanyName ? (
+                                            <Text
+                                                style={{
+                                                    color: isCompanyNameValid
+                                                        ? COLORS.success
+                                                        : COLORS.red,
+                                                    ...FONTS.body4,
+                                                }}
+                                            >
+                                                {companyValidationMessage}
+                                            </Text>
+                                        ) : null}
+                                        {companyValidationErrors.length > 0 &&
+                                        !isCheckingCompanyName ? (
+                                            companyValidationErrors.map((err, index) => (
+                                                <Text
+                                                    key={`${err}-${index}`}
+                                                    style={{
+                                                        color: COLORS.red,
+                                                        ...FONTS.body4,
+                                                        marginTop: 4,
+                                                    }}
+                                                >
+                                                    • {err}
+                                                </Text>
+                                            ))
+                                        ) : null}
+                                    </View>
                                 ) : null}
                             </View>
 

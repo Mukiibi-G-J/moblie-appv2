@@ -45,6 +45,7 @@ import {
   settleRestaurantOrder,
 } from '../../services/restaurantApi';
 import PrintService from '../../services/PrintService';
+import {fetchCompanyInfoForReceipt} from '../../utils/companyReceiptInfo';
 import {
   receiptLabelFromPostedPayload,
   restaurantOrderToReceiptData,
@@ -989,9 +990,11 @@ export default function RestaurantPOS() {
       const receiptId = receiptLabelFromPostedPayload(payload, snap.no);
 
       if (shouldPrint) {
+        const companyInfo = await fetchCompanyInfoForReceipt();
         const receiptData = restaurantOrderToReceiptData(snap, {
           username: auth.username || auth.user_id || 'Staff',
           receiptIdOverride: receiptId,
+          companyInfo,
         });
         const printed =
           await PrintService.getInstance().printReceipt(receiptData);

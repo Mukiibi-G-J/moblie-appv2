@@ -1,8 +1,8 @@
-import {createAxiosInstance} from '../axios/axios';
+import {createAnonymousAxiosInstance} from '../axios/axios';
 
-/** Always use public API host — no tenant subdomain or AsyncStorage tenant. */
+/** Public onboarding endpoints — no auth token or branch headers. */
 function publicApi() {
-  return createAxiosInstance(undefined);
+  return createAnonymousAxiosInstance(undefined);
 }
 
 export type CompanySubscriptionPayload = {
@@ -84,6 +84,9 @@ export async function validateCompanyNameApi(companyName: string) {
   return api.post<CompanyValidationResponse>(
     '/api/company/validate-company-name/',
     {company_name: companyName.trim()},
+    {
+      validateStatus: status => status >= 200 && status < 500,
+    },
   );
 }
 

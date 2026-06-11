@@ -9,7 +9,6 @@ import {
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import Toast from 'react-native-toast-message';
 import {FONTS, SIZES, icons} from '../../constants';
 import {useTheme} from '../../context/ThemeContext';
 import {useTabContext} from '../../context/Store';
@@ -30,14 +29,6 @@ const ItemsMenu = () => {
   const insets = useSafeAreaInsets();
   const {canRead} = usePermissions();
   const {selectedTab, setSelectedTab} = useTabContext();
-
-  const showComingSoon = (label: string) => {
-    Toast.show({
-      type: 'info',
-      text1: label,
-      text2: 'This section is coming soon.',
-    });
-  };
 
   const menuItems = useMemo<MenuItem[]>(
     () => [
@@ -62,8 +53,8 @@ const ItemsMenu = () => {
       {
         key: 'units',
         label: 'Units',
-        visible: true,
-        onPress: () => showComingSoon('Units'),
+        visible: canRead(PAGE_NAMES.ITEMS),
+        onPress: () => navigation.navigate('UnitsOfMeasure' as never),
       },
     ],
     [canRead, navigation],

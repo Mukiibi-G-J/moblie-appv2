@@ -124,6 +124,12 @@ const Expenses = () => {
       sheetSectionTitle: { color: colors.textPrimary },
       filterChip: { backgroundColor: colors.screenMuted },
       filterChipText: { color: colors.textSecondary },
+      filterSearchRow: {
+        borderColor: colors.border,
+        backgroundColor: colors.inputBackground,
+      },
+      filterSearchInput: { color: colors.textPrimary },
+      filterSearchIcon: { tintColor: colors.iconMuted },
       loadingText: { color: colors.textSecondary },
       emptyIconWrap: { backgroundColor: colors.screenMuted },
       emptyIcon: { tintColor: colors.iconMuted },
@@ -186,7 +192,33 @@ const Expenses = () => {
   );
   const [totalCount, setTotalCount] = useState(0);
   const [showFilters, setShowFilters] = useState(false);
+  const [expenseTypeFilterSearch, setExpenseTypeFilterSearch] = useState('');
+  const [paymentMethodFilterSearch, setPaymentMethodFilterSearch] = useState('');
   const searchTimeoutRef = useRef < NodeJS.Timeout | null > (null);
+
+  const filteredExpenseTypes = useMemo(() => {
+    const q = expenseTypeFilterSearch.trim().toLowerCase();
+    if (!q) {
+      return expenseTypes;
+    }
+    return expenseTypes.filter(type => {
+      const name = type.name.toLowerCase();
+      const code = type.code?.toLowerCase() ?? '';
+      return name.includes(q) || code.includes(q);
+    });
+  }, [expenseTypes, expenseTypeFilterSearch]);
+
+  const filteredPaymentMethods = useMemo(() => {
+    const q = paymentMethodFilterSearch.trim().toLowerCase();
+    if (!q) {
+      return paymentMethods;
+    }
+    return paymentMethods.filter(method => {
+      const description = (method.description || '').toLowerCase();
+      const code = (method.code || '').toLowerCase();
+      return description.includes(q) || code.includes(q);
+    });
+  }, [paymentMethods, paymentMethodFilterSearch]);
 
   // Update date range when filter changes
   useEffect(() => {
@@ -655,6 +687,8 @@ const Expenses = () => {
                 setStatusFilter('Open');
                 setSelectedExpenseType(null);
                 setSelectedPaymentMethod(null);
+                setExpenseTypeFilterSearch('');
+                setPaymentMethodFilterSearch('');
                 setPage(1);
               }}
               style={[styles.clearFiltersButton, t.clearFiltersBtn]}>
@@ -716,6 +750,21 @@ const Expenses = () => {
           {expenseTypes.length > 0 && (
             <View style={[styles.bottomSheetSection, t.sheetSection]}>
               <Text style={[styles.bottomSheetSectionTitle, t.sheetSectionTitle]}>Expense Type</Text>
+              <View style={[styles.filterSearchRow, t.filterSearchRow]}>
+                <Image
+                  source={icons.search as any}
+                  style={[styles.filterSearchIcon, t.filterSearchIcon]}
+                />
+                <TextInput
+                  style={[styles.filterSearchInput, t.filterSearchInput]}
+                  placeholder="Search expense types…"
+                  placeholderTextColor={colors.placeholder}
+                  value={expenseTypeFilterSearch}
+                  onChangeText={setExpenseTypeFilterSearch}
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                />
+              </View>
               <View style={styles.filterChipsContainer}>
                 <TouchableOpacity
                   style={[
@@ -736,7 +785,7 @@ const Expenses = () => {
                     All Types
                   </Text>
                 </TouchableOpacity>
-                {expenseTypes.map(type => (
+                {filteredExpenseTypes.map(type => (
                   <TouchableOpacity
                     key={type.id}
                     style={[
@@ -760,6 +809,11 @@ const Expenses = () => {
                   </TouchableOpacity>
                 ))}
               </View>
+              {filteredExpenseTypes.length === 0 ? (
+                <Text style={[styles.filterEmptyHint, t.loadingText]}>
+                  No expense types match your search
+                </Text>
+              ) : null}
             </View>
           )}
 
@@ -767,6 +821,21 @@ const Expenses = () => {
           {paymentMethods.length > 0 && (
             <View style={[styles.bottomSheetSection, t.sheetSection]}>
               <Text style={[styles.bottomSheetSectionTitle, t.sheetSectionTitle]}>Payment Method</Text>
+              <View style={[styles.filterSearchRow, t.filterSearchRow]}>
+                <Image
+                  source={icons.search as any}
+                  style={[styles.filterSearchIcon, t.filterSearchIcon]}
+                />
+                <TextInput
+                  style={[styles.filterSearchInput, t.filterSearchInput]}
+                  placeholder="Search payment methods…"
+                  placeholderTextColor={colors.placeholder}
+                  value={paymentMethodFilterSearch}
+                  onChangeText={setPaymentMethodFilterSearch}
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                />
+              </View>
               <View style={styles.filterChipsContainer}>
                 <TouchableOpacity
                   style={[
@@ -787,7 +856,7 @@ const Expenses = () => {
                     All Methods
                   </Text>
                 </TouchableOpacity>
-                {paymentMethods.map(method => (
+                {filteredPaymentMethods.map(method => (
                   <TouchableOpacity
                     key={method.id}
                     style={[
@@ -811,6 +880,11 @@ const Expenses = () => {
                   </TouchableOpacity>
                 ))}
               </View>
+              {filteredPaymentMethods.length === 0 ? (
+                <Text style={[styles.filterEmptyHint, t.loadingText]}>
+                  No payment methods match your search
+                </Text>
+              ) : null}
             </View>
           )}
         </ScrollView>
@@ -836,7 +910,15 @@ const Expenses = () => {
             : 'No expenses available.'}
       </Text>
       {canCreate(PAGE_NAME) && !searchQuery.trim() ? (
-        <TouchableOpacity style={styles.emptyButton} onPress={handleCreate}>
+        <TouchableOpacity
+          style={styles.emptyButton}
+          onPress={handleCreate}
+          activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}>
+          <Image
+            source={icons.plus as any}
+            style={styles.emptyButtonIcon}
+            resizeMode="contain"
+          />
           <Text style={styles.emptyButtonText}>Create expense</Text>
         </TouchableOpacity>
       ) : null}
@@ -1112,6 +1194,29 @@ const styles = StyleSheet.create({
   filterChipTextActive: {
     color: COLORS.white,
   },
+  filterSearchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: SIZES.radius,
+    paddingHorizontal: 12,
+    marginBottom: SIZES.base,
+    minHeight: 42,
+  },
+  filterSearchIcon: {
+    width: 18,
+    height: 18,
+    marginRight: 8,
+  },
+  filterSearchInput: {
+    flex: 1,
+    fontSize: 15,
+    paddingVertical: 8,
+  },
+  filterEmptyHint: {
+    ...FONTS.body4,
+    marginTop: 4,
+  },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -1160,21 +1265,25 @@ const styles = StyleSheet.create({
   },
   emptyButton: {
     marginTop: SIZES.base * 2,
-    paddingHorizontal: SIZES.base * 3,
-    paddingVertical: SIZES.base * 1.5,
-    backgroundColor: COLORS.primary,
-    borderRadius: SIZES.radius,
-    shadowColor: COLORS.primary,
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    minHeight: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.primary2,
+  },
+  emptyButtonIcon: {
+    width: 18,
+    height: 18,
+    tintColor: COLORS.white,
   },
   emptyButtonText: {
-    ...FONTS.button,
     color: COLORS.white,
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 16,
+    fontWeight: '700',
   },
   footerLoader: {
     paddingVertical: SIZES.base,

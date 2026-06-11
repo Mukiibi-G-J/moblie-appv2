@@ -57,6 +57,7 @@ import {PAGE_NAMES} from '../../constants/pageNames';
 import {useTheme} from '../../context/ThemeContext';
 import SalesHistoryListItem, {
   SalesHistoryListItemData,
+  salesHistoryPaymentLabel,
 } from './SalesHistoryListItem';
 import SalesInvoiceStatusBadge from './SalesInvoiceStatusBadge';
 
@@ -1169,7 +1170,7 @@ const SalesHistory = () => {
               ) : null}
               <Row
                 label="Payment"
-                value={displayItem.payment_method_name || '—'}
+                value={salesHistoryPaymentLabel(displayItem)}
                 t={t}
               />
               {displayItem.user_name ? (

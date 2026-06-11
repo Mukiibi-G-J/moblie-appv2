@@ -77,6 +77,72 @@ type PurchaseLine = {
 
 type PurchaseAttachment = PurchaseInvoiceAttachmentDto;
 
+const parseDecimalInput = (text: string): number => {
+  const trimmed = text.trim().replace(/,/g, '');
+  if (!trimmed || trimmed === '.' || trimmed === ',') {
+    return 0;
+  }
+  const n = parseFloat(trimmed);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const formatAmountWithCommas = (
+  value: number,
+  hideZero = false,
+): string => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    return hideZero ? '' : '0';
+  }
+  if (hideZero && n === 0) {
+    return '';
+  }
+  return n.toLocaleString('en-US', {maximumFractionDigits: 0});
+};
+
+const formatCommaInput = (text: string): string => {
+  const cleanedText = text.replace(/[^0-9.]/g, '');
+  if (!cleanedText) {
+    return '';
+  }
+  const numericValue = parseFloat(cleanedText.replace(/,/g, ''));
+  if (!Number.isFinite(numericValue)) {
+    return cleanedText;
+  }
+  return numericValue.toLocaleString('en-US', {maximumFractionDigits: 0});
+};
+
+const formatLineNumericDisplay = (
+  value: number,
+  draft: string | undefined,
+  hideZero = false,
+  useCommas = false,
+): string => {
+  if (draft !== undefined) {
+    return draft;
+  }
+  if (useCommas) {
+    return formatAmountWithCommas(value, hideZero);
+  }
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    return hideZero ? '' : '0';
+  }
+  if (hideZero && n === 0) {
+    return '';
+  }
+  return String(n);
+};
+
+const normalizePurchaseLine = (line: PurchaseLine): PurchaseLine => ({
+  ...line,
+  quantity: parseDecimalInput(String(line.quantity ?? 1)) || 1,
+  unit_cost: parseDecimalInput(String(line.unit_cost ?? 0)),
+});
+
+const getLineDraftKey = (line: PurchaseLine, index: number): string =>
+  line.id != null ? `id-${line.id}` : `idx-${index}`;
+
 type PurchaseInvoice = {
   id?: number;
   system_id?: string;
@@ -242,6 +308,29 @@ const PurchaseCreation = () => {
     tracking: NonNullable<ItemDetailByNo['tracking_code']>;
   } | null>(null);
   const [openingSpecs, setOpeningSpecs] = useState(false);
+  const [lineDrafts, setLineDrafts] = useState<
+    Record<string, Partial<{quantity: string; unit_cost: string}>>
+  >({});
+
+  const clearLineDraft = useCallback(
+    (draftKey: string, field: 'quantity' | 'unit_cost') => {
+      setLineDrafts(prev => {
+        const entry = prev[draftKey];
+        if (!entry) {
+          return prev;
+        }
+        const nextEntry = {...entry};
+        delete nextEntry[field];
+        if (Object.keys(nextEntry).length === 0) {
+          const next = {...prev};
+          delete next[draftKey];
+          return next;
+        }
+        return {...prev, [draftKey]: nextEntry};
+      });
+    },
+    [],
+  );
 
   // Load payment methods
   useEffect(() => {
@@ -271,7 +360,7 @@ const PurchaseCreation = () => {
             );
             if (fullPurchase) {
               setPurchase(fullPurchase);
-              setLines(fullPurchase.lines || []);
+              setLines((fullPurchase.lines || []).map(normalizePurchaseLine));
               // Set vendor if available
               if (fullPurchase.vendor_name) {
                 setVendor({
@@ -287,7 +376,7 @@ const PurchaseCreation = () => {
           console.error('Error loading purchase details:', error);
         }
       } else if (existingPurchase?.lines) {
-        setLines(existingPurchase.lines);
+        setLines((existingPurchase.lines || []).map(normalizePurchaseLine));
         if (existingPurchase.vendor_name) {
           setVendor({
             id: existingPurchase.vendor || 0,
@@ -578,10 +667,24 @@ const PurchaseCreation = () => {
       }
     } catch (error: any) {
       console.error('Error creating/updating purchase:', error);
-      const errorMessage =
-        error?.response?.data?.vendor_name ||
-        error?.message ||
-        'Failed to save purchase';
+      const data = error?.response?.data;
+      let errorMessage =
+        error?.message || 'Failed to save purchase';
+      if (data?.global_dimension_1) {
+        errorMessage =
+          'Branch is required. Open the menu, select your branch, then try again.';
+      } else if (data?.vendor_name) {
+        errorMessage = Array.isArray(data.vendor_name)
+          ? data.vendor_name[0]
+          : data.vendor_name;
+      } else if (data?.detail) {
+        errorMessage = String(data.detail);
+      } else if (data && typeof data === 'object') {
+        const [field, value] = Object.entries(data)[0] ?? [];
+        if (field && value) {
+          errorMessage = Array.isArray(value) ? String(value[0]) : String(value);
+        }
+      }
       Alert.alert('Error', errorMessage);
     } finally {
       setIsLoading(false);
@@ -599,7 +702,7 @@ const PurchaseCreation = () => {
       item_name: item.item_name || item.name,
       item_system_id: item.system_id,
       quantity: 1,
-      unit_cost: parseFloat(item.unit_cost || item.unit_price || '0'),
+      unit_cost: parseDecimalInput(String(item.unit_cost ?? item.unit_price ?? 0)),
       unit_of_measure: item.base_unit_of_measure || 'PCS',
       description: item.item_name || item.name,
     };
@@ -615,24 +718,23 @@ const PurchaseCreation = () => {
 
     setIsSaving(true);
     try {
-      const linesData = updatedLines
-        .filter(line => !line.deleted)
-        .map(line => ({
-          id: line.id,
-          system_id: line.system_id,
-          item_no: line.item_no,
-          item_name: line.item_name,
-          item_system_id: line.item_system_id,
-          quantity: line.quantity,
-          unit_cost: line.unit_cost,
-          unit_of_measure: line.unit_of_measure || 'PCS',
-          description: line.description || line.item_name,
-          deleted: line.deleted || false,
-        }));
+      const linesData = updatedLines.map(line => ({
+        id: line.id,
+        system_id: line.system_id,
+        item_no: line.item_no,
+        item_name: line.item_name,
+        item_system_id: line.item_system_id,
+        quantity: line.quantity,
+        unit_cost: line.unit_cost,
+        unit_of_measure: line.unit_of_measure || 'PCS',
+        description: line.description || line.item_name,
+        deleted: line.deleted === true,
+      }));
 
       const updatedPurchase = await updatePurchaseLines(purchase.id, linesData);
       setPurchase(updatedPurchase);
-      setLines(updatedPurchase.lines || []);
+      setLines((updatedPurchase.lines || []).map(normalizePurchaseLine));
+      setLineDrafts({});
     } catch (error: any) {
       console.error('Error updating lines:', error);
       Alert.alert('Error', 'Failed to update purchase lines');
@@ -695,7 +797,7 @@ const PurchaseCreation = () => {
     }
   };
 
-  const handleDeleteLine = async (lineId: number) => {
+  const handleDeleteLine = async (index: number, line: PurchaseLine) => {
     if (!purchase.id) return;
 
     Alert.alert('Delete Item', 'Are you sure you want to remove this item?', [
@@ -704,28 +806,35 @@ const PurchaseCreation = () => {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          const updatedLines = lines.map(line =>
-            line.id === lineId ? {...line, deleted: true} : line,
-          );
-          await handleUpdateLines(updatedLines);
+          if (line.id) {
+            const updatedLines = lines.map(currentLine =>
+              currentLine.id === line.id
+                ? {...currentLine, deleted: true}
+                : currentLine,
+            );
+            await handleUpdateLines(updatedLines);
+          } else {
+            const updatedLines = lines.filter((_, i) => i !== index);
+            setLines(updatedLines);
+            setLineDrafts({});
+          }
         },
       },
     ]);
   };
 
-  const handleUpdateLine = async (
-    lineId: number,
+  const commitLineNumericField = async (
+    index: number,
     field: 'quantity' | 'unit_cost',
     value: number,
   ) => {
-    const updatedLines = lines.map(line =>
-      line.id === lineId ? {...line, [field]: value} : line,
+    const updatedLines = lines.map((currentLine, i) =>
+      i === index ? {...currentLine, [field]: value} : currentLine,
     );
     setLines(updatedLines);
-    // Auto-save on blur
-    setTimeout(() => {
-      handleUpdateLines(updatedLines);
-    }, 500);
+    if (purchase.id) {
+      await handleUpdateLines(updatedLines);
+    }
   };
 
   const handlePostPurchase = async () => {
@@ -954,6 +1063,28 @@ const PurchaseCreation = () => {
   const renderLineItem = (line: PurchaseLine, index: number) => {
     if (line.deleted) return null;
 
+    const draftKey = getLineDraftKey(line, index);
+    const quantityDisplay = formatLineNumericDisplay(
+      line.quantity,
+      lineDrafts[draftKey]?.quantity,
+      false,
+      true,
+    );
+    const unitCostDisplay = formatLineNumericDisplay(
+      line.unit_cost,
+      lineDrafts[draftKey]?.unit_cost,
+      true,
+      true,
+    );
+    const previewQuantity =
+      lineDrafts[draftKey]?.quantity !== undefined
+        ? parseDecimalInput(lineDrafts[draftKey].quantity!)
+        : line.quantity;
+    const previewUnitCost =
+      lineDrafts[draftKey]?.unit_cost !== undefined
+        ? parseDecimalInput(lineDrafts[draftKey].unit_cost!)
+        : line.unit_cost;
+
     return (
       <View key={line.id || index} style={[styles.lineItemCard, t.lineCard]}>
         <View style={styles.lineItemHeader}>
@@ -963,7 +1094,7 @@ const PurchaseCreation = () => {
           </View>
           {purchase.status !== 'Posted' && (
             <TouchableOpacity
-              onPress={() => line.id && handleDeleteLine(line.id)}
+              onPress={() => handleDeleteLine(index, line)}
               style={styles.deleteLineButton}>
               <Image
                 source={icons.delete_icon as ImageSourcePropType}
@@ -983,19 +1114,24 @@ const PurchaseCreation = () => {
                 t.lineInput,
                 purchase.status === 'Posted' && t.inputDisabled,
               ]}
-              value={line.quantity.toString()}
+              value={quantityDisplay}
               onChangeText={text => {
-                const qty = parseFloat(text) || 0;
-                if (line.id) {
-                  handleUpdateLine(line.id, 'quantity', qty);
-                } else {
-                  const updatedLines = lines.map((l, i) =>
-                    i === index ? {...l, quantity: qty} : l,
-                  );
-                  setLines(updatedLines);
-                }
+                const formatted = formatCommaInput(text);
+                setLineDrafts(prev => ({
+                  ...prev,
+                  [draftKey]: {...prev[draftKey], quantity: formatted},
+                }));
               }}
-              keyboardType="numeric"
+              onBlur={() => {
+                const raw =
+                  lineDrafts[draftKey]?.quantity ??
+                  formatLineNumericDisplay(line.quantity, undefined, false, true);
+                const qty = parseDecimalInput(raw);
+                const finalQty = qty > 0 ? qty : 1;
+                clearLineDraft(draftKey, 'quantity');
+                void commitLineNumericField(index, 'quantity', finalQty);
+              }}
+              keyboardType="decimal-pad"
               editable={purchase.status !== 'Posted'}
             />
             <Text style={[styles.lineItemUOM, t.mutedText]}>
@@ -1011,19 +1147,25 @@ const PurchaseCreation = () => {
                 t.lineInput,
                 purchase.status === 'Posted' && t.inputDisabled,
               ]}
-              value={line.unit_cost.toString()}
+              value={unitCostDisplay}
+              placeholder="Enter cost"
+              placeholderTextColor={colors.placeholder}
               onChangeText={text => {
-                const cost = parseFloat(text) || 0;
-                if (line.id) {
-                  handleUpdateLine(line.id, 'unit_cost', cost);
-                } else {
-                  const updatedLines = lines.map((l, i) =>
-                    i === index ? {...l, unit_cost: cost} : l,
-                  );
-                  setLines(updatedLines);
-                }
+                const formatted = formatCommaInput(text);
+                setLineDrafts(prev => ({
+                  ...prev,
+                  [draftKey]: {...prev[draftKey], unit_cost: formatted},
+                }));
               }}
-              keyboardType="numeric"
+              onBlur={() => {
+                const raw =
+                  lineDrafts[draftKey]?.unit_cost ??
+                  formatLineNumericDisplay(line.unit_cost, undefined, true, true);
+                const cost = parseDecimalInput(raw);
+                clearLineDraft(draftKey, 'unit_cost');
+                void commitLineNumericField(index, 'unit_cost', cost);
+              }}
+              keyboardType="decimal-pad"
               editable={purchase.status !== 'Posted'}
             />
           </View>
@@ -1051,7 +1193,7 @@ const PurchaseCreation = () => {
             Line Total:
           </Text>
           <Text style={styles.lineItemTotalValue}>
-            UGX {(line.quantity * line.unit_cost).toLocaleString()}
+            UGX {(previewQuantity * previewUnitCost).toLocaleString()}
           </Text>
         </View>
       </View>

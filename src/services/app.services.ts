@@ -8,6 +8,8 @@ import {
 } from '../@types/types.dto';
 import {AxiosResponse} from 'axios';
 import {axiosInstance, createAxiosInstance} from '../axios/axios';
+import {isSubscriptionExpiredError} from '../utils/subscriptionExpired';
+import {resolveEffectiveBranchDimensionId} from '../utils/effectiveBranch';
 import {Item} from '../Screens/Items/Items';
 import type {AxiosRequestConfig} from 'axios';
 
@@ -307,12 +309,21 @@ export const upsertPurchase = async (purchaseData: {
   payment_method?: number;
   status?: string;
   deleted?: boolean;
+  global_dimension_1?: number;
 }): Promise<any> => {
   try {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
     const axiosInstance = createAxiosInstance(tenant) || undefined;
 
-    const response = await axiosInstance.post('/api/purchases/upsert/', purchaseData);
+    const payload = {...purchaseData};
+    if (payload.global_dimension_1 == null) {
+      const branchId = await resolveEffectiveBranchDimensionId();
+      if (branchId != null) {
+        payload.global_dimension_1 = branchId;
+      }
+    }
+
+    const response = await axiosInstance.post('/api/purchases/upsert/', payload);
     return response.data;
   } catch (error: any) {
     console.error('upsertPurchase: Error upserting purchase:', error);
@@ -570,7 +581,9 @@ export const fetchMyUserSetup = async (): Promise<MyUserSetupLite | null> => {
         typeof v === 'boolean' ? v : undefined,
     };
   } catch (e) {
-    console.warn('fetchMyUserSetup: unavailable', e);
+    if (!isSubscriptionExpiredError(e)) {
+      console.warn('fetchMyUserSetup: unavailable', e);
+    }
     return null;
   }
 };
@@ -812,8 +825,11 @@ export const fetchDraftSales = async () => {
     }
     return [];
   } catch (error: any) {
-    console.error('Error fetching draft sales:', error);
-    throw error;
+    if (!isSubscriptionExpiredError(error)) {
+      console.error('Error fetching draft sales:', error);
+      throw error;
+    }
+    return [];
   }
 };
 
@@ -866,10 +882,25 @@ export const updateSalesInvoice = async (
 };
 
 // items list api
+export type ItemListFilters = {
+  lowStock?: boolean;
+  inventoryStatus?: 'IN_STOCK' | 'OUT_OF_STOCK';
+};
+
+export function isInvalidPageError(error: unknown): boolean {
+  if (!error || typeof error !== 'object' || !('response' in error)) {
+    return false;
+  }
+  const data = (error as {response?: {data?: {detail?: string; error?: string}}})
+    .response?.data;
+  return data?.detail === 'Invalid page.' || data?.error === 'Invalid page.';
+}
+
 export const fetchItems = async (
   page: number = 1,
   searchQuery: string = '',
   categoryId?: number,
+  filters?: ItemListFilters,
 ) => {
   try {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
@@ -878,19 +909,27 @@ export const fetchItems = async (
         page,
         q: searchQuery.trim(),
     };
-    
+
     // Add category filter if provided
     if (categoryId) {
       params.category_id = categoryId;
     }
-    
+
+    if (filters?.lowStock) {
+      params.low_stock = true;
+    }
+    if (filters?.inventoryStatus) {
+      params.inventory_status = filters.inventoryStatus;
+    }
+
     const response = await axiosInstance.get(`/api/items/`, {
       params,
     });
-    console.log('response', response.data);
     return response.data;
   } catch (error) {
-    console.error('Error fetching items:', error);
+    if (!isInvalidPageError(error)) {
+      console.error('Error fetching items:', error);
+    }
     throw error;
   }
 };
@@ -1127,8 +1166,7 @@ export const fetchExpenseBreakdownReport = async (params?: {
 };
 
 /**
- * Web parity: `ReportService.exportToPDF` → POST `/api/reports/export-pdf/`
- * Body: `{ report_type, filters }`. Returns raw PDF bytes when the backend implements this route.
+ * Analytics reports — POST `/api/reports/export-pdf/` when implemented on the backend.
  */
 export const exportReportPdfFromApi = async (
   reportType: string,
@@ -1149,6 +1187,104 @@ export const exportReportPdfFromApi = async (
   return response.data as ArrayBuffer;
 };
 
+const financialPdfRequestConfig = (
+  branch?: number | null,
+  requestConfig?: AxiosRequestConfig,
+): AxiosRequestConfig => ({
+  responseType: 'arraybuffer',
+  headers: {
+    Accept: 'application/pdf, application/octet-stream, */*',
+  },
+  ...(requestConfig ?? branchRequestConfig(branch) ?? {}),
+});
+
+/** Web parity: GET `/api/financials/gl-accounts/profit-loss/export/` */
+export const downloadProfitLossPdf = async (params: {
+  startDate: string;
+  endDate: string;
+  branch?: number | null;
+  requestConfig?: AxiosRequestConfig;
+}): Promise<ArrayBuffer> => {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant) || undefined;
+  const sd = params.startDate.trim();
+  const ed = params.endDate.trim();
+  if (!sd || !ed) {
+    throw new Error('Start and end dates are required.');
+  }
+  const query: Record<string, string> = {
+    start_date: sd,
+    end_date: ed,
+  };
+  if (typeof branchParam(params.branch) === 'number') {
+    query.global_dimension_1_id = String(branchParam(params.branch));
+  }
+  const response = await axiosInstance.get(
+    '/api/financials/gl-accounts/profit-loss/export/',
+    {
+      params: query,
+      ...financialPdfRequestConfig(params.branch, params.requestConfig),
+    },
+  );
+  return response.data as ArrayBuffer;
+};
+
+/** Web parity: GET `/api/financials/gl-accounts/balance-sheet/export/` */
+export const downloadBalanceSheetPdf = async (params: {
+  asOfDate: string;
+  branch?: number | null;
+  requestConfig?: AxiosRequestConfig;
+}): Promise<ArrayBuffer> => {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant) || undefined;
+  const asOf = params.asOfDate.trim();
+  if (!asOf) {
+    throw new Error('As-of date is required.');
+  }
+  const query: Record<string, string> = {as_of_date: asOf};
+  if (typeof branchParam(params.branch) === 'number') {
+    query.global_dimension_1_id = String(branchParam(params.branch));
+  }
+  const response = await axiosInstance.get(
+    '/api/financials/gl-accounts/balance-sheet/export/',
+    {
+      params: query,
+      ...financialPdfRequestConfig(params.branch, params.requestConfig),
+    },
+  );
+  return response.data as ArrayBuffer;
+};
+
+type GlAccountForPl = {
+  no: string;
+  name: string;
+  indentation?: number;
+  income_balance?: string;
+  accountcategory?: string;
+  accounttype?: string;
+  balance?: number;
+};
+
+/** Same visibility rules as web `ProfitLossStatement.tsx`. */
+const plAccountsForCategory = (
+  accounts: GlAccountForPl[],
+  category: string,
+): GlAccountForPl[] =>
+  accounts.filter(
+    account =>
+      account.income_balance === 'Income Statement' &&
+      account.accountcategory === category &&
+      (account.accounttype !== 'Posting' || (account.balance ?? 0) !== 0),
+  );
+
+const mapPlAccountLine = (account: GlAccountForPl, displayAmount: number) => ({
+  gl_account__name: account.name,
+  gl_account__no: account.no,
+  gl_account__indentation: account.indentation ?? 0,
+  amount: displayAmount,
+});
+
+/** Web parity: chart of accounts + client-side P&L aggregation (not sales-dashboard). */
 export const fetchProfitLossStatement = async (params?: {
   startDate?: string;
   endDate?: string;
@@ -1158,24 +1294,70 @@ export const fetchProfitLossStatement = async (params?: {
   try {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
     const axiosInstance = createAxiosInstance(tenant) || undefined;
-    const query: Record<string, string> = {};
     const sd = params?.startDate?.trim();
     const ed = params?.endDate?.trim();
-    if (sd) {
-      query.start_date = sd;
+    if (!sd || !ed) {
+      throw new Error('Profit & loss requires start and end dates.');
     }
-    if (ed) {
-      query.end_date = ed;
-    }
+    const query: Record<string, string> = {
+      start_date: sd,
+      end_date: ed,
+    };
     const bp = branchParam(params?.branch);
-    if (bp != null) {
-      query.branch = String(bp);
+    if (typeof bp === 'number') {
+      query.global_dimension_1_id = String(bp);
     }
-    const response = await axiosInstance.get(
-      '/api/sales-dashboard/profit_loss_statement/',
-      {params: query, ...(params?.requestConfig ?? branchRequestConfig(params?.branch) ?? {})},
+    const response = await axiosInstance.get('/api/financials/gl-accounts/', {
+      params: query,
+      ...(params?.requestConfig ?? branchRequestConfig(params?.branch) ?? {}),
+    });
+    const accounts: GlAccountForPl[] = Array.isArray(response?.data)
+      ? response.data
+      : [];
+
+    const revenueAccounts = plAccountsForCategory(accounts, 'Income');
+    const cogsAccounts = plAccountsForCategory(accounts, 'Cost of Goods Sold');
+    const expenseAccounts = plAccountsForCategory(accounts, 'Expense');
+
+    const revenueTotalRaw = revenueAccounts.reduce(
+      (sum, account) => sum + (account.balance ?? 0),
+      0,
     );
-    return response?.data;
+    const revenueTotal = revenueTotalRaw * -1;
+    const cogsTotal = cogsAccounts.reduce(
+      (sum, account) => sum + (account.balance ?? 0),
+      0,
+    );
+    const expensesTotal = expenseAccounts.reduce(
+      (sum, account) => sum + (account.balance ?? 0),
+      0,
+    );
+    const grossProfit = revenueTotal - cogsTotal;
+    const netIncome = grossProfit - expensesTotal;
+
+    return {
+      period: {start_date: sd, end_date: ed},
+      revenue: {
+        total: revenueTotal,
+        accounts: revenueAccounts.map(account =>
+          mapPlAccountLine(account, Math.abs(account.balance ?? 0)),
+        ),
+      },
+      cost_of_goods_sold: {
+        total: cogsTotal,
+        accounts: cogsAccounts.map(account =>
+          mapPlAccountLine(account, account.balance ?? 0),
+        ),
+      },
+      gross_profit: grossProfit,
+      operating_expenses: {
+        total: expensesTotal,
+        accounts: expenseAccounts.map(account =>
+          mapPlAccountLine(account, account.balance ?? 0),
+        ),
+      },
+      net_income: netIncome,
+    };
   } catch (error) {
     console.error('Error fetching profit & loss statement:', error);
     throw error;
@@ -1196,11 +1378,13 @@ export const fetchBalanceSheetReport = async (
       query.as_of_date = d;
     }
     const bp = branchParam(branch);
-    if (bp != null) {
-      query.branch = String(bp);
+    if (typeof bp === 'number') {
+      query.global_dimension_1_id = String(bp);
+    } else if (bp === 'all') {
+      query.branch = 'all';
     }
     const response = await axiosInstance.get(
-      '/api/sales-dashboard/balance_sheet_report/',
+      '/api/financials/gl-accounts/balance-sheet/',
       {params: query, ...(requestConfig ?? branchRequestConfig(branch) ?? {})},
     );
     return response?.data;
@@ -1329,6 +1513,81 @@ export const uploadItemImage = async (
   }
 };
 
+/** Build multipart file fields from a local image URI (shared by item + company logo uploads). */
+function imageFormFieldsFromUri(imageUri: string): {
+  fileName: string;
+  fileType: string;
+} {
+  let fileName = 'image.jpg';
+  let fileType = 'jpeg';
+
+  if (imageUri.startsWith('content://')) {
+    fileName = `image_${Date.now()}.jpg`;
+    fileType = 'jpeg';
+  } else if (imageUri.startsWith('file://')) {
+    const pathParts = imageUri.split('/');
+    fileName = pathParts.pop() || 'image.jpg';
+    const extension = fileName.split('.').pop()?.toLowerCase();
+
+    if (extension === 'png') {
+      fileType = 'png';
+    } else if (extension === 'gif') {
+      fileType = 'gif';
+    } else if (extension === 'webp') {
+      fileType = 'webp';
+    } else {
+      fileType = 'jpeg';
+      if (!fileName.includes('.')) {
+        fileName = `${fileName}.jpg`;
+      }
+    }
+  }
+
+  return {fileName, fileType};
+}
+
+function throwImageUploadError(error: any): never {
+  if (error.response?.status === 413) {
+    throw new Error(
+      'Image file is too large. Please select a smaller image.',
+    );
+  }
+  if (error.response?.status === 415) {
+    throw new Error(
+      'Unsupported image format. Please select a JPG, PNG, or GIF image.',
+    );
+  }
+  if (error.response?.status === 401) {
+    throw new Error('Authentication failed. Please log in again.');
+  }
+  throw error;
+}
+
+/** Upload company logo — POST /api/company/upload-logo/ (field: logo). */
+export const uploadCompanyLogo = async (imageUri: string) => {
+  try {
+    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+    const axiosInstance = createAxiosInstance(tenant) || undefined;
+    const formData = new FormData();
+    const {fileName, fileType} = imageFormFieldsFromUri(imageUri);
+
+    formData.append('logo', {
+      uri: imageUri,
+      type: `image/${fileType}`,
+      name: fileName,
+    } as any);
+
+    return await axiosInstance.post('/api/company/upload-logo/', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+  } catch (error: any) {
+    console.error('Error uploading company logo:', error);
+    throwImageUploadError(error);
+  }
+};
+
 // Delete image for an item
 export const deleteItemImage = async (imageId: number) => {
   try {
@@ -1384,13 +1643,26 @@ export const postItemJournalLines = async (
 /** Shape of `company` from GET /api/sales/company-info/ (see web zentro-backend sales/views get_company_info). */
 export type TenantCompanyApi = {
   name: string;
+  displayName?: string;
   logo: string | null;
   address: string;
   phone: string;
   email: string;
+  website?: string;
   city?: string | null;
   country?: string | null;
   tin: string;
+};
+
+export type UpdateCompanyInfoPayload = {
+  displayName?: string;
+  phone?: string;
+  email?: string;
+  website?: string;
+  tin?: string;
+  address?: string;
+  city?: string;
+  country?: string;
 };
 
 export type CompanyInfoApiResponse = {
@@ -1409,7 +1681,23 @@ export const getCompanyInfo = async (): Promise<
     );
     return response;
   } catch (error: any) {
-    console.error('Error fetching company info:', error);
+    if (!isSubscriptionExpiredError(error)) {
+      console.error('Error fetching company info:', error);
+    }
+    throw error;
+  }
+};
+
+/** Update company contact fields — PUT /api/company/update-info/ */
+export const updateCompanyInfo = async (
+  payload: UpdateCompanyInfoPayload,
+): Promise<AxiosResponse<{company: TenantCompanyApi; message?: string}>> => {
+  try {
+    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+    const axiosInstance = createAxiosInstance(tenant) || undefined;
+    return await axiosInstance.put('/api/company/update-info/', payload);
+  } catch (error: any) {
+    console.error('Error updating company info:', error);
     throw error;
   }
 };
@@ -1420,6 +1708,7 @@ export type FetchItemJournalParams = {
   /** e.g. Open, Posted */
   status?: string;
   entry_type?: string;
+  adjustment_type?: 'operational' | 'opening_balance';
 };
 
 export interface ItemJournalListResponse {
@@ -1445,6 +1734,9 @@ export const fetchItemJournal = async (
   if (extra?.entry_type) {
     params.entry_type = extra.entry_type;
   }
+  if (extra?.adjustment_type) {
+    params.adjustment_type = extra.adjustment_type;
+  }
   const response = await api.get<ItemJournalListResponse | unknown[]>(
     '/api/item-journals/',
     {params},
@@ -1468,6 +1760,106 @@ export const upsertItemJournal = async (
   const api = await getAxiosInstance();
   const response = await api.post('/api/item-journals/upsert/', payload);
   return response;
+};
+
+export type UnitOfMeasure = {
+  code: string;
+  description: string;
+  created_at?: string;
+  system_id?: string;
+};
+
+export type ItemUnitOfMeasure = {
+  id: number;
+  system_id?: string;
+  item: string;
+  unit_of_measure: string;
+  unit_of_measure_description?: string;
+  quantity_per_unit: number;
+  default: boolean;
+  price?: number | null;
+  effective_price?: number;
+};
+
+export const fetchUnitsOfMeasure = async (): Promise<UnitOfMeasure[]> => {
+  const api = await getAxiosInstance();
+  const response = await api.get('/api/units-of-measure/');
+  const data = response.data;
+  if (data?.results && Array.isArray(data.results)) {
+    return data.results;
+  }
+  if (Array.isArray(data)) {
+    return data;
+  }
+  return [];
+};
+
+export const createUnitOfMeasure = async (payload: {
+  code: string;
+  description: string;
+}) => {
+  const api = await getAxiosInstance();
+  return api.post('/api/units-of-measure/', payload);
+};
+
+export const updateUnitOfMeasure = async (
+  code: string,
+  payload: {code: string; description: string},
+) => {
+  const api = await getAxiosInstance();
+  return api.put(`/api/units-of-measure/${encodeURIComponent(code)}/`, payload);
+};
+
+export const deleteUnitOfMeasure = async (code: string) => {
+  const api = await getAxiosInstance();
+  return api.delete(`/api/units-of-measure/${encodeURIComponent(code)}/`);
+};
+
+export const fetchItemUnitsOfMeasure = async (
+  itemNo: string,
+): Promise<ItemUnitOfMeasure[]> => {
+  const api = await getAxiosInstance();
+  const response = await api.get('/api/item-units-of-measure/', {
+    params: {item: itemNo},
+  });
+  const data = response.data;
+  if (data?.results && Array.isArray(data.results)) {
+    return data.results;
+  }
+  if (Array.isArray(data)) {
+    return data;
+  }
+  return [];
+};
+
+export const createItemUnitOfMeasure = async (payload: {
+  item: string;
+  unit_of_measure: string;
+  quantity_per_unit: number;
+  default: boolean;
+  price?: number;
+}) => {
+  const api = await getAxiosInstance();
+  return api.post('/api/item-units-of-measure/', payload);
+};
+
+export const updateItemUnitOfMeasure = async (
+  id: number,
+  payload: {
+    item: string;
+    unit_of_measure: string;
+    quantity_per_unit: number;
+    default: boolean;
+    price?: number;
+  },
+) => {
+  const api = await getAxiosInstance();
+  return api.patch(`/api/item-units-of-measure/${id}/`, payload);
+};
+
+export const deleteItemUnitOfMeasure = async (id: number) => {
+  const api = await getAxiosInstance();
+  return api.delete(`/api/item-units-of-measure/${id}/`);
 };
 
 // Customer types
@@ -1674,16 +2066,7 @@ export const fetchKPIMetrics = async (): Promise<KPIMetrics | null> => {
       total_products: totalProducts,
     };
   } catch (error: any) {
-    // Subscription expiry (402) is expected on trial end; redirect handling happens in axios interceptor.
-    const errStr =
-      typeof error === 'string'
-        ? error
-        : error?.message || error?.toString?.() || '';
-    const looksLikeSubscriptionExpired =
-      errStr.includes('trial period has ended') ||
-      errStr.includes('proceed to the subscription page') ||
-      errStr.includes('subscription_expired');
-    if (!looksLikeSubscriptionExpired) {
+    if (!isSubscriptionExpiredError(error)) {
       console.error('Error fetching KPI metrics:', error);
     }
     return null;
@@ -1724,7 +2107,9 @@ export const fetchRecentTransactions = async (
     }
     return [];
   } catch (error: any) {
-    console.error('Error fetching recent transactions:', error);
+    if (!isSubscriptionExpiredError(error)) {
+      console.error('Error fetching recent transactions:', error);
+    }
     return [];
   }
 };
@@ -1749,7 +2134,9 @@ export const fetchLowStockItems = async () => {
     }
     return [];
   } catch (error: any) {
-    console.error('Error fetching low stock items:', error);
+    if (!isSubscriptionExpiredError(error)) {
+      console.error('Error fetching low stock items:', error);
+    }
     return [];
   }
 };
@@ -1774,7 +2161,9 @@ export const fetchOutstandingReceivables = async () => {
     
     return { total_amount: 0, count: 0 };
   } catch (error: any) {
-    console.error('Error fetching outstanding receivables:', error);
+    if (!isSubscriptionExpiredError(error)) {
+      console.error('Error fetching outstanding receivables:', error);
+    }
     // Return zero if endpoint doesn't exist or fails
     return { total_amount: 0, count: 0 };
   }
@@ -1836,7 +2225,9 @@ export const fetchTopSellingItems = async (limit: number = 5) => {
     
     return topItems;
   } catch (error: any) {
-    console.error('Error fetching top selling items:', error);
+    if (!isSubscriptionExpiredError(error)) {
+      console.error('Error fetching top selling items:', error);
+    }
     return [];
   }
 };

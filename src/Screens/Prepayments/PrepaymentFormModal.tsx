@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useMemo, useState} from 'react';
 import {
   View,
   Text,
@@ -9,9 +9,21 @@ import {
   ActivityIndicator,
   ScrollView,
   Alert,
+  KeyboardAvoidingView,
+  Platform,
+  Image,
 } from 'react-native';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
+import {Picker} from '@react-native-picker/picker';
 import {QuickIconPressable} from '../../Components';
-import {COLORS, FONTS, SIZES, ICON_BUTTON_HIT_SLOP} from '../../constants';
+import {
+  COLORS,
+  FONTS,
+  SIZES,
+  ICON_BUTTON_HIT_SLOP,
+  icons,
+} from '../../constants';
+import {useTheme} from '../../context/ThemeContext';
 import {Prepayment, PrepaymentLine} from '../../@types/prepayment';
 import {PrepaymentService} from '../../services/PrepaymentService';
 import Toast from 'react-native-toast-message';
@@ -25,6 +37,27 @@ type Props = {
   canEdit: boolean;
 };
 
+const formatCommaInput = (text: string): string => {
+  const cleanedText = text.replace(/[^0-9.]/g, '');
+  if (!cleanedText) {
+    return '';
+  }
+  const numericValue = parseFloat(cleanedText.replace(/,/g, ''));
+  if (!Number.isFinite(numericValue)) {
+    return cleanedText;
+  }
+  return numericValue.toLocaleString('en-US', {maximumFractionDigits: 0});
+};
+
+const parseAmount = (text: string): number => {
+  const trimmed = text.trim().replace(/,/g, '');
+  if (!trimmed) {
+    return 0;
+  }
+  const n = parseFloat(trimmed);
+  return Number.isFinite(n) ? n : 0;
+};
+
 const PrepaymentFormModal: React.FC<Props> = ({
   visible,
   onClose,
@@ -34,26 +67,66 @@ const PrepaymentFormModal: React.FC<Props> = ({
   canEdit,
 }) => {
   const isEdit = !!prepayment;
+  const {colors} = useTheme();
+  const insets = useSafeAreaInsets();
+  const canSave = (isEdit && canEdit) || (!isEdit && canCreate);
+
+  const themeStyles = useMemo(
+    () => ({
+      label: {color: colors.textPrimary},
+      input: {
+        borderColor: colors.border,
+        color: colors.textPrimary,
+        backgroundColor: colors.inputBackground,
+      },
+      disabledInput: {
+        backgroundColor: colors.screenMuted,
+        color: colors.textSecondary,
+      },
+      sectionTitle: {color: colors.textPrimary},
+      lineCard: {
+        borderColor: colors.border,
+        backgroundColor: colors.card,
+      },
+      pickerWrap: {
+        borderColor: colors.border,
+        backgroundColor: colors.inputBackground,
+      },
+      picker: {
+        backgroundColor: colors.inputBackground,
+        color: colors.textPrimary,
+      },
+      helper: {color: colors.textSecondary},
+    }),
+    [colors],
+  );
+
   const [form, setForm] = useState<Partial<Prepayment>>({
     customer: '',
     payment_method_id: null,
     status: 'Draft',
   });
   const [lines, setLines] = useState<PrepaymentLine[]>([]);
-  const [installmentAmount, setInstallmentAmount] = useState<string>('');
+  const [installmentAmount, setInstallmentAmount] = useState('');
   const [paymentMethods, setPaymentMethods] = useState<any[]>([]);
   const [saving, setSaving] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
 
   useEffect(() => {
+    if (!visible) {
+      return;
+    }
     const loadMethods = async () => {
       const methods = await PrepaymentService.getPaymentMethods();
       setPaymentMethods(methods);
     };
     loadMethods();
-  }, []);
+  }, [visible]);
 
   useEffect(() => {
+    if (!visible) {
+      return;
+    }
     const init = async () => {
       if (prepayment) {
         setLoadingDetail(true);
@@ -86,15 +159,24 @@ const PrepaymentFormModal: React.FC<Props> = ({
           status: 'Draft',
         });
         setLines([]);
+        setInstallmentAmount('');
       }
     };
     init();
   }, [prepayment, visible]);
 
+  const visibleLines = lines.filter(line => !line.is_deleted);
+
   const addLine = () => {
     setLines(prev => [
       ...prev,
-      {quantity: 1, unit_price: 0, item: '', unit_of_measure: '', is_deleted: false},
+      {
+        quantity: 1,
+        unit_price: 0,
+        item: '',
+        unit_of_measure: '',
+        is_deleted: false,
+      },
     ]);
   };
 
@@ -121,7 +203,9 @@ const PrepaymentFormModal: React.FC<Props> = ({
   };
 
   const handleSave = async () => {
-    if (!validate()) return;
+    if (!validate()) {
+      return;
+    }
     if (isEdit && !canEdit) {
       Alert.alert('Permission', 'You do not have permission to edit.');
       return;
@@ -146,13 +230,11 @@ const PrepaymentFormModal: React.FC<Props> = ({
         Toast.show({type: 'success', text1: 'Created', text2: 'Prepayment created'});
       }
       onSaved();
-      onClose();
     } catch (error: any) {
       Toast.show({
         type: 'error',
         text1: 'Error',
-        text2:
-          error?.response?.data?.detail || 'Failed to save prepayment',
+        text2: error?.response?.data?.detail || 'Failed to save prepayment',
       });
     } finally {
       setSaving(false);
@@ -175,13 +257,11 @@ const PrepaymentFormModal: React.FC<Props> = ({
       });
       Toast.show({type: 'success', text1: 'Posted', text2: 'Prepayment posted'});
       onSaved();
-      onClose();
     } catch (error: any) {
       Toast.show({
         type: 'error',
         text1: 'Error',
-        text2:
-          error?.response?.data?.detail || 'Failed to post prepayment',
+        text2: error?.response?.data?.detail || 'Failed to post prepayment',
       });
     } finally {
       setSaving(false);
@@ -204,7 +284,6 @@ const PrepaymentFormModal: React.FC<Props> = ({
         text2: 'Final invoice posted',
       });
       onSaved();
-      onClose();
     } catch (error: any) {
       Toast.show({
         type: 'error',
@@ -223,7 +302,7 @@ const PrepaymentFormModal: React.FC<Props> = ({
       Alert.alert('Save first', 'Save the prepayment before adding installment.');
       return;
     }
-    const amount = parseFloat(installmentAmount);
+    const amount = parseAmount(installmentAmount);
     if (!amount || amount <= 0) {
       Alert.alert('Invalid amount', 'Enter a valid installment amount.');
       return;
@@ -252,305 +331,488 @@ const PrepaymentFormModal: React.FC<Props> = ({
   };
 
   return (
-    <Modal visible={visible} animationType="slide" transparent>
-      <View style={styles.overlay}>
-        <View style={styles.modal}>
-          <View style={styles.header}>
-            <Text style={styles.title}>
-              {isEdit ? 'Edit Prepayment' : 'Create Prepayment'}
-            </Text>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent={false}
+      onRequestClose={onClose}>
+      <KeyboardAvoidingView
+        style={[styles.pageRoot, {backgroundColor: colors.background}]}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <View style={[styles.page, {backgroundColor: colors.background}]}>
+          <View
+            style={[
+              styles.pageHeader,
+              {
+                paddingTop: Math.max(
+                  insets.top,
+                  Platform.OS === 'ios' ? 12 : 16,
+                ),
+              },
+            ]}>
             <QuickIconPressable
               onPress={onClose}
-              style={styles.closeBtn}
+              style={[
+                styles.headerIconButton,
+                {
+                  backgroundColor: colors.card,
+                  borderColor: colors.border,
+                  borderWidth: StyleSheet.hairlineWidth,
+                },
+              ]}
               hitSlop={ICON_BUTTON_HIT_SLOP}
               accessibilityLabel="Close">
-              <Text style={styles.closeText}>✕</Text>
+              <Image
+                source={icons.cross}
+                style={[
+                  styles.headerCloseIcon,
+                  {tintColor: colors.textPrimary},
+                ]}
+                resizeMode="contain"
+              />
             </QuickIconPressable>
+            {canSave ? (
+              <TouchableOpacity
+                style={[
+                  styles.headerSaveButton,
+                  (saving || loadingDetail) && styles.headerSaveButtonDisabled,
+                ]}
+                onPress={handleSave}
+                disabled={saving || loadingDetail}
+                activeOpacity={0.85}>
+                {saving ? (
+                  <ActivityIndicator size="small" color={COLORS.white} />
+                ) : (
+                  <Text style={styles.headerSaveText}>
+                    {isEdit ? 'Save' : 'Create'}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.headerSaveSpacer} />
+            )}
           </View>
-          <ScrollView style={{maxHeight: '75%'}}>
-            {prepayment?.document_no && (
-              <View style={styles.field}>
-                <Text style={styles.label}>Document No</Text>
+
+          {loadingDetail ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={COLORS.primary2} />
+              <Text style={[styles.loadingText, {color: colors.textSecondary}]}>
+                Loading prepayment...
+              </Text>
+            </View>
+          ) : (
+            <ScrollView
+              style={styles.formContainer}
+              contentContainerStyle={[
+                styles.formContent,
+                {paddingBottom: Math.max(insets.bottom, 28) + 16},
+              ]}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}>
+              <Text style={[styles.pageTitle, {color: colors.textPrimary}]}>
+                {isEdit ? 'Edit prepayment' : 'Create prepayment'}
+              </Text>
+
+              <Text style={[styles.sectionTitle, themeStyles.sectionTitle]}>
+                Document information
+              </Text>
+
+              {prepayment?.document_no ? (
+                <View style={styles.fieldContainer}>
+                  <Text style={[styles.label, themeStyles.label]}>
+                    Document no
+                  </Text>
+                  <TextInput
+                    value={prepayment.document_no}
+                    editable={false}
+                    style={[
+                      styles.input,
+                      themeStyles.input,
+                      themeStyles.disabledInput,
+                    ]}
+                  />
+                </View>
+              ) : null}
+
+              <View style={styles.fieldContainer}>
+                <Text style={[styles.label, themeStyles.label]}>
+                  Customer *
+                </Text>
                 <TextInput
-                  value={prepayment.document_no}
-                  editable={false}
-                  style={[styles.input, styles.inputDisabled]}
+                  placeholder="Customer id or code"
+                  placeholderTextColor={colors.placeholder}
+                  value={(form.customer as any)?.toString() || ''}
+                  onChangeText={text =>
+                    setForm(prev => ({...prev, customer: text}))
+                  }
+                  style={[styles.input, themeStyles.input]}
+                  editable={form.status !== 'Posted'}
                 />
               </View>
-            )}
-            <View style={styles.field}>
-              <Text style={styles.label}>Customer *</Text>
-              <TextInput
-                placeholder="Customer id or code"
-                placeholderTextColor={COLORS.gray}
-                value={(form.customer as any)?.toString() || ''}
-                onChangeText={text =>
-                  setForm(prev => ({...prev, customer: text}))
-                }
-                style={styles.input}
-              />
-            </View>
-            <View style={styles.field}>
-              <Text style={styles.label}>Payment Method</Text>
-              <TextInput
-                placeholder="Payment method id"
-                placeholderTextColor={COLORS.gray}
-                value={form.payment_method_id?.toString() || ''}
-                onChangeText={text =>
-                  setForm(prev => ({
-                    ...prev,
-                    payment_method_id: text ? parseInt(text, 10) : null,
-                  }))
-                }
-                style={styles.input}
-                keyboardType="numeric"
-              />
-              {paymentMethods.length > 0 && (
-                <Text style={styles.helper}>
-                  Example method: {paymentMethods[0].description || paymentMethods[0].code}
+
+              <View style={styles.fieldContainer}>
+                <Text style={[styles.label, themeStyles.label]}>
+                  Payment method
                 </Text>
-              )}
-            </View>
-            <View style={styles.field}>
-              <Text style={styles.label}>Status</Text>
-              <TextInput
-                value={form.status || 'Draft'}
-                editable={false}
-                style={[styles.input, styles.inputDisabled]}
-              />
-            </View>
-            <View style={styles.divider} />
-            <View style={styles.fieldHeader}>
-              <Text style={styles.sectionTitle}>Lines</Text>
-              <TouchableOpacity onPress={addLine} style={styles.addLineBtn}>
-                <Text style={styles.addLineText}>+ Add Line</Text>
-              </TouchableOpacity>
-            </View>
-            {loadingDetail ? (
-              <ActivityIndicator size="small" color={COLORS.primary} />
-            ) : (
-              lines.map((line, idx) => (
-                <View key={idx} style={styles.lineCard}>
-                  <Text style={styles.label}>Line {idx + 1}</Text>
+                {paymentMethods.length > 0 ? (
+                  <View style={[styles.pickerContainer, themeStyles.pickerWrap]}>
+                    <Picker
+                      selectedValue={form.payment_method_id || 0}
+                      onValueChange={value =>
+                        setForm(prev => ({
+                          ...prev,
+                          payment_method_id: value === 0 ? null : Number(value),
+                        }))
+                      }
+                      style={[styles.picker, themeStyles.picker]}
+                      itemStyle={{color: colors.textPrimary}}
+                      dropdownIconColor={colors.textPrimary}
+                      enabled={form.status !== 'Posted'}>
+                      <Picker.Item label="Select payment method" value={0} />
+                      {paymentMethods.map(method => (
+                        <Picker.Item
+                          key={method.id}
+                          label={
+                            method.description ||
+                            method.code ||
+                            `Method ${method.id}`
+                          }
+                          value={method.id}
+                        />
+                      ))}
+                    </Picker>
+                  </View>
+                ) : (
                   <TextInput
-                    placeholder="Item (code/id)"
-                    placeholderTextColor={COLORS.gray}
-                    value={line.item?.toString() || ''}
+                    placeholder="Payment method id"
+                    placeholderTextColor={colors.placeholder}
+                    value={form.payment_method_id?.toString() || ''}
                     onChangeText={text =>
-                      updateLine(idx, {item: text})
+                      setForm(prev => ({
+                        ...prev,
+                        payment_method_id: text ? parseInt(text, 10) : null,
+                      }))
                     }
-                    style={styles.input}
-                  />
-                  <TextInput
-                    placeholder="UOM"
-                    placeholderTextColor={COLORS.gray}
-                    value={line.unit_of_measure?.toString() || ''}
-                    onChangeText={text =>
-                      updateLine(idx, {unit_of_measure: text})
-                    }
-                    style={styles.input}
-                  />
-                  <TextInput
-                    placeholder="Quantity"
-                    placeholderTextColor={COLORS.gray}
-                    value={line.quantity?.toString() || ''}
-                    onChangeText={text =>
-                      updateLine(idx, {quantity: parseFloat(text) || 0})
-                    }
-                    style={styles.input}
+                    style={[styles.input, themeStyles.input]}
                     keyboardType="numeric"
+                    editable={form.status !== 'Posted'}
                   />
-                  <TextInput
-                    placeholder="Unit Price"
-                    placeholderTextColor={COLORS.gray}
-                    value={line.unit_price?.toString() || ''}
-                    onChangeText={text =>
-                      updateLine(idx, {unit_price: parseFloat(text) || 0})
-                    }
-                    style={styles.input}
-                    keyboardType="numeric"
-                  />
+                )}
+              </View>
+
+              <View style={styles.fieldContainer}>
+                <Text style={[styles.label, themeStyles.label]}>Status</Text>
+                <TextInput
+                  value={form.status || 'Draft'}
+                  editable={false}
+                  style={[
+                    styles.input,
+                    themeStyles.input,
+                    themeStyles.disabledInput,
+                  ]}
+                />
+              </View>
+
+              <View style={styles.sectionHeaderRow}>
+                <Text style={[styles.sectionTitle, themeStyles.sectionTitle]}>
+                  Lines
+                </Text>
+                {form.status !== 'Posted' ? (
                   <TouchableOpacity
-                    onPress={() => markDeleteLine(idx)}
-                    style={styles.deleteLineBtn}>
-                    <Text style={styles.deleteLineText}>Delete</Text>
+                    onPress={addLine}
+                    style={styles.addLineButton}
+                    activeOpacity={0.85}>
+                    <Text style={styles.addLineText}>+ Add line</Text>
                   </TouchableOpacity>
-                  {line.is_deleted && (
-                    <Text style={styles.deletedBadge}>Marked for delete</Text>
-                  )}
-                </View>
-              ))
-            )}
-            <View style={styles.divider} />
-            <View style={styles.field}>
-              <Text style={styles.label}>Installment Amount</Text>
-              <TextInput
-                placeholder="0"
-                placeholderTextColor={COLORS.gray}
-                value={installmentAmount}
-                onChangeText={setInstallmentAmount}
-                style={styles.input}
-                keyboardType="numeric"
-              />
-              <TouchableOpacity
-                style={styles.secondaryButton}
-                onPress={handleInstallment}
-                disabled={saving}>
-                <Text style={styles.secondaryButtonText}>Add Installment</Text>
-              </TouchableOpacity>
-            </View>
-          </ScrollView>
-          <View style={styles.footer}>
-            <TouchableOpacity
-              style={[styles.button, styles.cancelButton]}
-              onPress={onClose}
-              disabled={saving}>
-              <Text style={styles.cancelText}>Close</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.button, styles.saveButton]}
-              onPress={handleSave}
-              disabled={saving}>
-              {saving ? (
-                <ActivityIndicator size="small" color={COLORS.white} />
+                ) : null}
+              </View>
+
+              {visibleLines.length === 0 ? (
+                <Text style={[styles.helper, themeStyles.helper]}>
+                  No lines yet. Tap Add line to include items.
+                </Text>
               ) : (
-                <Text style={styles.saveText}>{isEdit ? 'Update' : 'Create'}</Text>
+                lines.map((line, idx) => {
+                  if (line.is_deleted) {
+                    return null;
+                  }
+                  return (
+                    <View
+                      key={line.id ?? `line-${idx}`}
+                      style={[styles.lineCard, themeStyles.lineCard]}>
+                      <View style={styles.lineCardHeader}>
+                        <Text style={[styles.lineCardTitle, themeStyles.label]}>
+                          Line {idx + 1}
+                        </Text>
+                        {form.status !== 'Posted' ? (
+                          <TouchableOpacity
+                            onPress={() => markDeleteLine(idx)}
+                            hitSlop={ICON_BUTTON_HIT_SLOP}
+                            accessibilityLabel="Delete line">
+                            <Image
+                              source={icons.delete_icon}
+                              style={styles.lineDeleteIcon}
+                              resizeMode="contain"
+                            />
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+                      <TextInput
+                        placeholder="Item (code/id)"
+                        placeholderTextColor={colors.placeholder}
+                        value={line.item?.toString() || ''}
+                        onChangeText={text => updateLine(idx, {item: text})}
+                        style={[styles.input, themeStyles.input]}
+                        editable={form.status !== 'Posted'}
+                      />
+                      <TextInput
+                        placeholder="Unit of measure"
+                        placeholderTextColor={colors.placeholder}
+                        value={line.unit_of_measure?.toString() || ''}
+                        onChangeText={text =>
+                          updateLine(idx, {unit_of_measure: text})
+                        }
+                        style={[styles.input, themeStyles.input]}
+                        editable={form.status !== 'Posted'}
+                      />
+                      <View style={styles.lineFieldRow}>
+                        <View style={styles.lineFieldHalf}>
+                          <Text style={[styles.lineFieldLabel, themeStyles.helper]}>
+                            Quantity
+                          </Text>
+                          <TextInput
+                            placeholder="1"
+                            placeholderTextColor={colors.placeholder}
+                            value={
+                              line.quantity > 0
+                                ? line.quantity.toLocaleString('en-US')
+                                : ''
+                            }
+                            onChangeText={text =>
+                              updateLine(idx, {
+                                quantity: parseAmount(text) || 0,
+                              })
+                            }
+                            style={[styles.input, themeStyles.input]}
+                            keyboardType="decimal-pad"
+                            editable={form.status !== 'Posted'}
+                          />
+                        </View>
+                        <View style={styles.lineFieldHalf}>
+                          <Text style={[styles.lineFieldLabel, themeStyles.helper]}>
+                            Unit price
+                          </Text>
+                          <TextInput
+                            placeholder="Enter price"
+                            placeholderTextColor={colors.placeholder}
+                            value={
+                              line.unit_price > 0
+                                ? line.unit_price.toLocaleString('en-US')
+                                : ''
+                            }
+                            onChangeText={text =>
+                              updateLine(idx, {
+                                unit_price: parseAmount(text),
+                              })
+                            }
+                            style={[styles.input, themeStyles.input]}
+                            keyboardType="decimal-pad"
+                            editable={form.status !== 'Posted'}
+                          />
+                        </View>
+                      </View>
+                    </View>
+                  );
+                })
               )}
-            </TouchableOpacity>
-            {isEdit && (
-              <>
-                <TouchableOpacity
-                  style={[styles.button, styles.postButton]}
-                  onPress={handlePost}
-                  disabled={saving}>
-                  <Text style={styles.saveText}>Post</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.button, styles.postButton]}
-                  onPress={handleFinalInvoice}
-                  disabled={saving}>
-                  <Text style={styles.saveText}>Final Invoice</Text>
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
+
+              {isEdit && form.status !== 'Posted' ? (
+                <>
+                  <Text
+                    style={[
+                      styles.sectionTitle,
+                      styles.sectionTitleMargin,
+                      themeStyles.sectionTitle,
+                    ]}>
+                    Actions
+                  </Text>
+                  <View style={styles.fieldContainer}>
+                    <Text style={[styles.label, themeStyles.label]}>
+                      Installment amount
+                    </Text>
+                    <TextInput
+                      placeholder="Enter amount"
+                      placeholderTextColor={colors.placeholder}
+                      value={installmentAmount}
+                      onChangeText={text =>
+                        setInstallmentAmount(formatCommaInput(text))
+                      }
+                      style={[styles.input, themeStyles.input]}
+                      keyboardType="decimal-pad"
+                    />
+                    <TouchableOpacity
+                      style={styles.secondaryButton}
+                      onPress={handleInstallment}
+                      disabled={saving}
+                      activeOpacity={0.85}>
+                      <Text style={styles.secondaryButtonText}>
+                        Add installment
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  <View style={styles.actionRow}>
+                    <TouchableOpacity
+                      style={[styles.actionButton, styles.postButton]}
+                      onPress={handlePost}
+                      disabled={saving}
+                      activeOpacity={0.85}>
+                      <Text style={styles.actionButtonText}>Post</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.actionButton, styles.finalButton]}
+                      onPress={handleFinalInvoice}
+                      disabled={saving}
+                      activeOpacity={0.85}>
+                      <Text style={styles.actionButtonText}>Final invoice</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              ) : null}
+            </ScrollView>
+          )}
         </View>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
-  overlay: {
+  pageRoot: {flex: 1},
+  page: {flex: 1},
+  pageHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingBottom: 8,
+  },
+  headerIconButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerCloseIcon: {width: 20, height: 20},
+  headerSaveButton: {
+    minWidth: 108,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.primary2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  headerSaveButtonDisabled: {opacity: 0.55},
+  headerSaveSpacer: {minWidth: 108, height: 48},
+  headerSaveText: {color: COLORS.white, fontSize: 17, fontWeight: '700'},
+  loadingContainer: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: SIZES.padding * 2,
+    minHeight: 200,
   },
-  modal: {
-    backgroundColor: COLORS.white,
-    borderTopLeftRadius: SIZES.radius * 2,
-    borderTopRightRadius: SIZES.radius * 2,
-    paddingBottom: SIZES.padding,
+  loadingText: {...FONTS.body3, marginTop: SIZES.base},
+  formContainer: {flex: 1},
+  formContent: {paddingHorizontal: 20},
+  pageTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    letterSpacing: -0.3,
+    marginTop: 8,
+    marginBottom: 20,
   },
-  header: {
+  sectionTitle: {
+    ...FONTS.h4,
+    fontWeight: '600',
+    paddingTop: SIZES.base,
+    paddingBottom: SIZES.base,
+  },
+  sectionTitleMargin: {marginTop: SIZES.base},
+  sectionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: SIZES.padding,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray2,
+    paddingTop: SIZES.base,
   },
-  title: {...FONTS.h2, color: COLORS.black},
-  closeBtn: {padding: 6},
-  closeText: {...FONTS.h2, color: COLORS.gray},
-  field: {
-    paddingHorizontal: SIZES.padding,
+  fieldContainer: {
     paddingVertical: SIZES.base,
   },
-  label: {...FONTS.body3, color: COLORS.black, marginBottom: 6},
-  helper: {...FONTS.body4, color: COLORS.gray, marginTop: 4},
+  label: {...FONTS.body3, marginBottom: SIZES.base / 2, fontWeight: '600'},
+  helper: {...FONTS.body4, marginBottom: SIZES.base},
   input: {
-    borderWidth: 1,
-    borderColor: COLORS.lightGray2,
-    borderRadius: SIZES.radius,
-    paddingHorizontal: SIZES.base,
     height: 44,
-    ...FONTS.body3,
-    color: COLORS.black,
-    backgroundColor: '#F7F9FD',
-  },
-  inputDisabled: {backgroundColor: '#EFF2F7', color: COLORS.gray},
-  divider: {
-    height: 1,
-    backgroundColor: COLORS.lightGray2,
-    marginHorizontal: SIZES.padding,
-    marginVertical: SIZES.base,
-  },
-  fieldHeader: {
-    paddingHorizontal: SIZES.padding,
-    paddingVertical: SIZES.base,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  sectionTitle: {...FONTS.h3, color: COLORS.black},
-  addLineBtn: {
-    paddingHorizontal: SIZES.base,
-    paddingVertical: SIZES.base / 2,
-    backgroundColor: COLORS.primary,
+    borderWidth: StyleSheet.hairlineWidth * 2,
     borderRadius: SIZES.radius,
+    paddingHorizontal: SIZES.base,
+    ...FONTS.body3,
+    marginBottom: SIZES.base / 2,
+  },
+  pickerContainer: {
+    borderWidth: StyleSheet.hairlineWidth * 2,
+    borderRadius: SIZES.radius,
+    overflow: 'hidden',
+    marginBottom: SIZES.base / 2,
+  },
+  picker: {width: '100%'},
+  addLineButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: COLORS.primary2,
   },
   addLineText: {...FONTS.body4, color: COLORS.white, fontWeight: '600'},
   lineCard: {
-    marginHorizontal: SIZES.padding,
-    marginBottom: SIZES.base,
-    padding: SIZES.base,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray2,
+    borderWidth: StyleSheet.hairlineWidth * 2,
     borderRadius: SIZES.radius,
-    backgroundColor: COLORS.white,
-    gap: 6,
+    padding: SIZES.base,
+    marginBottom: SIZES.base,
   },
-  deleteLineBtn: {
-    alignSelf: 'flex-end',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  deleteLineText: {...FONTS.body4, color: COLORS.error},
-  deletedBadge: {...FONTS.body4, color: COLORS.error, fontStyle: 'italic'},
-  footer: {
+  lineCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    padding: SIZES.padding,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.lightGray2,
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  button: {
-    flex: 1,
-    height: 44,
-    borderRadius: SIZES.radius,
     alignItems: 'center',
-    justifyContent: 'center',
-    marginHorizontal: SIZES.base / 2,
+    marginBottom: SIZES.base / 2,
   },
-  cancelButton: {backgroundColor: COLORS.lightGray1},
-  cancelText: {...FONTS.body3, color: COLORS.black},
-  saveButton: {backgroundColor: COLORS.primary},
-  postButton: {backgroundColor: COLORS.success},
-  saveText: {...FONTS.body3, color: COLORS.white, fontWeight: '600'},
+  lineCardTitle: {...FONTS.body3, fontWeight: '600'},
+  lineDeleteIcon: {width: 20, height: 20, tintColor: COLORS.error},
+  lineFieldRow: {flexDirection: 'row', gap: 10},
+  lineFieldHalf: {flex: 1},
+  lineFieldLabel: {...FONTS.body4, marginBottom: 4},
   secondaryButton: {
-    marginTop: SIZES.base / 2,
-    backgroundColor: COLORS.primary,
-    paddingVertical: SIZES.base / 2,
+    marginTop: SIZES.base,
+    backgroundColor: COLORS.primary2,
+    paddingVertical: 12,
     borderRadius: SIZES.radius,
     alignItems: 'center',
   },
   secondaryButtonText: {...FONTS.body3, color: COLORS.white, fontWeight: '600'},
+  actionRow: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingVertical: SIZES.base,
+  },
+  actionButton: {
+    flex: 1,
+    height: 48,
+    borderRadius: SIZES.radius,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  postButton: {backgroundColor: COLORS.success},
+  finalButton: {backgroundColor: COLORS.primary},
+  actionButtonText: {...FONTS.body3, color: COLORS.white, fontWeight: '600'},
 });
 
 export default PrepaymentFormModal;
-
-
-

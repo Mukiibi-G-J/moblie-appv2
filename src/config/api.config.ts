@@ -1,17 +1,33 @@
-// API Configuration
-// Set USE_TEST_ENV to true to use test environment
-export const USE_TEST_ENV = true; // Change to false for production
+import {Platform} from 'react-native';
 
-// Test Environment Configuration
-// Option 1: Use localhost (requires ADB port forwarding for Android)
-//   For Android: Run "adb reverse tcp:8000 tcp:8000" in terminal
-//   Then use: 'http://localhost:8000'
-// Option 2: Use your computer's IP address (device must be on same WiFi)
-//   Find your IP: Windows: ipconfig | findstr IPv4
-//   Then use: 'http://YOUR_IP:8000' (e.g., 'http://10.10.0.3:8000')
-export const TEST_API_BASE_URL = 'http://localhost:8000'; // Change to your IP if not using ADB reverse
+// Set USE_TEST_ENV to true to use test environment
+export const USE_TEST_ENV = false;
+
+export const TEST_API_PORT = 8000;
+
+/** Your PC WiFi IPv4 — run `ipconfig` on Windows and pick the WiFi adapter address. */
+export const TEST_API_LAN_HOST = '192.168.1.107';
+
+/**
+ * How the Android device reaches your local Django server:
+ * - 'adb-reverse': `adb reverse tcp:8000 tcp:8000` then app uses 127.0.0.1 (not localhost — avoids IPv6).
+ * - 'lan': Same WiFi — set TEST_API_LAN_HOST and run `python manage.py runserver 0.0.0.0:8000`
+ */
+export const TEST_API_CONNECT_MODE: 'adb-reverse' | 'lan' = 'adb-reverse';
+
 export const TEST_TENANT_SCHEMA = 'primewise';
 
+export function resolveTestApiBaseUrl(): string {
+  if (TEST_API_CONNECT_MODE === 'lan') {
+    return `http://${TEST_API_LAN_HOST}:${TEST_API_PORT}`;
+  }
+  if (Platform.OS === 'android') {
+    return `http://127.0.0.1:${TEST_API_PORT}`;
+  }
+  return `http://localhost:${TEST_API_PORT}`;
+}
+
+export const TEST_API_BASE_URL = resolveTestApiBaseUrl();
+
 // Production Environment (uses tenant-based subdomains)
-// Base URL will be constructed as: https://{tenant}.zentroapp-backend.com
 export const PROD_BASE_URL = 'https://zentroapp-backend.com';

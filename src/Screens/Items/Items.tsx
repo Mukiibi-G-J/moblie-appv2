@@ -16,7 +16,7 @@ import {
   Platform,
   KeyboardAvoidingView,
 } from 'react-native';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Picker } from '@react-native-picker/picker';
 import {
@@ -27,13 +27,16 @@ import {
 } from 'react-native-image-picker';
 import {
   fetchItems,
+  isInvalidPageError,
   updateItem,
   createItem,
   fetchCategories,
   fetchAllItemLedgerEntries,
   uploadItemImage,
   deleteItemImage,
+  fetchItemUnitsOfMeasure,
 } from '../../services/app.services';
+import ItemUnitOfMeasureModal from './ItemUnitOfMeasureModal';
 import { usePermissions } from '../../hooks/usePermissions';
 import { safeGoBack } from '../../hooks/NavigationService';
 import { PAGE_NAMES } from '../../constants/pageNames';
@@ -58,6 +61,7 @@ export interface Item {
     id: number;
   }[];
   inventory: number;
+  minimum_stock?: number | null;
   /** Backend item kind — matches web (`Inventory`, `Service`, `Non-Inventory`). */
   type?: string;
   category_id?: number | string | null;
@@ -142,12 +146,22 @@ const EditItemModal = ({
   const [imageUploadLoading, setImageUploadLoading] = useState(false);
   const [imageDeleteLoading, setImageDeleteLoading] = useState(false);
   const [imageUploadError, setImageUploadError] = useState < string | null > (null);
-  const [imageUploadSuccess, setImageUploadSuccess] = useState(false);
   const [inventoryEntriesVisible, setInventoryEntriesVisible] = useState(false);
   const [inventoryEntriesLoading, setInventoryEntriesLoading] = useState(false);
   const [inventoryEntriesError, setInventoryEntriesError] = useState<string | null>(null);
   const [inventoryEntries, setInventoryEntries] = useState<InventoryEntry[]>([]);
+  const [uomModalVisible, setUomModalVisible] = useState(false);
+  const [itemUomCount, setItemUomCount] = useState(0);
   // Removed in-app gallery states since we're using native gallery
+
+  const loadItemUomCount = useCallback(async (itemNo: string) => {
+    try {
+      const rows = await fetchItemUnitsOfMeasure(itemNo);
+      setItemUomCount(rows.length);
+    } catch {
+      setItemUomCount(0);
+    }
+  }, []);
 
   const { colors } = useTheme();
   const appCtx = useAppContext();
@@ -262,7 +276,6 @@ const EditItemModal = ({
     }
     setSelectedImage(null);
     setImageUploadError(null);
-    setImageUploadSuccess(false);
     loadCategories();
   }, [item, visible, isCreateMode, loadCategories, defaultCreateType]);
 
@@ -271,8 +284,16 @@ const EditItemModal = ({
       setInventoryEntriesVisible(false);
       setInventoryEntries([]);
       setInventoryEntriesError(null);
+      setUomModalVisible(false);
+      setItemUomCount(0);
     }
   }, [visible]);
+
+  useEffect(() => {
+    if (visible && editedItem?.no && !isCreateMode) {
+      loadItemUomCount(editedItem.no);
+    }
+  }, [visible, editedItem?.no, isCreateMode, loadItemUomCount]);
 
   const getSelectedCategoryLabel = () => {
     if (!editedItem || !editedItem.category_id) {
@@ -688,14 +709,12 @@ const EditItemModal = ({
             ],
           });
 
-          // Clear any previous error state and show success
           setImageUploadError(null);
-          setImageUploadSuccess(true);
-
-          // Clear success message after 3 seconds
-          setTimeout(() => {
-            setImageUploadSuccess(false);
-          }, 3000);
+          Toast.show({
+            type: 'success',
+            text1: 'Photo saved',
+            text2: 'Item image updated.',
+          });
 
           console.log(
             'setEditedItem called successfully with server URL:',
@@ -749,7 +768,6 @@ const EditItemModal = ({
 
         // Set error state for visual feedback
         setImageUploadError(errorMessage);
-        setImageUploadSuccess(false);
 
         // Don't update the item with local URI if upload failed
         console.log('Upload failed - not updating item with local URI');
@@ -915,28 +933,21 @@ const EditItemModal = ({
                       </View>
                     </View>
                   ) : null}
-                  {imageUploadSuccess ? (
-                    <View style={styles.successContainer}>
-                      <View style={styles.successIconContainer}>
-                        <Text style={styles.successIcon}>✓</Text>
-                      </View>
-                      <View style={styles.successContent}>
-                        <Text style={styles.successTitle}>Success!</Text>
-                        <Text style={styles.successText}>
-                          Image uploaded successfully
-                        </Text>
-                      </View>
-                    </View>
-                  ) : null}
-
                   <View style={[styles.squareTileOuter, editTheme.tileOuter]}>
-                    <View style={[styles.squareTileInner, editTheme.tileInner]}>
+                    <View
+                      style={[
+                        styles.squareTileInner,
+                        editTheme.tileInner,
+                        previewUri ? styles.squareTileInnerFilled : null,
+                      ]}>
                       {previewUri ? (
-                        <Image
-                          source={{ uri: previewUri }}
-                          style={[styles.squareTileImage, editTheme.tileImage]}
-                          resizeMode="cover"
-                        />
+                        <View style={styles.squareTileImageWrap}>
+                          <Image
+                            source={{ uri: previewUri }}
+                            style={[styles.squareTileImage, editTheme.tileImage]}
+                            resizeMode="cover"
+                          />
+                        </View>
                       ) : (
                         <>
                           <Text style={[styles.squareTileInitials, editTheme.tileInitials]}>
@@ -1110,37 +1121,47 @@ const EditItemModal = ({
 
                   <View style={[styles.editItemThickBar, editTheme.thickBar]} />
 
-                  <Text style={[styles.editItemSectionHeading, editTheme.sectionHeading]}>Options</Text>
-                  <Text style={[styles.editItemOptionsCopy, editTheme.optionsCopy]}>
-                    Add a custom set of options to create variations for an item. For
-                    example, add a size option set to create variations for small,
-                    medium, and large.
+                  <Text style={[styles.editItemSectionHeading, editTheme.sectionHeading]}>
+                    Units of measure
                   </Text>
-                  <TouchableOpacity
-                    onPress={() =>
-                      Toast.show({
-                        type: 'info',
-                        text1: 'Learn more',
-                        text2: 'Option sets will be available in a future update.',
-                      })
-                    }
-                    activeOpacity={0.7}>
-                    <Text style={[styles.editItemLearnMore, editTheme.learnMore]}>Learn more</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.editItemAddOptionsPill, editTheme.addOptionsPill]}
-                    onPress={() =>
-                      Toast.show({
-                        type: 'info',
-                        text1: 'Add options',
-                        text2: 'This will be available in a future update.',
-                      })
-                    }
-                    activeOpacity={0.7}>
-                    <Text style={[styles.editItemAddOptionsPillText, editTheme.addOptionsPillText]}>
-                      Add options
+                  <Text style={[styles.editItemOptionsCopy, editTheme.optionsCopy]}>
+                    Define how this item is sold (e.g. PCS, BOX). The default unit must
+                    have quantity per unit of 1.
+                  </Text>
+                  {isCreateMode || !editedItem.no ? (
+                    <Text style={[styles.editItemOptionsCopy, editTheme.optionsCopy]}>
+                      Save the item first, then open it again to add units of measure.
                     </Text>
-                  </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.editItemCategoryRow}
+                      onPress={() => setUomModalVisible(true)}
+                      disabled={!canEdit}
+                      activeOpacity={0.65}>
+                      <View style={[styles.editItemFolderIconWrap, editTheme.folderWrap]}>
+                        <Image
+                          source={icons.product as any}
+                          style={[styles.editItemFolderIcon, editTheme.folderIcon]}
+                          resizeMode="contain"
+                        />
+                      </View>
+                      <View style={styles.editItemCategoryRowText}>
+                        <Text style={[styles.editItemCategoryRowTitle, editTheme.catTitle]}>
+                          Manage units
+                        </Text>
+                        <Text style={[styles.editItemCategoryRowSubtitle, editTheme.catSubtitle]}>
+                          {itemUomCount === 0
+                            ? 'No units yet — tap to add'
+                            : `${itemUomCount} unit${itemUomCount === 1 ? '' : 's'}`}
+                        </Text>
+                      </View>
+                      <Image
+                        source={icons.down_arrow as any}
+                        style={[styles.squareSettingsChevron, editTheme.settingsChevron]}
+                        resizeMode="contain"
+                      />
+                    </TouchableOpacity>
+                  )}
 
                   <View style={[styles.editItemThickBar, editTheme.thickBar]} />
 
@@ -1230,6 +1251,34 @@ const EditItemModal = ({
                           })()}
                         </Text>
                       </View>
+                    </View>
+                  ) : null}
+
+                  {editedItem.type === 'Inventory' ? (
+                    <View style={[styles.squareOutlineField, editTheme.outlineField]}>
+                      <Text style={[styles.squareOutlineLabel, editTheme.outlineLabel]}>
+                        Minimum stock
+                      </Text>
+                      <TextInput
+                        style={[styles.squareOutlineInput, editTheme.outlineInput]}
+                        value={
+                          editedItem.minimum_stock != null &&
+                          editedItem.minimum_stock > 0
+                            ? String(editedItem.minimum_stock)
+                            : ''
+                        }
+                        onChangeText={text => {
+                          const digits = text.replace(/[^0-9]/g, '');
+                          setEditedItem({
+                            ...editedItem,
+                            minimum_stock:
+                              digits.length > 0 ? parseInt(digits, 10) : null,
+                          });
+                        }}
+                        keyboardType="number-pad"
+                        placeholder="Reorder threshold"
+                        placeholderTextColor={colors.placeholder}
+                      />
                     </View>
                   ) : null}
 
@@ -1369,6 +1418,18 @@ const EditItemModal = ({
           </View>
         </View>
       </Modal>
+      <ItemUnitOfMeasureModal
+        visible={uomModalVisible && visible}
+        onClose={() => setUomModalVisible(false)}
+        itemNo={editedItem?.no ?? ''}
+        itemName={editedItem?.item_name}
+        canEdit={canEdit}
+        onChanged={() => {
+          if (editedItem?.no) {
+            loadItemUomCount(editedItem.no);
+          }
+        }}
+      />
     </>
   );
 };
@@ -1385,21 +1446,6 @@ const Items = () => {
   const defaultCreateType: 'Inventory' | 'Service' = isAllServicesScreen
     ? 'Service'
     : 'Inventory';
-  const screenTitle = isAllServicesScreen ? 'All services' : 'All items';
-
-  // Early return if no read permission
-  if (!canRead(PAGE_NAME)) {
-    return (
-      <View style={[styles.container, { flex: 1, backgroundColor: colors.background }]}>
-        <View style={styles.accessDeniedContainer}>
-          <Text style={styles.accessDeniedTitle}>Access Denied</Text>
-          <Text style={styles.accessDeniedMessage}>
-            You don't have permission to view items.
-          </Text>
-        </View>
-      </View>
-    );
-  }
 
   const [editModal, setEditModal] = useState(false);
   const [createModal, setCreateModal] = useState(false);
@@ -1413,8 +1459,6 @@ const Items = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
-  const [showSuccessModal, setShowSuccessModal] = useState(false);
-  const [successMessage, setSuccessMessage] = useState('');
   const [filterModal, setFilterModal] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState < number | null > (null);
   const [stockFilter, setStockFilter] = useState <
@@ -1422,6 +1466,22 @@ const Items = () => {
     > ('all');
   const [categories, setCategories] = useState < Category[] > ([]);
   const [categoriesLoading, setCategoriesLoading] = useState(false);
+
+  const screenTitle = useMemo(() => {
+    if (isAllServicesScreen) {
+      return 'All services';
+    }
+    if (stockFilter === 'low_stock') {
+      return 'Low stock items';
+    }
+    if (stockFilter === 'out_of_stock') {
+      return 'Out of stock';
+    }
+    if (stockFilter === 'in_stock') {
+      return 'In stock items';
+    }
+    return 'All items';
+  }, [isAllServicesScreen, stockFilter]);
 
   const formatAmountWithCommas = (value: number | string | undefined | null) => {
     const numericValue =
@@ -1464,6 +1524,27 @@ const Items = () => {
   useEffect(() => {
     loadCategories();
   }, [loadCategories]);
+
+  useFocusEffect(
+    useCallback(() => {
+      setCurrentPage(1);
+      setHasNextPage(false);
+
+      const incoming = route.params?.stockFilter as
+        | 'all'
+        | 'in_stock'
+        | 'low_stock'
+        | 'out_of_stock'
+        | undefined;
+      if (
+        incoming &&
+        ['all', 'in_stock', 'low_stock', 'out_of_stock'].includes(incoming)
+      ) {
+        setStockFilter(incoming);
+        navigation.setParams({ stockFilter: undefined } as never);
+      }
+    }, [navigation, route.params?.stockFilter]),
+  );
 
   useEffect(() => {
     const reopenMode = route.params?.reopenItemModal as 'create' | 'edit' | undefined;
@@ -1517,6 +1598,16 @@ const Items = () => {
     navigation,
   ]);
 
+  const stockApiFilters = useMemo(() => {
+    if (stockFilter === 'low_stock') {
+      return { lowStock: true };
+    }
+    if (stockFilter === 'out_of_stock') {
+      return { inventoryStatus: 'OUT_OF_STOCK' as const };
+    }
+    return undefined;
+  }, [stockFilter]);
+
   const applyStockFilter = useCallback(
     (results: Item[]) => {
       const scopedResults = isAllServicesScreen
@@ -1529,11 +1620,21 @@ const Items = () => {
         return scopedResults;
       }
 
+      if (stockFilter === 'low_stock' || stockFilter === 'out_of_stock') {
+        return scopedResults;
+      }
+
       return scopedResults.filter(item => {
         const inventory = item?.inventory || 0;
+        const min = item?.minimum_stock;
+        const isLow =
+          min != null &&
+          min > 0 &&
+          inventory > 0 &&
+          inventory <= min;
         if (stockFilter === 'out_of_stock') return inventory === 0;
-        if (stockFilter === 'low_stock') return inventory > 0 && inventory < 10;
-        if (stockFilter === 'in_stock') return inventory >= 10;
+        if (stockFilter === 'low_stock') return isLow;
+        if (stockFilter === 'in_stock') return inventory > 0 && !isLow;
         return true;
       });
     },
@@ -1565,6 +1666,7 @@ const Items = () => {
           pageToLoad,
           searchQuery,
           selectedCategory || undefined,
+          stockApiFilters,
         );
 
         const pageResults = Array.isArray(response?.results) ? response.results : [];
@@ -1576,6 +1678,10 @@ const Items = () => {
         setCurrentPage(pageToLoad);
         setHasNextPage(Boolean(response?.next));
       } catch (error) {
+        if (isInvalidPageError(error) && pageToLoad > 1) {
+          setHasNextPage(false);
+          return;
+        }
         console.error('Error fetching items:', error);
         if (replace) {
           setItems([]);
@@ -1588,7 +1694,7 @@ const Items = () => {
         setSearchLoading(false);
       }
     },
-    [applyStockFilter, mergeUniqueItems, searchQuery, selectedCategory],
+    [applyStockFilter, mergeUniqueItems, searchQuery, selectedCategory, stockApiFilters],
   );
 
   const onRefresh = async () => {
@@ -1598,8 +1704,9 @@ const Items = () => {
   };
 
   useEffect(() => {
+    setCurrentPage(1);
+    setHasNextPage(false);
     const debounceTimer = setTimeout(() => {
-      setHasNextPage(true);
       loadItems(1, true);
     }, 500);
 
@@ -1627,8 +1734,33 @@ const Items = () => {
 
   const hasActiveFilters = selectedCategory !== null || stockFilter !== 'all';
 
+  const activeFilterLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (stockFilter === 'low_stock') {
+      parts.push('Low stock');
+    } else if (stockFilter === 'out_of_stock') {
+      parts.push('Out of stock');
+    } else if (stockFilter === 'in_stock') {
+      parts.push('In stock');
+    }
+    if (selectedCategory !== null) {
+      const cat = categories.find(c => c.id === selectedCategory);
+      parts.push(cat?.name ? `Category: ${cat.name}` : 'Category filter');
+    }
+    if (searchQuery.trim()) {
+      parts.push(`Search: "${searchQuery.trim()}"`);
+    }
+    return parts.length > 0 ? parts.join(' · ') : 'All items';
+  }, [stockFilter, selectedCategory, categories, searchQuery]);
+
   const handleLoadMore = () => {
-    if (loading || loadingMore || refreshing || !hasNextPage) {
+    if (
+      loading ||
+      loadingMore ||
+      refreshing ||
+      !hasNextPage ||
+      items.length === 0
+    ) {
       return;
     }
 
@@ -1737,6 +1869,22 @@ const Items = () => {
               {formatCurrencyLabel(item?.unit_price)}
             </Text>
           </View>
+          {stockFilter !== 'all' && item?.type !== 'Service' && item?.type !== 'Non-Inventory' ? (
+            <Text
+              style={[
+                styles.itemStockMeta,
+                {
+                  color:
+                    stockFilter === 'low_stock' ? COLORS.error : colors.textSecondary,
+                },
+              ]}
+              numberOfLines={1}>
+              Qty {Math.max(0, Math.floor(Number(item?.inventory) || 0))}
+              {item?.minimum_stock != null && item.minimum_stock > 0
+                ? ` · Min ${item.minimum_stock}`
+                : ''}
+            </Text>
+          ) : null}
         </View>
       </TouchableOpacity>
     );
@@ -1777,8 +1925,11 @@ const Items = () => {
 
       const response = await updateItem(itemId, itemToSave);
       if (response.status === 200 || response.status === 201) {
-        setSuccessMessage('Item updated successfully');
-        setShowSuccessModal(true);
+        Toast.show({
+          type: 'success',
+          text1: 'Item updated',
+          text2: 'Your changes have been saved.',
+        });
         setEditModal(false);
         setSelectedItem(null);
         loadItems();
@@ -1839,14 +1990,20 @@ const Items = () => {
         itemToCreate.unit_cost = Number(draftItem.unit_cost) || 0;
       }
 
+      if (itemType === 'Inventory' && draftItem.minimum_stock != null) {
+        const minStock = Number(draftItem.minimum_stock);
+        if (minStock > 0) {
+          itemToCreate.minimum_stock = minStock;
+        }
+      }
+
       const response = await createItem(itemToCreate);
       if (response.status === 200 || response.status === 201) {
-        setSuccessMessage(
-          itemType === 'Service'
-            ? 'Service created successfully'
-            : 'Item created successfully',
-        );
-        setShowSuccessModal(true);
+        Toast.show({
+          type: 'success',
+          text1: itemType === 'Service' ? 'Service created' : 'Item created',
+          text2: 'It is now available in your catalog.',
+        });
         setCreateModal(false);
         setCreateDraftItem(null);
         setSelectedItem(null);
@@ -1870,6 +2027,19 @@ const Items = () => {
     setSelectedTab(tab);
     navigation.navigate('Home' as never);
   };
+
+  if (!canRead(PAGE_NAME)) {
+    return (
+      <View style={[styles.container, { flex: 1, backgroundColor: colors.background }]}>
+        <View style={styles.accessDeniedContainer}>
+          <Text style={styles.accessDeniedTitle}>Access Denied</Text>
+          <Text style={styles.accessDeniedMessage}>
+            You don't have permission to view items.
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -1969,6 +2139,21 @@ const Items = () => {
         </View>
       </View>
 
+      {hasActiveFilters ? (
+        <View
+          style={[
+            styles.filterSummaryRow,
+            { backgroundColor: colors.screenMuted },
+          ]}>
+          <Text style={[styles.filterSummaryLabel, { color: colors.textSecondary }]}>
+            Active filters:
+          </Text>
+          <Text style={[styles.filterSummaryValue, { color: colors.textPrimary }]}>
+            {activeFilterLabel}
+          </Text>
+        </View>
+      ) : null}
+
       {loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={COLORS.primary2} />
@@ -2031,9 +2216,11 @@ const Items = () => {
                 <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
                   {searchQuery
                     ? 'Try adjusting your search terms'
-                    : canCreate(PAGE_NAME)
-                      ? 'Create your first item to get started.'
-                      : 'No items available at the moment'}
+                    : stockFilter === 'low_stock'
+                      ? 'No low stock items right now. Set minimum stock levels on inventory items to track them.'
+                      : canCreate(PAGE_NAME)
+                        ? 'Create your first item to get started.'
+                        : 'No items available at the moment'}
                 </Text>
                 {canCreate(PAGE_NAME) && !searchQuery ? (
                   <TouchableOpacity
@@ -2085,28 +2272,6 @@ const Items = () => {
         canEdit={canEdit(PAGE_NAME)}
         canDelete={canDelete(PAGE_NAME)}
       />
-
-      {/* Custom Success Modal */}
-      <Modal
-        visible={showSuccessModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowSuccessModal(false)}>
-        <View style={styles.successModalOverlay}>
-          <View style={styles.successModalContent}>
-            <View style={styles.successModalIconContainer}>
-              <Text style={styles.successModalIcon}>✓</Text>
-            </View>
-            <Text style={styles.successModalTitle}>Success!</Text>
-            <Text style={styles.successModalMessage}>{successMessage}</Text>
-            <TouchableOpacity
-              style={styles.successModalButton}
-              onPress={() => setShowSuccessModal(false)}>
-              <Text style={styles.successModalButtonText}>Continue</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
 
       {/* Filter Modal */}
       <Modal
@@ -2607,24 +2772,26 @@ const styles = StyleSheet.create({
   },
   squareTileOuter: {
     alignSelf: 'center',
-    width: '60%',
-    maxWidth: 180,
+    width: '92%',
+    maxWidth: 380,
     aspectRatio: 1,
     backgroundColor: '#ECECEC',
     borderRadius: 16,
-    alignItems: 'center',
+    alignItems: 'stretch',
     justifyContent: 'center',
-    padding: 10,
-    marginBottom: 10,
+    padding: 8,
+    marginBottom: 12,
   },
   squareTileInner: {
+    flex: 1,
+    alignSelf: 'stretch',
+    width: '100%',
     backgroundColor: COLORS.white,
     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 12,
-    paddingHorizontal: 10,
-    width: '66%',
+    paddingHorizontal: 12,
     minHeight: 72,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
@@ -2632,10 +2799,22 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 2,
   },
+  /** When showing a photo, inner fills the outer tile so the image can be large and clear. */
+  squareTileInnerFilled: {
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    overflow: 'hidden',
+  },
+  squareTileImageWrap: {
+    flex: 1,
+    width: '100%',
+    minHeight: 180,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: COLORS.lightGray2,
+  },
   squareTileImage: {
-    width: 56,
-    height: 56,
-    borderRadius: 6,
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: COLORS.lightGray2,
   },
   squareTileInitials: {
@@ -3383,117 +3562,6 @@ const styles = StyleSheet.create({
     ...FONTS.body4,
     color: COLORS.error,
   },
-  successContainer: {
-    backgroundColor: COLORS.success + '15',
-    borderWidth: 1,
-    borderColor: COLORS.success + '40',
-    borderRadius: SIZES.radius,
-    padding: SIZES.base * 2,
-    marginBottom: SIZES.base * 2,
-    flexDirection: 'row',
-    alignItems: 'center',
-    shadowColor: COLORS.success,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  successIconContainer: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: COLORS.success,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: SIZES.base * 1.5,
-  },
-  successIcon: {
-    color: COLORS.white,
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  successContent: {
-    flex: 1,
-  },
-  successTitle: {
-    ...FONTS.h4,
-    color: COLORS.success,
-    marginBottom: SIZES.base * 0.25,
-  },
-  successText: {
-    ...FONTS.body4,
-    color: COLORS.success,
-  },
-  // Custom Success Modal Styles
-  successModalOverlay: {
-    flex: 1,
-    backgroundColor: COLORS.overlay2,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: SIZES.base * 2.5,
-  },
-  successModalContent: {
-    backgroundColor: COLORS.white,
-    borderRadius: SIZES.radius * 2,
-    padding: SIZES.padding * 1.5,
-    alignItems: 'center',
-    maxWidth: 300,
-    width: '100%',
-    shadowColor: COLORS.black,
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.3,
-    shadowRadius: 20,
-    elevation: 15,
-  },
-  successModalIconContainer: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: COLORS.success,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: SIZES.base * 2.5,
-    shadowColor: COLORS.success,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-  successModalIcon: {
-    color: COLORS.white,
-    fontSize: 32,
-    fontWeight: 'bold',
-  },
-  successModalTitle: {
-    ...FONTS.h1,
-    color: COLORS.black,
-    marginBottom: SIZES.base,
-    textAlign: 'center',
-  },
-  successModalMessage: {
-    ...FONTS.body3,
-    color: COLORS.gray2,
-    textAlign: 'center',
-    marginBottom: SIZES.base * 3,
-    lineHeight: 22,
-  },
-  successModalButton: {
-    backgroundColor: COLORS.success,
-    paddingHorizontal: SIZES.base * 4,
-    paddingVertical: SIZES.base * 1.5,
-    borderRadius: SIZES.radius,
-    shadowColor: COLORS.success,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-  successModalButtonText: {
-    ...FONTS.button,
-    color: COLORS.white,
-    fontSize: 16,
-    textAlign: 'center',
-  },
   // Filter Modal Styles
   filterModalOverlay: {
     flex: 1,
@@ -3548,6 +3616,30 @@ const styles = StyleSheet.create({
     ...FONTS.h4,
     color: COLORS.black,
     marginBottom: SIZES.base * 1.5,
+  },
+  filterSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    borderRadius: SIZES.radius,
+    paddingHorizontal: SIZES.padding,
+    paddingVertical: SIZES.base / 2,
+    marginHorizontal: SIZES.padding,
+    marginBottom: SIZES.base / 2,
+  },
+  filterSummaryLabel: {
+    ...FONTS.body5,
+    fontSize: 12,
+    marginRight: 4,
+  },
+  filterSummaryValue: {
+    ...FONTS.body4,
+    fontSize: 12,
+    flex: 1,
+  },
+  itemStockMeta: {
+    ...FONTS.body5,
+    fontSize: 12,
+    marginTop: 4,
   },
   stockFilterContainer: {
     flexDirection: 'row',

@@ -19,8 +19,25 @@ export type SalesHistoryListItemData = {
   /** API may return number or numeric string */
   total_amount?: number | string;
   payment_method_name?: string;
+  /** List API: Paid / Not Paid Yet / Fully Paid when method name is absent */
+  payment_status?: string;
   status?: 'Draft' | 'Open' | 'Posted' | 'Cancelled' | string;
 };
+
+export function salesHistoryPaymentLabel(item: {
+  payment_method_name?: string;
+  payment_status?: string;
+}): string {
+  const method = item.payment_method_name?.trim();
+  if (method) {
+    return method;
+  }
+  const status = item.payment_status?.trim();
+  if (status && status !== 'Not Paid Yet') {
+    return status;
+  }
+  return '—';
+}
 
 type Props = {
   item: SalesHistoryListItemData;
@@ -141,7 +158,7 @@ const SalesHistoryListItem: React.FC<Props> = ({
           <Text
             style={[styles.detailValue, t.detailValue]}
             numberOfLines={1}>
-            {item.payment_method_name || '—'}
+            {salesHistoryPaymentLabel(item)}
           </Text>
         </View>
       </View>

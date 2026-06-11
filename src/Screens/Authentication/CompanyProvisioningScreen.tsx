@@ -13,7 +13,7 @@ import Toast from "react-native-toast-message";
 import { useTheme } from "../../context/ThemeContext";
 import { FONTS } from "../../constants";
 import { authOnboarding } from "../../design-system/authOnboardingTokens";
-import { setTenant } from "../../utils/tenant";
+import { seedLoginCredentialsAfterSignup } from "../../utils/loginCredentials";
 import {
     getPendingCompanyCreation,
     clearPendingCompanyCreation,
@@ -34,7 +34,7 @@ const CompanyProvisioningScreen = () => {
     const finishSuccess = useCallback(
         async (companyName: string, email: string) => {
             await clearPendingCompanyCreation();
-            await setTenant(companyName, email);
+            await seedLoginCredentialsAfterSignup(companyName, email);
             Toast.show({
                 text1: "Company created",
                 text2: "Sign in with your email and password.",

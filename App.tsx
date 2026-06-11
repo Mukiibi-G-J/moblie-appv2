@@ -3,7 +3,6 @@ import {
   NavigationContainer,
   DarkTheme,
   DefaultTheme,
-  CommonActions,
 } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -31,6 +30,7 @@ import AllItems from './src/Screens/Items/Items';
 import ItemsMenu from './src/Screens/Items/ItemsMenu';
 import Customers from './src/Screens/Customers/Customers';
 import ItemCategories from './src/Screens/Items/ItemCategories';
+import UnitsOfMeasure from './src/Screens/Items/UnitsOfMeasure';
 import SalesHistory from './src/Screens/Sales/SalesHistory';
 import PrintLabels from './src/Screens/PrintLabels/PrintLabels';
 import SignUp from './src/Screens/Authentication/SignUp';
@@ -45,6 +45,8 @@ import {
 } from './src/storage/restaurantDeviceStorage';
 import Otp from './src/Screens/Otp/Otp';
 import ItemJournal from './src/Screens/ItemJournal/ItemJournal';
+import OpeningBalanceJournal from './src/Screens/ItemJournal/OpeningBalanceJournal';
+import ItemJournalHistory from './src/Screens/ItemJournal/ItemJournalHistory';
 import SearchPage from './src/Screens/Search/SearchPage';
 import NetworkManager from './src/utils/networkManager';
 import Toast from 'react-native-toast-message';
@@ -83,6 +85,7 @@ import { ThemeProvider, useTheme } from './src/context/ThemeContext';
 import { COLORS } from './src/constants';
 import { AppUpdateGate } from './src/Components/AppUpdateGate';
 import RestaurantPinRouteGate from './src/Components/RestaurantPinRouteGate';
+import BranchSelectModal from './src/Components/BranchSelectModal';
 
 const Stack = createStackNavigator();
 
@@ -139,9 +142,18 @@ const RouteItemCategories = protectRoute(
   ItemCategories,
   PAGE_NAMES.ITEM_CATEGORIES,
 );
+const RouteUnitsOfMeasure = protectRoute(UnitsOfMeasure, PAGE_NAMES.ITEMS);
 const RouteSalesHistory = protectRoute(SalesHistory, PAGE_NAMES.SALES_HISTORY);
 const RoutePrintLabels = protectRoute(PrintLabels, PAGE_NAMES.ITEMS);
 const RouteItemJournal = protectRoute(ItemJournal, PAGE_NAMES.ITEM_JOURNAL);
+const RouteOpeningBalanceJournal = protectRoute(
+  OpeningBalanceJournal,
+  PAGE_NAMES.ITEM_JOURNAL,
+);
+const RouteItemJournalHistory = protectRoute(
+  ItemJournalHistory,
+  PAGE_NAMES.ADJUST_INVENTORY_HISTORY,
+);
 const RouteSearchPage = protectRoute(SearchPage, PAGE_NAMES.ITEMS);
 const RoutePurchaseHistory = protectRoute(
   PurchaseHistory,
@@ -227,7 +239,7 @@ const GUEST_STACK_ROUTES = new Set<string>([
 
 const AppNavigator = () => {
   const { accessToken } = useAuth();
-  const { branchSession } = useAppContext() as any;
+  const { sessionHydrated } = useAppContext() as any;
   const [isLoading, setIsLoading] = useState(true);
   const [initialRoute, setInitialRoute] = useState('OnBoarding');
   const isFirstRunRef = useRef(true);
@@ -254,8 +266,6 @@ const AppNavigator = () => {
           if (showPinImmediate === '1') {
             setInitialRoute('RestaurantPinSetup');
             await AsyncStorage.removeItem(RESTAURANT_SHOW_PIN_SETUP_IMMEDIATE_KEY);
-          } else if (branchSession?.branchSelectionPending) {
-            setInitialRoute('SelectBranch');
           } else {
             setInitialRoute('Home');
           }
@@ -293,33 +303,9 @@ const AppNavigator = () => {
     };
     NetworkManager.getInstance();
     initializeApp();
-  }, [accessToken, branchSession?.branchSelectionPending]);
+  }, [accessToken, sessionHydrated]);
 
-  // If branch selection becomes pending after the auth stack mounted (e.g. Home won
-  // initialRouteName due to timing), reset — matches web modal always blocking app.
-  useEffect(() => {
-    if (!accessToken || !branchSession?.branchSelectionPending) {
-      return;
-    }
-    const id = requestAnimationFrame(() => {
-      const nav = navigationRef.current;
-      if (!nav?.isReady()) {
-        return;
-      }
-      if (nav.getCurrentRoute()?.name === 'SelectBranch') {
-        return;
-      }
-      nav.dispatch(
-        CommonActions.reset({
-          index: 0,
-          routes: [{name: 'SelectBranch'}],
-        }),
-      );
-    });
-    return () => cancelAnimationFrame(id);
-  }, [accessToken, branchSession?.branchSelectionPending]);
-
-  if (isLoading) {
+  if (isLoading || !sessionHydrated) {
     return <SplashScreen />;
   }
 
@@ -329,11 +315,9 @@ const AppNavigator = () => {
         key={accessToken ? 'auth' : 'guest'}
         initialRouteName={
           accessToken
-            ? branchSession?.branchSelectionPending
-              ? 'SelectBranch'
-              : initialRoute === 'RestaurantPinSetup'
-                ? 'RestaurantPinSetup'
-                : 'Home'
+            ? initialRoute === 'RestaurantPinSetup'
+              ? 'RestaurantPinSetup'
+              : 'Home'
             : guestInitialRouteName
         }
         screenOptions={{
@@ -511,6 +495,11 @@ const AppNavigator = () => {
               options={{ headerShown: false }}
             />
             <Stack.Screen
+              name="UnitsOfMeasure"
+              component={RouteUnitsOfMeasure}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
               name="SalesHistory"
               component={RouteSalesHistory}
               options={{ headerShown: false }}
@@ -523,6 +512,16 @@ const AppNavigator = () => {
             <Stack.Screen
               name="ItemJournal"
               component={RouteItemJournal}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="OpeningBalanceJournal"
+              component={RouteOpeningBalanceJournal}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="ItemJournalHistory"
+              component={RouteItemJournalHistory}
               options={{ headerShown: false }}
             />
             <Stack.Screen
@@ -667,6 +666,7 @@ function ThemedNavigation() {
   return (
     <NavigationContainer ref={navigationRef} theme={navTheme}>
       <AppNavigator />
+      <BranchSelectModal />
       <RestaurantPinRouteGate />
     </NavigationContainer>
   );

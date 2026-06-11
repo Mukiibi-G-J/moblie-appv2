@@ -8,344 +8,325 @@ import {
   Platform,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
-import {FONTS, SIZES, icons} from '../../constants';
+import {constants, COLORS, FONTS, icons} from '../../constants';
 import {PAGE_NAMES, RESTAURANT_MODULE_ENTRY_PAGE_NAMES} from '../../constants/pageNames';
 import {usePermissions} from '../../hooks/usePermissions';
 import {useTheme} from '../../context/ThemeContext';
+import {useTabContext} from '../../context/Store';
 import {navigate} from '../../hooks/NavigationService';
 
-type PrimaryAction = {
-  key: string;
-  icon: number;
-  title: string;
-  subtitle: string;
-  onPress: () => void;
+const COLUMNS = 4;
+
+type ShortcutColor = {
+  bg: string;
+  tint: string;
 };
 
-type LinkRow = {
+type ShortcutAction = {
   key: string;
+  icon: number;
   label: string;
-  icon: number;
+  color: ShortcutColor;
   onPress: () => void;
-  visible: boolean;
 };
 
-function chunkIntoPairs<T>(items: T[]): T[][] {
+const SHORTCUT_PALETTE: ShortcutColor[] = [
+  {bg: 'rgba(2, 134, 255, 0.14)', tint: COLORS.primary},
+  {bg: 'rgba(0, 184, 148, 0.14)', tint: COLORS.success},
+  {bg: 'rgba(255, 161, 51, 0.16)', tint: COLORS.warning},
+  {bg: 'rgba(46, 134, 222, 0.14)', tint: COLORS.info},
+  {bg: 'rgba(0, 102, 204, 0.14)', tint: COLORS.primary2},
+  {bg: 'rgba(255, 71, 87, 0.12)', tint: COLORS.error},
+  {bg: 'rgba(0, 163, 255, 0.14)', tint: COLORS.accent},
+  {bg: 'rgba(44, 62, 80, 0.12)', tint: COLORS.secondary},
+];
+
+const SHORTCUT_COLOR_BY_KEY: Partial<Record<string, ShortcutColor>> = {
+  makeSale: {bg: 'rgba(2, 134, 255, 0.16)', tint: COLORS.primary},
+  items: {bg: 'rgba(0, 184, 148, 0.16)', tint: COLORS.success},
+  printLabels: {bg: 'rgba(46, 134, 222, 0.14)', tint: COLORS.info},
+  expenses: {bg: 'rgba(255, 161, 51, 0.16)', tint: COLORS.warning},
+  restaurant: {bg: 'rgba(255, 71, 87, 0.12)', tint: COLORS.error},
+  salesHistory: {bg: 'rgba(0, 163, 255, 0.14)', tint: COLORS.accent},
+  reports: {bg: 'rgba(44, 62, 80, 0.12)', tint: COLORS.secondary},
+  stockAdjustments: {bg: 'rgba(0, 184, 148, 0.12)', tint: COLORS.success},
+  openingBalance: {bg: 'rgba(0, 102, 204, 0.14)', tint: COLORS.primary2},
+  customers: {bg: 'rgba(2, 134, 255, 0.12)', tint: COLORS.primary},
+  suppliers: {bg: 'rgba(255, 161, 51, 0.14)', tint: COLORS.warning},
+  payments: {bg: 'rgba(0, 102, 204, 0.14)', tint: COLORS.primary2},
+};
+
+function chunkByColumns<T>(items: T[], columns: number): T[][] {
   const rows: T[][] = [];
-  for (let i = 0; i < items.length; i += 2) {
-    rows.push(items.slice(i, i + 2));
+  for (let i = 0; i < items.length; i += columns) {
+    rows.push(items.slice(i, i + columns));
   }
   return rows;
 }
 
+function colorForShortcut(key: string, index: number): ShortcutColor {
+  return (
+    SHORTCUT_COLOR_BY_KEY[key] ??
+    SHORTCUT_PALETTE[index % SHORTCUT_PALETTE.length]
+  );
+}
+
 const Options = () => {
   const navigation = useNavigation();
+  const {setSelectedTab} = useTabContext();
   const {isModuleVisible, hasAnyPageAccess, canRead} = usePermissions();
   const {colors} = useTheme();
 
   const t = useMemo(
     () => ({
       sectionTitle: {color: colors.textPrimary},
-      tile: {
+      card: {
         backgroundColor: colors.card,
         borderColor: colors.border,
       },
-      iconWrap: {
-        backgroundColor: colors.screenMuted,
-        borderColor: colors.border,
-      },
-      title: {color: colors.textPrimary},
-      subtitle: {color: colors.textSecondary},
-      listCard: {
-        backgroundColor: colors.card,
-        borderColor: colors.border,
-      },
-      linkRowBg: {backgroundColor: colors.background},
-      linkLabel: {color: colors.textPrimary},
-      linkIconTint: {tintColor: colors.textSecondary},
-      linkChevron: {color: colors.textSecondary},
-      rowDivider: {backgroundColor: colors.border},
+      label: {color: colors.textPrimary},
     }),
     [colors],
   );
-
-  const canOpenExpenseHistory =
-    isModuleVisible('expenses') &&
-    (hasAnyPageAccess(PAGE_NAMES.EXPENSE_HISTORY) ||
-      hasAnyPageAccess(PAGE_NAMES.EXPENSES));
 
   const showSalesHistory =
     isModuleVisible('sales') && hasAnyPageAccess(PAGE_NAMES.SALES_HISTORY);
   const showPrintLabels =
     isModuleVisible('items') && canRead(PAGE_NAMES.ITEMS);
+  const canMakeSale =
+    isModuleVisible('sales') && hasAnyPageAccess(PAGE_NAMES.SALES);
 
   const showRestaurantQuick =
     isModuleVisible('restaurant') &&
     RESTAURANT_MODULE_ENTRY_PAGE_NAMES.some(p => hasAnyPageAccess(p));
 
-  const primaryDefs: PrimaryAction[] = [];
+  const shortcuts: ShortcutAction[] = useMemo(() => {
+    const defs: Omit<ShortcutAction, 'color'>[] = [];
 
-  if (isModuleVisible('items') && hasAnyPageAccess(PAGE_NAMES.ITEMS)) {
-    primaryDefs.push({
-      key: 'items',
-      icon: icons.product,
-      title: 'Items',
-      subtitle: 'Inventory & stock',
-      onPress: () => navigation.navigate('Items' as never),
-    });
-  }
-  if (showPrintLabels) {
-    primaryDefs.push({
-      key: 'printLabels',
-      icon: icons.printer,
-      title: 'Print labels',
-      subtitle: 'Barcode & tags',
-      onPress: () => navigation.navigate('PrintLabels' as never),
-    });
-  }
-  if (isModuleVisible('expenses') && hasAnyPageAccess(PAGE_NAMES.EXPENSES)) {
-    primaryDefs.push({
-      key: 'expenses',
-      icon: icons.coupon,
-      title: 'Expenses',
-      subtitle: 'Record & manage',
-      onPress: () => navigation.navigate('Expenses' as never),
-    });
-  }
-  if (canOpenExpenseHistory) {
-    primaryDefs.push({
-      key: 'expenseHistory',
-      icon: icons.reports,
-      title: 'Expense history',
-      subtitle: 'Posted expenses',
-      onPress: () => navigation.navigate('ExpenseHistory' as never),
-    });
-  }
-  if (showRestaurantQuick) {
-    primaryDefs.push({
-      key: 'restaurant',
-      icon: icons.tray,
-      title: 'Restaurant',
-      subtitle: 'POS, floor, kitchen',
-      onPress: () => navigate('RestaurantHub', undefined),
-    });
-  }
+    if (canMakeSale) {
+      defs.push({
+        key: 'makeSale',
+        icon: icons.cart,
+        label: 'Make sale',
+        onPress: () => setSelectedTab(constants.screens.makeSale),
+      });
+    }
+    if (isModuleVisible('items') && hasAnyPageAccess(PAGE_NAMES.ITEMS)) {
+      defs.push({
+        key: 'items',
+        icon: icons.product,
+        label: 'Items',
+        onPress: () => navigation.navigate('Items' as never),
+      });
+    }
+    if (showPrintLabels) {
+      defs.push({
+        key: 'printLabels',
+        icon: icons.printer,
+        label: 'Print labels',
+        onPress: () => navigation.navigate('PrintLabels' as never),
+      });
+    }
+    if (isModuleVisible('expenses') && hasAnyPageAccess(PAGE_NAMES.EXPENSES)) {
+      defs.push({
+        key: 'expenses',
+        icon: icons.coupon,
+        label: 'Expenses',
+        onPress: () => navigation.navigate('Expenses' as never),
+      });
+    }
+    if (
+      isModuleVisible('payments') &&
+      hasAnyPageAccess(PAGE_NAMES.PAYMENTS)
+    ) {
+      defs.push({
+        key: 'payments',
+        icon: icons.wallet,
+        label: 'Payments',
+        onPress: () => navigate('Payments', undefined),
+      });
+    }
+    if (showRestaurantQuick) {
+      defs.push({
+        key: 'restaurant',
+        icon: icons.tray,
+        label: 'Restaurant',
+        onPress: () => navigate('RestaurantHub', undefined),
+      });
+    }
+    if (showSalesHistory) {
+      defs.push({
+        key: 'salesHistory',
+        icon: icons.reports,
+        label: 'Sales history',
+        onPress: () => navigate('SalesHistory', undefined),
+      });
+    }
+    if (isModuleVisible('reports') && hasAnyPageAccess(PAGE_NAMES.REPORTS)) {
+      defs.push({
+        key: 'reports',
+        icon: icons.reports,
+        label: 'Reports',
+        onPress: () => navigate('Reports', undefined),
+      });
+    }
+    if (
+      isModuleVisible('inventory') &&
+      hasAnyPageAccess(PAGE_NAMES.ITEM_JOURNAL)
+    ) {
+      defs.push({
+        key: 'stockAdjustments',
+        icon: icons.itemJournal,
+        label: 'Stock adj.',
+        onPress: () => navigate('ItemJournal', undefined),
+      });
+      defs.push({
+        key: 'openingBalance',
+        icon: icons.itemJournal,
+        label: 'Opening bal.',
+        onPress: () => navigate('OpeningBalanceJournal', undefined),
+      });
+    }
+    if (
+      isModuleVisible('customers') &&
+      hasAnyPageAccess(PAGE_NAMES.CUSTOMER_MANAGEMENT)
+    ) {
+      defs.push({
+        key: 'customers',
+        icon: icons.profile,
+        label: 'Customers',
+        onPress: () => navigate('Customers', undefined),
+      });
+    }
+    if (
+      isModuleVisible('suppliers') &&
+      hasAnyPageAccess(PAGE_NAMES.SUPPLIERS)
+    ) {
+      defs.push({
+        key: 'suppliers',
+        icon: icons.company,
+        label: 'Suppliers',
+        onPress: () => navigate('Suppliers', undefined),
+      });
+    }
 
-  const linkRows: LinkRow[] = [
-    {
-      key: 'salesHistory',
-      label: 'Sales history',
-      icon: icons.reports,
-      visible: showSalesHistory,
-      onPress: () => navigate('SalesHistory', undefined),
-    },
-    {
-      key: 'reports',
-      label: 'Reports',
-      icon: icons.reports,
-      visible:
-        isModuleVisible('reports') && hasAnyPageAccess(PAGE_NAMES.REPORTS),
-      onPress: () => navigate('Reports', undefined),
-    },
-    {
-      key: 'stockAdjustments',
-      label: 'Stock adjustments',
-      icon: icons.itemJournal,
-      visible:
-        isModuleVisible('inventory') &&
-        hasAnyPageAccess(PAGE_NAMES.ITEM_JOURNAL),
-      onPress: () => navigate('ItemJournal', undefined),
-    },
-    {
-      key: 'customers',
-      label: 'Customers',
-      icon: icons.profile,
-      visible:
-        isModuleVisible('customers') &&
-        hasAnyPageAccess(PAGE_NAMES.CUSTOMER_MANAGEMENT),
-      onPress: () => navigate('Customers', undefined),
-    },
-    {
-      key: 'suppliers',
-      label: 'Suppliers',
-      icon: icons.company,
-      visible:
-        isModuleVisible('suppliers') &&
-        hasAnyPageAccess(PAGE_NAMES.SUPPLIERS),
-      onPress: () => navigate('Suppliers', undefined),
-    },
-  ];
+    return defs.map((item, index) => ({
+      ...item,
+      color: colorForShortcut(item.key, index),
+    }));
+  }, [
+    canMakeSale,
+    showPrintLabels,
+    showRestaurantQuick,
+    showSalesHistory,
+    isModuleVisible,
+    hasAnyPageAccess,
+    navigation,
+    setSelectedTab,
+  ]);
 
-  const visibleLinks = linkRows.filter(r => r.visible);
-  const hasAnyContent = primaryDefs.length > 0 || visibleLinks.length > 0;
-
-  if (!hasAnyContent) {
+  if (shortcuts.length === 0) {
     return null;
   }
 
-  const rows = chunkIntoPairs(primaryDefs);
+  const rows = chunkByColumns(shortcuts, COLUMNS);
 
   return (
     <View style={styles.container}>
-      {primaryDefs.length > 0 ? (
-        <>
-          <View style={styles.header}>
-            <Text style={[styles.headerText, t.sectionTitle, FONTS.h3]}>
-              Quick actions
-            </Text>
-          </View>
-          {rows.map((pair, rowIndex) => (
-            <View key={rowIndex} style={styles.gridRow}>
-              {pair.map(item => (
-                <TouchableOpacity
-                  key={item.key}
-                  style={[styles.optionButton, t.tile]}
-                  onPress={item.onPress}
-                  activeOpacity={0.7}>
-                  <View style={[styles.iconContainer, t.iconWrap]}>
-                    <Image
-                      source={item.icon as any}
-                      style={[styles.icon, {tintColor: colors.iconMuted}]}
-                      resizeMode="contain"
-                    />
-                  </View>
-                  <View style={styles.textContainer}>
-                    <Text style={[styles.title, t.title]}>{item.title}</Text>
-                    <Text style={[styles.subtitle, t.subtitle]}>
-                      {item.subtitle}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
-          ))}
-        </>
-      ) : null}
-
-      {visibleLinks.length > 0 ? (
-        <View
-          style={[
-            styles.linksSection,
-            primaryDefs.length > 0 ? styles.linksSectionSpaced : null,
-          ]}>
-          <View style={styles.header}>
-            <Text style={[styles.headerText, t.sectionTitle, FONTS.h3]}>
-              More actions
-            </Text>
-          </View>
-          <View style={[styles.linkListCard, t.listCard]}>
-            {visibleLinks.map((row, index) => (
-              <View key={row.key}>
-                <TouchableOpacity
-                  style={[styles.linkRow, t.linkRowBg]}
-                  onPress={row.onPress}
-                  activeOpacity={0.65}>
+      <View style={styles.header}>
+        <Text style={[styles.headerText, t.sectionTitle, FONTS.h3]}>
+          Quick actions
+        </Text>
+      </View>
+      <View style={[styles.card, t.card]}>
+        {rows.map((row, rowIndex) => (
+          <View
+            key={rowIndex}
+            style={[
+              styles.gridRow,
+              rowIndex < rows.length - 1 ? styles.gridRowSpaced : null,
+            ]}>
+            {row.map(item => (
+              <TouchableOpacity
+                key={item.key}
+                style={styles.shortcut}
+                onPress={item.onPress}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel={item.label}>
+                <View
+                  style={[
+                    styles.iconContainer,
+                    {backgroundColor: item.color.bg},
+                  ]}>
                   <Image
-                    source={row.icon as any}
-                    style={[styles.linkRowIcon, t.linkIconTint]}
+                    source={item.icon as any}
+                    style={[styles.icon, {tintColor: item.color.tint}]}
                     resizeMode="contain"
                   />
-                  <Text style={[styles.linkRowLabel, t.linkLabel]}>
-                    {row.label}
-                  </Text>
-                  <Text style={[styles.linkChevron, t.linkChevron]}>›</Text>
-                </TouchableOpacity>
-                {index < visibleLinks.length - 1 ? (
-                  <View style={[styles.fullDivider, t.rowDivider]} />
-                ) : null}
-              </View>
+                </View>
+                <Text style={[styles.label, t.label]} numberOfLines={2}>
+                  {item.label}
+                </Text>
+              </TouchableOpacity>
             ))}
           </View>
-        </View>
-      ) : null}
+        ))}
+      </View>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    marginBottom: 8,
+    marginBottom: 4,
   },
   header: {
-    marginBottom: 12,
+    marginBottom: 10,
   },
   headerText: {
     fontSize: 17,
     fontWeight: '700',
   },
-  gridRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  optionButton: {
-    width: '48%',
+  card: {
     borderRadius: 12,
-    padding: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 10,
     borderWidth: 1,
     ...Platform.select({
       android: {elevation: 0},
       default: {},
     }),
   },
+  gridRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+  },
+  gridRowSpaced: {
+    marginBottom: 14,
+  },
+  shortcut: {
+    width: `${100 / COLUMNS}%`,
+    alignItems: 'center',
+    paddingHorizontal: 2,
+  },
   iconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
+    width: 40,
+    height: 40,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 12,
-    borderWidth: 1,
+    marginBottom: 6,
   },
   icon: {
-    width: 24,
-    height: 24,
+    width: 20,
+    height: 20,
   },
-  textContainer: {
-    marginTop: 0,
-  },
-  title: {
-    fontSize: 15,
-    fontWeight: '600',
-  },
-  subtitle: {
-    fontSize: 12,
-    marginTop: 4,
-  },
-  linksSection: {},
-  linksSectionSpaced: {
-    marginTop: 8,
-  },
-  linkListCard: {
-    borderRadius: 12,
-    borderWidth: 1,
-    overflow: 'hidden',
-  },
-  linkRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: SIZES.padding,
-  },
-  linkRowIcon: {
-    width: 24,
-    height: 24,
-    marginRight: 16,
-  },
-  linkRowLabel: {
-    ...FONTS.h3,
-    fontSize: 16,
-    fontWeight: '600',
-    flex: 1,
-  },
-  linkChevron: {
-    ...FONTS.h3,
-    fontSize: 22,
-    fontWeight: '300',
-  },
-  fullDivider: {
-    height: StyleSheet.hairlineWidth,
-    marginLeft: SIZES.padding + 24 + 16,
+  label: {
+    fontSize: 11,
+    fontWeight: '500',
+    textAlign: 'center',
+    lineHeight: 14,
   },
 });
 

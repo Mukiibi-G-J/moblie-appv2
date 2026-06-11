@@ -1,0 +1,101 @@
+diff --git a/node_modules/@finan-me/react-native-thermal-printer/android/build/intermediates/aar_metadata/release/writeReleaseAarMetadata/aar-metadata.properties b/node_modules/@finan-me/react-native-thermal-printer/android/build/intermediates/aar_metadata/release/writeReleaseAarMetadata/aar-metadata.properties
+new file mode 100644
+index 0000000..1211b1e
+--- /dev/null
++++ b/node_modules/@finan-me/react-native-thermal-printer/android/build/intermediates/aar_metadata/release/writeReleaseAarMetadata/aar-metadata.properties
+@@ -0,0 +1,6 @@
++aarFormatVersion=1.0
++aarMetadataVersion=1.0
++minCompileSdk=1
++minCompileSdkExtension=0
++minAndroidGradlePluginVersion=1.0.0
++coreLibraryDesugaringEnabled=false
+diff --git a/node_modules/@finan-me/react-native-thermal-printer/android/src/main/java/com/rnthermalprinter/RNThermalPrinterModule.kt b/node_modules/@finan-me/react-native-thermal-printer/android/src/main/java/com/rnthermalprinter/RNThermalPrinterModule.kt
+index 96a8e90..23893b8 100644
+--- a/node_modules/@finan-me/react-native-thermal-printer/android/src/main/java/com/rnthermalprinter/RNThermalPrinterModule.kt
++++ b/node_modules/@finan-me/react-native-thermal-printer/android/src/main/java/com/rnthermalprinter/RNThermalPrinterModule.kt
+@@ -12,6 +12,7 @@ import com.facebook.react.bridge.ReadableMap
+ import com.facebook.react.module.annotations.ReactModule
+ import com.rnthermalprinter.connection.ConnectionTester
+ import com.rnthermalprinter.discovery.BluetoothDiscovery
++import com.rnthermalprinter.printing.PrintError
+ import com.rnthermalprinter.printing.PrintingModule
+ import kotlinx.coroutines.CoroutineScope
+ import kotlinx.coroutines.Dispatchers
+@@ -112,9 +113,29 @@ class RNThermalPrinterModule(reactContext: ReactApplicationContext) :
+         Log.d(TAG, "[Native:Android] printRaw START: addr=$address, size=${data.size()}b")
+ 
+         // ===== CONVERT DATA =====
+-        val bytes = ByteArray(data.size())
+-        for (i in 0 until data.size()) {
+-            bytes[i] = data.getInt(i).toByte()
++        val bytes = try {
++            ByteArray(data.size()).also { out ->
++                for (i in 0 until data.size()) {
++                    val value = when (data.getType(i)) {
++                        com.facebook.react.bridge.ReadableType.Number ->
++                            data.getDouble(i).toInt() and 0xFF
++                        else -> throw IllegalArgumentException(
++                            "Invalid byte at index $i (expected number, got ${data.getType(i)})"
++                        )
++                    }
++                    out[i] = value.toByte()
++                }
++            }
++        } catch (e: Exception) {
++            Log.e(TAG, "[Native:Android] printRaw DATA ERROR: ${e.message}", e)
++            val errorMap = Arguments.createMap()
++            errorMap.putBoolean("success", false)
++            errorMap.putMap(
++                "error",
++                PrintError.invalidData(e.message ?: "Invalid print data").toWritableMap()
++            )
++            promise.resolve(errorMap)
++            return
+         }
+ 
+         // ===== PARSE OPTIONS =====
+diff --git a/node_modules/@finan-me/react-native-thermal-printer/android/src/main/java/com/rnthermalprinter/printing/PrintConnection.kt b/node_modules/@finan-me/react-native-thermal-printer/android/src/main/java/com/rnthermalprinter/printing/PrintConnection.kt
+index c8f5f58..260ccec 100644
+--- a/node_modules/@finan-me/react-native-thermal-printer/android/src/main/java/com/rnthermalprinter/printing/PrintConnection.kt
++++ b/node_modules/@finan-me/react-native-thermal-printer/android/src/main/java/com/rnthermalprinter/printing/PrintConnection.kt
+@@ -165,9 +165,17 @@ class BluetoothPrintConnection(
+             val output = socket?.outputStream ?: throw IOException("Output stream not available")
+             val startMs = System.currentTimeMillis()
+ 
+-            // Send all data at once like LAN - let printer handle buffering
+-            output.write(data)
+-            output.flush()
++            // Chunked send — many SPP thermal printers (e.g. PT210) overflow if sent in one block
++            var offset = 0
++            while (offset < data.size) {
++                val end = minOf(offset + CHUNK_SIZE_BYTES, data.size)
++                output.write(data, offset, end - offset)
++                output.flush()
++                offset = end
++                if (offset < data.size) {
++                    kotlinx.coroutines.delay(CHUNK_DELAY_MS)
++                }
++            }
+ 
+             val elapsed = System.currentTimeMillis() - startMs
+             Log.d(TAG, "[Native:Android] BluetoothPrintConnection.send - SUCCESS: ${data.size} bytes to $macAddress in ${elapsed}ms")
+diff --git a/node_modules/@finan-me/react-native-thermal-printer/android/src/main/java/com/rnthermalprinter/printing/PrintErrors.kt b/node_modules/@finan-me/react-native-thermal-printer/android/src/main/java/com/rnthermalprinter/printing/PrintErrors.kt
+index d29fc3d..ccf8076 100644
+--- a/node_modules/@finan-me/react-native-thermal-printer/android/src/main/java/com/rnthermalprinter/printing/PrintErrors.kt
++++ b/node_modules/@finan-me/react-native-thermal-printer/android/src/main/java/com/rnthermalprinter/printing/PrintErrors.kt
+@@ -250,6 +250,14 @@ class PrintError(
+                 message.contains("Failed to send", ignoreCase = true) ->
+                     sendFailed(address ?: "unknown", e.message)
+ 
++                message.contains("not connected", ignoreCase = true) ->
++                    sendFailed(address ?: "unknown", e.message)
++
++                message.contains("broken pipe", ignoreCase = true) ||
++                message.contains("connection reset", ignoreCase = true) ||
++                message.contains("socket", ignoreCase = true) && message.contains("closed", ignoreCase = true) ->
++                    sendFailed(address ?: "unknown", e.message)
++
+                 // Default
+                 else -> unknown(e)
+             }

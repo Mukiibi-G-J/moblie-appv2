@@ -22,7 +22,6 @@ import {
   getEmail,
   getTenant,
   getTenantAxios,
-  getVerifiedEmail,
   setTenantOnLogin,
 } from '../../utils/tenant';
 import CustomAlert from '../../Components/CustomAlert';
@@ -43,21 +42,18 @@ const SignIn = ({ navigation }: { navigation: any }) => {
   const [alertMessage, setAlertMessage] = useState('');
 
   useEffect(() => {
-    const checkEmail = async () => {
-      const verifiedEmail = await getVerifiedEmail();
-      const email = await getEmail();
-      const tenant = await getTenant();
-      console.log('tenant', tenant);
+    const loadStoredCredentials = async () => {
+      const storedEmail = await getEmail();
+      const storedTenant = await getTenant();
 
-      if (tenant) {
-        console.log('tenant', tenant);
-        setTenant(tenant);
+      if (storedTenant) {
+        setTenant(storedTenant);
       }
-      if (verifiedEmail === 'false') {
-        navigation.navigate('Otp', { email: email });
+      if (storedEmail) {
+        setEmail(storedEmail);
       }
     };
-    checkEmail();
+    loadStoredCredentials();
   }, []);
 
   function isEnableSignIn() {

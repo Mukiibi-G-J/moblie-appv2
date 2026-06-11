@@ -44,6 +44,10 @@ import {
 } from '../services/salesFavoritesApi';
 import type {CartItem} from '../@types/types.dto';
 import {useTheme} from '../context/ThemeContext';
+import {
+  isPosItemOutOfStock,
+  posItemStockLabel,
+} from '../utils/posItemStock';
 
 type BrowseTab = 'pos' | 'favorites';
 
@@ -639,7 +643,7 @@ const SalesItemBrowser: React.FC<Props> = ({
 
   const handleAddItem = useCallback(
     (item: CartItem) => {
-      if ((Number(item.inventory) || 0) <= 0) {
+      if (isPosItemOutOfStock(item)) {
         return;
       }
 
@@ -689,7 +693,7 @@ const SalesItemBrowser: React.FC<Props> = ({
       <LibraryPosItemRow
         item={item}
         isRecentlyAdded={Boolean(recentlyAddedIdsRef.current[item.system_id])}
-        isOutOfStock={(Number(item.inventory) || 0) <= 0}
+        isOutOfStock={isPosItemOutOfStock(item)}
         onAdd={handleAddItem}
         theme={libraryRowTheme}
       />
@@ -742,7 +746,7 @@ const SalesItemBrowser: React.FC<Props> = ({
   }, [selectedSearchFilter]);
 
   const handleTypedResultPress = (item: CartItem) => {
-    if ((Number(item.inventory) || 0) <= 0) {
+    if (isPosItemOutOfStock(item)) {
       return;
     }
     if (pendingSearchItem?.system_id === item.system_id) {
@@ -757,7 +761,7 @@ const SalesItemBrowser: React.FC<Props> = ({
     if (!pendingSearchItem) {
       return;
     }
-    if ((Number(pendingSearchItem.inventory) || 0) <= 0) {
+    if (isPosItemOutOfStock(pendingSearchItem)) {
       return;
     }
     const q = searchQuery.trim().toLowerCase();
@@ -985,7 +989,7 @@ const SalesItemBrowser: React.FC<Props> = ({
   };
 
   const renderSearchResultRow = ({item}: {item: CartItem}) => {
-    const isOutOfStock = (Number(item.inventory) || 0) <= 0;
+    const isOutOfStock = isPosItemOutOfStock(item);
     const initialsShort = getSearchResultInitials(item.item_name || '');
     const isPending = pendingSearchItem?.system_id === item.system_id;
 
@@ -1321,7 +1325,7 @@ const SalesItemBrowser: React.FC<Props> = ({
             contentContainerStyle={styles.favModalListContent}
             renderItem={({item}) => {
               const initials = getInitials(item.item_name || 'IT');
-              const noStock = (Number(item.inventory) || 0) <= 0;
+              const noStock = isPosItemOutOfStock(item);
               return (
                 <Pressable
                   {...ICON_BUTTON_QUICK_PRESS}
@@ -2345,11 +2349,7 @@ LibraryPosItemRow = React.memo(function LibraryPosItemRowInner({
             isOutOfStock && theme.rowSubDis,
           ]}
           numberOfLines={1}>
-          {isOutOfStock
-            ? 'Out of stock'
-            : `Stock ${item.inventory ?? 0}${
-                item.unit_of_measure ? ` • ${item.unit_of_measure}` : ''
-              }`}
+          {posItemStockLabel(item)}
         </Text>
       </View>
 

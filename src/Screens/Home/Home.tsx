@@ -48,7 +48,8 @@ interface SalesInvoice {
   customer?: { name: string };
   customer_name?: string;
   document_date?: string;
-  total_amount: number;
+  /** DRF DecimalField is often serialized as a string */
+  total_amount?: number | string;
   created_at?: string;
   status: string;
 }
@@ -96,13 +97,12 @@ function formatSalesTransactionListSubtitle(
 }
 
 export default function Home() {
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { auth, accessToken } = useAuth();
   const app = useAppContext();
   const { isModuleVisible, hasAnyPageAccess, canCreate } = usePermissions();
   const { storeLabel } = useCompanyInfo();
-  const [currentDateTime, setCurrentDateTime] = useState(new Date());
   const [isAuthLoading, setIsAuthLoading] = React.useState(true);
   const navigation = useNavigation();
   const { setSelectedTab } = useTabContext();
@@ -191,14 +191,13 @@ export default function Home() {
       sectionTitle: { color: colors.textPrimary },
       seeAll: { color: COLORS.primary2 },
       salesLabel: { color: colors.textSecondary },
-      salesAmount: { color: COLORS.primary },
+      salesAmount: { color: colors.textPrimary },
       comparedText: { color: colors.textSecondary },
       statValue: { color: colors.textPrimary },
       statItemLabel: { color: colors.textSecondary },
-      progressTrack: { backgroundColor: colors.screenMuted },
+      snapshotDivider: { backgroundColor: colors.border },
       alertTitle: { color: colors.textPrimary },
       alertText: { color: colors.textSecondary },
-      alertArrow: { color: colors.textSecondary },
       listCard: {
         backgroundColor: colors.card,
         borderColor: colors.border,
@@ -211,16 +210,8 @@ export default function Home() {
         backgroundColor: colors.screenMuted,
         borderColor: colors.border,
       },
-      statusBadge: {
-        backgroundColor: isDark
-          ? 'rgba(52, 199, 89, 0.14)'
-          : 'rgba(52, 199, 89, 0.12)',
-        borderColor: isDark
-          ? 'rgba(74, 222, 128, 0.35)'
-          : 'rgba(52, 199, 89, 0.35)',
-      },
     }),
-    [colors, isDark],
+    [colors],
   );
 
   // Debug auth state and handle loading
@@ -260,14 +251,6 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  // Update date at midnight
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentDateTime(new Date());
-    }, 86400000);
-    return () => clearInterval(timer);
   }, []);
 
   // Fetch KPI Metrics
@@ -476,36 +459,79 @@ export default function Home() {
     </View>
   );
 
-  const renderDateStatusRow = () => {
-    const formattedDate = currentDateTime.toLocaleDateString('en-US', {
-      weekday: 'long',
-      month: 'long',
-      day: 'numeric',
-    });
+  const formatCurrency = (amount: number | string | null | undefined) => {
+    const parsed =
+      typeof amount === 'string' ? Number.parseFloat(amount) : Number(amount);
+    const roundedAmount = Number.isFinite(parsed) ? Math.round(parsed) : 0;
 
-    return (
-      <View style={styles.homeMetaRow}>
-        <Text style={[styles.homeMetaDate, { color: colors.textSecondary }]}>
-          {formattedDate}
+    if (typeof Intl !== 'undefined' && typeof Intl.NumberFormat === 'function') {
+      return new Intl.NumberFormat('en-UG', {
+        style: 'currency',
+        currency: 'UGX',
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0,
+      }).format(roundedAmount);
+    }
+
+    // Fallback for runtimes without Intl support (e.g. some JSC builds).
+    return `UGX ${roundedAmount
+      .toString()
+      .replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
+  };
+
+  const renderSnapshotTintWell = (
+    icon: number,
+    bg: string,
+    tint: string,
+    variant: 'metric' | 'row' = 'metric',
+  ) => (
+    <View
+      style={[
+        styles.snapshotTintWell,
+        variant === 'row' ? styles.snapshotTintWellRow : null,
+        { backgroundColor: bg },
+      ]}>
+      <Image
+        source={icon}
+        style={[styles.snapshotTintWellImage, { tintColor: tint }]}
+      />
+    </View>
+  );
+
+  const renderSnapshotAlertRow = (
+    key: string,
+    opts: {
+      icon: number;
+      iconBg: string;
+      iconTint: string;
+      title: string;
+      subtitle: string;
+      onPress: () => void;
+      isLast: boolean;
+    },
+  ) => (
+    <TouchableOpacity
+      key={key}
+      style={[
+        styles.snapshotAlertRow,
+        { borderBottomColor: colors.border },
+        opts.isLast ? styles.snapshotAlertRowLast : null,
+      ]}
+      onPress={opts.onPress}
+      activeOpacity={0.7}
+      accessibilityRole="button"
+      accessibilityLabel={`${opts.title}. ${opts.subtitle}`}>
+      {renderSnapshotTintWell(opts.icon, opts.iconBg, opts.iconTint, 'row')}
+      <View style={styles.snapshotAlertCopy}>
+        <Text style={[styles.alertTitle, t.alertTitle]}>{opts.title}</Text>
+        <Text style={[styles.alertText, t.alertText]} numberOfLines={2}>
+          {opts.subtitle}
         </Text>
-        <View style={[styles.statusBadge, t.statusBadge]}>
-          <View style={styles.statusDot} />
-          <Text style={styles.statusText}>Store Open</Text>
-        </View>
       </View>
-    );
-  };
+    </TouchableOpacity>
+  );
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-UG', {
-      style: 'currency',
-      currency: 'UGX',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(amount);
-  };
-
-  // Render KPI Cards + optional alerts (receivables / low stock use their own permissions)
+  // Render KPI cards + optional alerts in one card (matches Quick actions / list sections)
   const renderQuickStats = () => {
     const showReceivablesAlert =
       !!(
@@ -522,150 +548,135 @@ export default function Home() {
 
     const salesChange = kpiMetrics?.revenue_growth ?? 0;
     const hasPositiveTrend = salesChange >= 0;
+    const showKpiBlock = canViewSalesDashboard && !kpiLoading && !!kpiMetrics;
+    const showAlerts = showReceivablesAlert || showLowStockAlert;
+    const alertRows: React.ReactNode[] = [];
+
+    if (showReceivablesAlert) {
+      alertRows.push(
+        renderSnapshotAlertRow('receivables', {
+          icon: icons.wallet,
+          iconBg: 'rgba(255, 161, 51, 0.16)',
+          iconTint: COLORS.warning,
+          title: 'Outstanding receivables',
+          subtitle: `${formatCurrency(outstandingReceivables!.total_amount)} from ${
+            outstandingReceivables!.count
+          } customer${outstandingReceivables!.count !== 1 ? 's' : ''}`,
+          onPress: () => navigation.navigate('Payments' as never),
+          isLast: !showLowStockAlert,
+        }),
+      );
+    }
+
+    if (showLowStockAlert) {
+      alertRows.push(
+        renderSnapshotAlertRow('low-stock', {
+          icon: icons.notification,
+          iconBg: 'rgba(255, 71, 87, 0.12)',
+          iconTint: COLORS.error,
+          title: 'Low stock alert',
+          subtitle: `${lowStockItems.length} item${
+            lowStockItems.length !== 1 ? 's' : ''
+          } need attention`,
+          onPress: () => {
+            setSelectedTab(constants.screens.items);
+            navigation.navigate(
+              'AllItems' as never,
+              { stockFilter: 'low_stock' } as never,
+            );
+          },
+          isLast: true,
+        }),
+      );
+    }
 
     return (
       <View style={styles.statsSection}>
-        {canViewSalesDashboard &&
-          (kpiLoading ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={COLORS.primary2} />
-              <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
-                Loading metrics...
-              </Text>
-            </View>
-          ) : kpiMetrics ? (
-            <>
-              <Text style={[styles.kpiSectionTitle, t.sectionTitle, FONTS.h3]}>
-                {"Today's snapshot"}
-              </Text>
-              {/* Main Sales Card */}
-              <View style={[styles.mainStatsCard, t.card]}>
-                <View style={styles.salesHeader}>
-                  <View>
-                    <Text style={[styles.salesLabel, t.salesLabel]}>
-                      Today's Revenue
-                    </Text>
-                    <Text style={[styles.salesAmount, t.salesAmount]}>
-                      {formatCurrency(kpiMetrics.today_revenue)}
-                    </Text>
-                  </View>
-                  {salesChange !== 0 && (
-                    <View
-                      style={[
-                        styles.trendBadge,
-                        hasPositiveTrend ? styles.positiveTrend : styles.negativeTrend,
-                      ]}>
-                      <Text
-                        style={[
-                          styles.trendText,
-                          hasPositiveTrend ? styles.positiveText : styles.negativeText,
-                        ]}>
-                        {hasPositiveTrend ? '↑' : '↓'}{' '}
-                        {Math.abs(salesChange).toFixed(1)}%
-                      </Text>
-                    </View>
-                  )}
-                </View>
-                <Text style={[styles.comparedText, t.comparedText]}>
-                  Compared to yesterday
-                </Text>
-              </View>
+        <View style={styles.statsSectionHeader}>
+          <Text style={[styles.kpiSectionTitle, t.sectionTitle, FONTS.h3]}>
+            {"Today's snapshot"}
+          </Text>
+        </View>
 
-              {/* Secondary Stats Row */}
-              <View style={styles.secondaryStatsContainer}>
-                <View style={[styles.statCard, t.card]}>
-                  <View style={styles.statHeader}>
-                    <Image
-                      source={icons.cart}
-                      style={[styles.statIcon, { tintColor: COLORS.primary2 }]}
-                    />
+        {canViewSalesDashboard && kpiLoading ? (
+          <View style={[styles.snapshotCard, t.card, styles.snapshotLoadingCard]}>
+            <ActivityIndicator size="small" color={COLORS.primary2} />
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+              Loading metrics...
+            </Text>
+          </View>
+        ) : (
+          <View style={[styles.snapshotCard, t.card]}>
+            {showKpiBlock && kpiMetrics ? (
+              <>
+                <View style={styles.revenueBlock}>
+                  <Text style={[styles.salesLabel, t.salesLabel]}>
+                    Today's revenue
+                  </Text>
+                  <Text style={[styles.salesAmount, t.salesAmount]}>
+                    {formatCurrency(kpiMetrics.today_revenue)}
+                  </Text>
+                  <Text style={[styles.comparedText, t.comparedText]}>
+                    {salesChange !== 0 ? (
+                      <>
+                        <Text
+                          style={{
+                            color: hasPositiveTrend ? COLORS.success : COLORS.error,
+                            fontWeight: '500',
+                          }}>
+                          {hasPositiveTrend ? 'Up' : 'Down'}{' '}
+                          {Math.abs(salesChange).toFixed(1)}%
+                        </Text>
+                        <Text style={t.comparedText}> vs yesterday</Text>
+                      </>
+                    ) : (
+                      'No change vs yesterday'
+                    )}
+                  </Text>
+                </View>
+
+                <View style={[styles.snapshotSectionDivider, t.snapshotDivider]} />
+
+                <View style={styles.snapshotMetricsRow}>
+                  <View style={styles.snapshotMetric}>
+                    {renderSnapshotTintWell(
+                      icons.cart,
+                      'rgba(0, 102, 204, 0.14)',
+                      COLORS.primary2,
+                    )}
                     <Text style={[styles.statValue, t.statValue]}>
                       {kpiMetrics.today_orders}
                     </Text>
+                    <Text style={[styles.statItemLabel, t.statItemLabel]}>
+                      Orders today
+                    </Text>
                   </View>
-                  <Text style={[styles.statItemLabel, t.statItemLabel]}>
-                    Orders Today
-                  </Text>
-                </View>
 
-                <View style={[styles.statCard, t.card]}>
-                  <View style={styles.statHeader}>
-                    <Image
-                      source={icons.product}
-                      style={[styles.statIcon, { tintColor: COLORS.success }]}
-                    />
+                  <View style={[styles.snapshotMetricDivider, t.snapshotDivider]} />
+
+                  <View style={styles.snapshotMetric}>
+                    {renderSnapshotTintWell(
+                      icons.product,
+                      'rgba(0, 184, 148, 0.14)',
+                      COLORS.success,
+                    )}
                     <Text style={[styles.statValue, t.statValue]}>
                       {kpiMetrics.today_products_sold}
                     </Text>
+                    <Text style={[styles.statItemLabel, t.statItemLabel]}>
+                      Products sold
+                    </Text>
                   </View>
-                  <Text style={[styles.statItemLabel, t.statItemLabel]}>
-                    Products Sold
-                  </Text>
-                  {kpiMetrics.total_products > 0 && (
-                    <View style={[styles.progressBar, t.progressTrack]}>
-                      <View
-                        style={[
-                          styles.progressFill,
-                          {
-                            width: `${Math.min(
-                              (kpiMetrics.today_products_sold /
-                                kpiMetrics.total_products) *
-                                100,
-                              100,
-                            )}%`,
-                          },
-                        ]}
-                      />
-                    </View>
-                  )}
                 </View>
-              </View>
-            </>
-          ) : null)}
+              </>
+            ) : null}
 
-        {showReceivablesAlert && (
-          <TouchableOpacity
-            style={[styles.alertCard, t.card, { borderLeftColor: COLORS.warning }]}
-            onPress={() => navigation.navigate('Payments' as never)}>
-            <View style={styles.alertContent}>
-              <Image
-                source={icons.wallet}
-                style={[styles.alertIcon, { tintColor: COLORS.warning }]}
-              />
-              <View style={styles.alertTextContainer}>
-                <Text style={[styles.alertTitle, t.alertTitle]}>
-                  Outstanding Receivables
-                </Text>
-                <Text style={[styles.alertText, t.alertText]}>
-                  {formatCurrency(outstandingReceivables!.total_amount)} from{' '}
-                  {outstandingReceivables!.count} customer
-                  {outstandingReceivables!.count !== 1 ? 's' : ''}
-                </Text>
-              </View>
-              <Text style={[styles.alertArrow, t.alertArrow]}>→</Text>
-            </View>
-          </TouchableOpacity>
-        )}
+            {showKpiBlock && showAlerts ? (
+              <View style={[styles.snapshotSectionDivider, t.snapshotDivider]} />
+            ) : null}
 
-        {showLowStockAlert && (
-          <TouchableOpacity
-            style={[styles.alertCard, t.card, styles.alertCardErrorAccent]}
-            onPress={() => navigation.navigate('Items' as never)}>
-            <View style={styles.alertContent}>
-              <Image
-                source={icons.notification}
-                style={[styles.alertIcon, { tintColor: COLORS.error }]}
-              />
-              <View style={styles.alertTextContainer}>
-                <Text style={[styles.alertTitle, t.alertTitle]}>Low Stock Alert</Text>
-                <Text style={[styles.alertText, t.alertText]}>
-                  {lowStockItems.length} item{lowStockItems.length !== 1 ? 's' : ''}{' '}
-                  need attention
-                </Text>
-              </View>
-              <Text style={[styles.alertArrow, t.alertArrow]}>→</Text>
-            </View>
-          </TouchableOpacity>
+            {showAlerts ? alertRows : null}
+          </View>
         )}
       </View>
     );
@@ -912,7 +923,6 @@ export default function Home() {
         }>
         {renderHomeTopBar()}
         {renderHomeHero()}
-        {renderDateStatusRow()}
         <View style={styles.quickActionsSection}>
           <Options />
         </View>
@@ -954,7 +964,7 @@ const styles = StyleSheet.create({
   },
   homeHero: {
     paddingHorizontal: SIZES.padding,
-    marginBottom: 16,
+    marginBottom: 20,
   },
   homeWelcomeTitle: {
     ...FONTS.h2,
@@ -972,40 +982,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontWeight: '500',
   },
-  homeMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: SIZES.padding,
-    marginTop: 4,
-    marginBottom: 16,
-  },
-  homeMetaDate: {
-    ...FONTS.body4,
-    flex: 1,
-    marginRight: 12,
-  },
-  statusBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-  },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: COLORS.success,
-    marginRight: 6,
-  },
-  statusText: {
-    ...FONTS.body4,
-    color: COLORS.success,
-    fontSize: 14,
-    fontWeight: '600',
-  },
   quickActionsSection: {
     paddingHorizontal: SIZES.padding,
     paddingTop: 0,
@@ -1013,141 +989,113 @@ const styles = StyleSheet.create({
   kpiSectionTitle: {
     fontSize: 17,
     fontWeight: '700',
-    marginBottom: 4,
   },
   statsSection: {
     paddingHorizontal: SIZES.padding,
-    paddingTop: 8,
-    gap: 16,
+    paddingTop: 16,
   },
-  mainStatsCard: {
+  statsSectionHeader: {
+    marginBottom: 10,
+  },
+  snapshotCard: {
     borderRadius: 12,
-    padding: 20,
     borderWidth: 1,
+    overflow: 'hidden',
     ...Platform.select({
       android: {elevation: 0},
       default: {},
     }),
   },
-  salesHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 4,
+  snapshotLoadingCard: {
+    paddingVertical: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  revenueBlock: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 14,
   },
   salesLabel: {
-    fontSize: 14,
+    ...FONTS.body4,
     marginBottom: 4,
   },
   salesAmount: {
-    fontSize: 28,
+    ...FONTS.h2,
+    fontSize: 24,
     fontWeight: '700',
+    marginBottom: 4,
   },
   comparedText: {
-    fontSize: 12,
-    marginTop: 8,
+    ...FONTS.body5,
   },
-  secondaryStatsContainer: {
+  snapshotMetricsRow: {
     flexDirection: 'row',
-    gap: 16,
+    alignItems: 'stretch',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
   },
-  statCard: {
+  snapshotMetric: {
     flex: 1,
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    ...Platform.select({
-      android: {elevation: 0},
-      default: {},
-    }),
-  },
-  statHeader: {
-    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
-    gap: 8,
+    paddingHorizontal: 4,
   },
-  statIcon: {
-    width: 24,
-    height: 24,
+  snapshotMetricDivider: {
+    width: StyleSheet.hairlineWidth,
+    alignSelf: 'stretch',
+    marginVertical: 4,
   },
   statValue: {
-    fontSize: 20,
+    ...FONTS.body2,
     fontWeight: '600',
+    marginBottom: 2,
   },
   statItemLabel: {
-    fontSize: 13,
+    ...FONTS.body5,
+    textAlign: 'center',
+  },
+  snapshotTintWell: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: 8,
   },
-  trendBadge: {
+  snapshotTintWellRow: {
+    marginBottom: 0,
+  },
+  snapshotTintWellImage: {
+    width: 20,
+    height: 20,
+    resizeMode: 'contain',
+  },
+  snapshotSectionDivider: {
+    height: StyleSheet.hairlineWidth,
+    marginHorizontal: 16,
+  },
+  snapshotAlertRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 20,
-    gap: 4,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 12,
   },
-  positiveTrend: {
-    backgroundColor: 'rgba(52, 199, 89, 0.1)',
+  snapshotAlertRowLast: {
+    borderBottomWidth: 0,
   },
-  negativeTrend: {
-    backgroundColor: 'rgba(255, 59, 48, 0.1)',
-  },
-  trendText: {
-    fontWeight: '600',
-    fontSize: 12,
-  },
-  positiveText: {
-    color: COLORS.success,
-  },
-  negativeText: {
-    color: COLORS.error,
-  },
-  progressBar: {
-    height: 4,
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    backgroundColor: COLORS.primary,
-    borderRadius: 2,
-  },
-  alertCard: {
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderLeftWidth: 4,
-    ...Platform.select({
-      android: {elevation: 0},
-      default: {},
-    }),
-  },
-  alertCardErrorAccent: {
-    borderLeftColor: COLORS.error,
-  },
-  alertContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  alertIcon: {
-    width: 24,
-    height: 24,
-    marginRight: 12,
-  },
-  alertTextContainer: {
+  snapshotAlertCopy: {
     flex: 1,
+    minWidth: 0,
   },
   alertTitle: {
-    fontSize: 14,
+    ...FONTS.body4,
     fontWeight: '600',
     marginBottom: 2,
   },
   alertText: {
-    fontSize: 12,
-  },
-  alertArrow: {
-    fontSize: 18,
+    ...FONTS.body5,
   },
   recentSection: {
     paddingHorizontal: SIZES.padding,

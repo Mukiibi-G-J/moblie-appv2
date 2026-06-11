@@ -1,9 +1,22 @@
 import {Platform, PermissionsAndroid, EmitterSubscription} from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {ThermalPrinter} from '@finan-me/react-native-thermal-printer';
+import {
+  BluetoothStateManager,
+  ThermalPrinter,
+} from '@finan-me/react-native-thermal-printer';
 import Toast from 'react-native-toast-message';
+import {
+  prepareCompanyLogoForPrint,
+  RECEIPT_LOGO_WIDTH_PX,
+} from '../utils/companyLogoUrl';
 import type {ItemLabelPrintData, PrintReceiptData} from './PrintService';
 import type {KotData} from './UsbPrinterService';
+import {compileDocumentToEscPosBytes} from '../shared/receipt/compileToEscPos';
+import {
+  buildKotReceiptDocument,
+  buildSaleReceiptDocument,
+} from './receiptPrintOrchestrator';
+import type {ReceiptDocument} from '../shared/receipt/types';
 
 const BT_PRINTER_STORAGE_KEY = 'zentro_bluetooth_printer_v1';
 const RECEIPT_WIDTH_CHARS = 32; // 58mm, matches USB pad width
@@ -15,6 +28,127 @@ function padReceiptLine(
 ): string {
   const gap = cols - left.length - right.length;
   return left + (gap > 0 ? ' '.repeat(gap) : ' ') + right;
+}
+
+/**
+ * @finan-me/react-native-thermal-printer expects numeric ESC/POS sizes (1–8),
+ * not README strings like 'double' / 'double_width'.
+ */
+function normalizeEscposStyle(style?: Record<string, unknown>) {
+  if (!style) {
+    return style;
+  }
+  const next = {...style};
+  const size = next.size;
+  if (typeof size === 'string') {
+    if (size === 'double' || size === 'double_width') {
+      next.size = 2;
+    } else {
+      delete next.size;
+    }
+  }
+  return next;
+}
+
+function normalizeEscposDocument(document: any[]): any[] {
+  return document.map(node => {
+    if (node?.type === 'text' && node.style) {
+      return {...node, style: normalizeEscposStyle(node.style)};
+    }
+    return node;
+  });
+}
+
+function extractThermalPrintError(
+  result: {results?: Map<string, {error?: unknown}>},
+  fallback = 'Print failed',
+): string {
+  const firstResult = result.results
+    ? Array.from(result.results.values())[0]
+    : null;
+  const err = firstResult?.error;
+  if (!err) {
+    return fallback;
+  }
+  if (typeof err === 'string') {
+    return err;
+  }
+  if (typeof err === 'object' && err !== null) {
+    const e = err as {code?: string; message?: string; suggestion?: string};
+    const parts = [e.code, e.message, e.suggestion].filter(Boolean);
+    if (parts.length > 0) {
+      return parts.join(' — ');
+    }
+  }
+  return fallback;
+}
+
+/** Encode ASCII/Latin text for ESC/POS without relying on compileDocument. */
+function encodeEscPosText(text: string): number[] {
+  if (typeof TextEncoder !== 'undefined') {
+    return Array.from(new TextEncoder().encode(text));
+  }
+  return Array.from(text).map(char => char.charCodeAt(0) & 0xff);
+}
+
+function sanitizeEscPosByteArray(bytes: number[] | Uint8Array): number[] {
+  return Array.from(bytes, byte => byte & 0xff);
+}
+
+type EscPosTextStyle = {
+  align?: 'left' | 'center' | 'right';
+  bold?: boolean;
+  double?: boolean;
+};
+
+function appendEscPosInit(bytes: number[]): void {
+  bytes.push(0x1b, 0x40);
+}
+
+function appendEscPosText(
+  bytes: number[],
+  text: string,
+  style: EscPosTextStyle = {},
+): void {
+  if (style.align === 'center') {
+    bytes.push(0x1b, 0x61, 1);
+  } else if (style.align === 'right') {
+    bytes.push(0x1b, 0x61, 2);
+  } else {
+    bytes.push(0x1b, 0x61, 0);
+  }
+  if (style.double) {
+    bytes.push(0x1d, 0x21, 0x11);
+  }
+  if (style.bold) {
+    bytes.push(0x1b, 0x45, 1);
+  }
+  bytes.push(...encodeEscPosText(String(text)), 0x0a);
+  if (style.bold) {
+    bytes.push(0x1b, 0x45, 0);
+  }
+  if (style.double) {
+    bytes.push(0x1d, 0x21, 0x00);
+  }
+  bytes.push(0x1b, 0x61, 0);
+}
+
+function appendEscPosRule(bytes: number[]): void {
+  appendEscPosText(bytes, '-'.repeat(RECEIPT_WIDTH_CHARS));
+}
+
+function appendEscPosFeed(bytes: number[], lines: number): void {
+  bytes.push(0x1b, 0x64, Math.max(0, Math.min(255, lines)) & 0xff);
+}
+
+function appendEscPosCut(bytes: number[]): void {
+  bytes.push(0x1d, 0x56, 0x01);
+}
+
+function finalizeEscPosDocument(bytes: number[]): number[] {
+  appendEscPosFeed(bytes, 3);
+  appendEscPosCut(bytes);
+  return sanitizeEscPosByteArray(bytes);
 }
 
 /** Heuristic score for names of built-in / POS Bluetooth thermal printers (non-Sunmi handhelds). */
@@ -116,6 +250,42 @@ class BluetoothPrinterService {
   }
 
   /**
+   * Whether the device Bluetooth radio is on (Android).
+   */
+  public async isBluetoothEnabled(): Promise<boolean> {
+    if (Platform.OS !== 'android') {
+      return false;
+    }
+    try {
+      const state = await BluetoothStateManager.getState();
+      return state === 'PoweredOn';
+    } catch (error) {
+      console.warn('Failed to read Bluetooth state:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Show the system dialog to turn Bluetooth on (Android).
+   * @returns true when Bluetooth is on after the request.
+   */
+  public async requestEnableBluetooth(): Promise<boolean> {
+    if (Platform.OS !== 'android') {
+      return false;
+    }
+    try {
+      if (await this.isBluetoothEnabled()) {
+        return true;
+      }
+      await BluetoothStateManager.enable();
+      return await this.isBluetoothEnabled();
+    } catch (error) {
+      console.warn('Bluetooth enable request failed:', error);
+      return false;
+    }
+  }
+
+  /**
    * Request Bluetooth permissions (Android)
    */
   private async requestBluetoothPermissions(): Promise<boolean> {
@@ -179,6 +349,15 @@ class BluetoothPrinterService {
       }
 
       console.log('Starting Bluetooth scan...');
+
+      if (!(await this.isBluetoothEnabled())) {
+        Toast.show({
+          type: 'error',
+          text1: 'Bluetooth is off',
+          text2: 'Turn on Bluetooth in Printer configuration to scan for printers.',
+        });
+        return [];
+      }
 
       // Request permissions first
       const hasPermissions = await this.requestBluetoothPermissions();
@@ -659,6 +838,348 @@ class BluetoothPrinterService {
    */
   public isPrinterConnected(): boolean {
     return this.isConnected;
+  }
+
+  /**
+   * Drop any pooled native socket before opening a new SPP print session.
+   * App "connected" state only reflects an earlier testConnection — not an open socket.
+   */
+  private async ensureFreshBluetoothSession(): Promise<boolean> {
+    if (!this.printerAddress) {
+      return false;
+    }
+
+    try {
+      await ThermalPrinter.disconnect(this.printerAddress);
+    } catch {
+      /* ignore stale disconnect errors */
+    }
+
+    // Give the printer time to release the previous RFCOMM channel (PT210-class devices).
+    await new Promise<void>(resolve => setTimeout(resolve, 600));
+    return true;
+  }
+
+  private buildEscPosTestBytes(): number[] {
+    const bytes: number[] = [];
+    appendEscPosInit(bytes);
+    appendEscPosText(bytes, 'ZENTRO APP - TEST', {
+      align: 'center',
+      bold: true,
+      double: true,
+    });
+    appendEscPosFeed(bytes, 1);
+    appendEscPosRule(bytes);
+    appendEscPosText(bytes, 'Printer Test Successful', {
+      align: 'center',
+      bold: true,
+    });
+    appendEscPosText(bytes, `Date: ${new Date().toLocaleString()}`, {
+      align: 'center',
+    });
+    appendEscPosText(bytes, `Device: ${this.connectedDevice?.name || 'Printer'}`, {
+      align: 'center',
+    });
+    appendEscPosRule(bytes);
+    return finalizeEscPosDocument(bytes);
+  }
+
+  /** Raw ESC/POS bytes — same layout as buildCompactReceiptDocument. */
+  private buildCompactReceiptRawBytes(data: PrintReceiptData): number[] {
+    const bytes: number[] = [];
+    const companyName = data.companyInfo?.name || 'ZENTRO APP';
+    const receiptId = data.receiptId || 'N/A';
+    const saleDateRaw = data.saleDate || new Date().toISOString();
+
+    appendEscPosInit(bytes);
+    appendEscPosText(bytes, 'SALES RECEIPT', {align: 'center', bold: true});
+    appendEscPosText(bytes, companyName, {align: 'center', bold: true});
+    if (data.companyInfo?.address) {
+      appendEscPosText(bytes, data.companyInfo.address, {align: 'center'});
+    }
+    if (data.companyInfo?.phone) {
+      appendEscPosText(bytes, `Tel: ${data.companyInfo.phone}`, {align: 'center'});
+    }
+    if (data.companyInfo?.tin) {
+      appendEscPosText(bytes, `TIN: ${data.companyInfo.tin}`, {align: 'center'});
+    }
+    if (data.companyInfo?.vatNo) {
+      appendEscPosText(bytes, `VAT No: ${data.companyInfo.vatNo}`, {
+        align: 'center',
+      });
+    }
+
+    appendEscPosRule(bytes);
+    appendEscPosText(bytes, `Invoice: ${receiptId}`, {
+      align: 'center',
+      bold: true,
+    });
+    appendEscPosText(bytes, `Date: ${this.formatCompactReceiptDate(saleDateRaw)}`);
+    appendEscPosText(bytes, `Cashier: ${data.username}`);
+    if (data.customerName) {
+      appendEscPosText(bytes, `Customer: ${data.customerName}`);
+    }
+
+    appendEscPosText(bytes, padReceiptLine('Qty', 'Amount'), {bold: true});
+    appendEscPosRule(bytes);
+
+    for (const item of data.cartItems) {
+      const lineTotal =
+        item.line_total != null && Number.isFinite(Number(item.line_total))
+          ? Number(item.line_total)
+          : (Number(item.quantity) || 0) * (Number(item.unit_price) || 0);
+      const rawName = (item.item_name || 'Item').trim();
+      const shortName =
+        rawName.length > 24 ? `${rawName.slice(0, 21)}...` : rawName;
+      appendEscPosText(
+        bytes,
+        padReceiptLine(`${item.quantity}x ${shortName}`, this.formatPlainAmount(lineTotal)),
+      );
+    }
+
+    appendEscPosRule(bytes);
+
+    const tax = Number(data.tax) || 0;
+    const discount = Number(data.discount) || 0;
+    const total = Number(data.total) || 0;
+    const change = Number(data.change) || 0;
+    const tendered = Number(data.amountReceived);
+
+    if (tax > 0) {
+      appendEscPosText(bytes, padReceiptLine('Tax:', this.formatCurrency(tax)));
+    }
+    if (discount > 0) {
+      appendEscPosText(
+        bytes,
+        padReceiptLine('Discount:', `-${this.formatPlainAmount(discount)}`),
+      );
+    }
+    appendEscPosText(bytes, padReceiptLine('TOTAL:', this.formatPlainAmount(total)), {
+      bold: true,
+    });
+    if (Number.isFinite(tendered) && tendered > 0) {
+      appendEscPosText(
+        bytes,
+        padReceiptLine('Tendered:', this.formatPlainAmount(tendered)),
+        {bold: true},
+      );
+    }
+    if (change > 0) {
+      appendEscPosText(
+        bytes,
+        padReceiptLine('Change:', this.formatPlainAmount(change)),
+        {bold: true},
+      );
+    }
+    if (data.paymentMethod && data.paymentMethod !== '—') {
+      appendEscPosText(bytes, padReceiptLine('Payment:', data.paymentMethod));
+    }
+
+    appendEscPosRule(bytes);
+    if (data.cartItems.length > 0) {
+      appendEscPosText(
+        bytes,
+        `THANK YOU (${data.cartItems.length} item${
+          data.cartItems.length === 1 ? '' : 's'
+        })`,
+        {align: 'center', bold: true},
+      );
+    } else {
+      appendEscPosText(bytes, 'THANK YOU', {align: 'center', bold: true});
+    }
+    appendEscPosText(
+      bytes,
+      `${receiptId} ${this.formatCompactReceiptDate(saleDateRaw)} ${data.username}`,
+      {align: 'center'},
+    );
+    appendEscPosFeed(bytes, 1);
+    return finalizeEscPosDocument(bytes);
+  }
+
+  /** Raw ESC/POS bytes — same layout as buildReceiptDocument (full receipt). */
+  private buildFullReceiptRawBytes(data: PrintReceiptData): number[] {
+    const bytes: number[] = [];
+    const companyName = data.companyInfo?.name || 'ZENTRO APP';
+    const receiptId = data.receiptId || 'N/A';
+    const saleDate = data.saleDate || new Date().toLocaleString();
+
+    appendEscPosInit(bytes);
+    appendEscPosText(bytes, companyName.toUpperCase(), {
+      align: 'center',
+      bold: true,
+      double: true,
+    });
+    if (data.companyInfo?.address) {
+      appendEscPosText(bytes, data.companyInfo.address, {align: 'center'});
+    }
+    if (data.companyInfo?.tin) {
+      appendEscPosText(bytes, `TIN: ${data.companyInfo.tin}`, {align: 'center'});
+    }
+    if (data.companyInfo?.vatNo) {
+      appendEscPosText(bytes, `VAT No: ${data.companyInfo.vatNo}`, {
+        align: 'center',
+      });
+    }
+
+    appendEscPosRule(bytes);
+    appendEscPosText(bytes, 'SALES RECEIPT', {align: 'center', bold: true});
+    appendEscPosRule(bytes);
+    appendEscPosFeed(bytes, 1);
+
+    appendEscPosText(bytes, `Receipt #: ${receiptId}`);
+    appendEscPosText(bytes, `Date: ${saleDate.split('T')[0]}`);
+    appendEscPosText(bytes, `Cashier: ${data.username}`);
+    if (data.customerName) {
+      appendEscPosText(bytes, `Customer: ${data.customerName}`);
+    }
+
+    appendEscPosRule(bytes);
+    appendEscPosText(bytes, 'ITEMS:', {bold: true});
+
+    for (const item of data.cartItems) {
+      const quantity = Number(item.quantity) || 0;
+      const unitPrice = Number(item.unit_price) || 0;
+      const itemTotal = quantity * unitPrice;
+      const itemName =
+        item.item_name.length > 30
+          ? `${item.item_name.substring(0, 27)}...`
+          : item.item_name;
+      appendEscPosText(bytes, itemName);
+      appendEscPosText(
+        bytes,
+        `  ${item.quantity} x ${this.formatCurrency(unitPrice)} = ${this.formatCurrency(itemTotal)}`,
+      );
+    }
+
+    appendEscPosRule(bytes);
+    appendEscPosText(bytes, 'TOTALS:', {bold: true});
+
+    const subtotal = Number(data.subtotal ?? data.total) || 0;
+    const tax = Number(data.tax) || 0;
+    const discount = Number(data.discount) || 0;
+    const total = Number(data.total) || 0;
+    const change = Number(data.change) || 0;
+
+    appendEscPosText(bytes, `Subtotal: ${this.formatCurrency(subtotal)}`);
+    if (tax > 0) {
+      appendEscPosText(bytes, `Tax: ${this.formatCurrency(tax)}`);
+    }
+    if (discount > 0) {
+      appendEscPosText(bytes, `Discount: -${this.formatCurrency(discount)}`);
+    }
+
+    appendEscPosRule(bytes);
+    appendEscPosText(bytes, `TOTAL: ${this.formatCurrency(total)}`, {
+      bold: true,
+      double: true,
+    });
+    if (change > 0) {
+      appendEscPosText(bytes, `Change: ${this.formatCurrency(change)}`);
+    }
+    if (data.paymentMethod) {
+      appendEscPosText(bytes, `Payment: ${data.paymentMethod}`);
+    }
+
+    appendEscPosRule(bytes);
+    appendEscPosFeed(bytes, 1);
+    appendEscPosText(bytes, 'Thank you for your purchase!', {align: 'center'});
+    appendEscPosText(bytes, 'Please come again', {align: 'center'});
+    if (data.receiptId) {
+      appendEscPosText(bytes, `Receipt ID: ${data.receiptId}`, {align: 'center'});
+    }
+
+    appendEscPosRule(bytes);
+    appendEscPosText(bytes, 'www.zentroapp.app', {align: 'center'});
+    appendEscPosText(bytes, 'Contact: 0750440865 / 0779899789', {align: 'center'});
+    appendEscPosText(bytes, 'Powered by Zentroapp', {align: 'center'});
+
+    return finalizeEscPosDocument(bytes);
+  }
+
+  private buildReceiptRawBytes(data: PrintReceiptData): number[] {
+    return data.compactReceipt
+      ? this.buildCompactReceiptRawBytes(data)
+      : this.buildFullReceiptRawBytes(data);
+  }
+
+  private async printReceiptLogo(logo?: string): Promise<void> {
+    if (!logo?.trim() || !this.printerAddress) {
+      return;
+    }
+
+    const prepared = await prepareCompanyLogoForPrint(logo);
+    if (!prepared) {
+      return;
+    }
+
+    const NativePrinter = (ThermalPrinter as {NativePrinter?: any})
+      .NativePrinter;
+    if (!NativePrinter?.printImage) {
+      throw new Error('Native printer image module unavailable');
+    }
+
+    const result = await NativePrinter.printImage(
+      this.printerAddress,
+      prepared.localPath,
+      {
+        align: 'center',
+        widthPx: RECEIPT_LOGO_WIDTH_PX,
+        keepAlive: true,
+        timeout: 15000,
+      },
+      {paperWidthMm: 58},
+    );
+
+    if (!result?.success) {
+      const err = result?.error;
+      const message =
+        typeof err === 'string'
+          ? err
+          : err && typeof err === 'object'
+            ? [err.code, err.message, err.suggestion].filter(Boolean).join(' — ')
+            : 'Logo print failed';
+      throw new Error(message);
+    }
+  }
+
+  private async printRawEscpos(
+    data: number[],
+  ): Promise<{success: boolean; error?: string}> {
+    const NativePrinter = (ThermalPrinter as {NativePrinter?: any}).NativePrinter;
+    if (!NativePrinter?.printRaw || !this.printerAddress) {
+      return {success: false, error: 'Native printer module unavailable'};
+    }
+
+    const payload = sanitizeEscPosByteArray(data);
+    console.log(
+      '[BluetoothPrinter] printRawEscpos:',
+      payload.length,
+      'bytes to',
+      this.printerAddress,
+    );
+
+    const result = await NativePrinter.printRaw(this.printerAddress, payload, {
+      keepAlive: false,
+      timeout: 15000,
+    });
+
+    console.log('[BluetoothPrinter] printRawEscpos result:', result);
+
+    if (result?.success) {
+      return {success: true};
+    }
+
+    const err = result?.error;
+    if (typeof err === 'string') {
+      return {success: false, error: err};
+    }
+    if (err && typeof err === 'object') {
+      const parts = [err.code, err.message, err.suggestion].filter(Boolean);
+      if (parts.length > 0) {
+        return {success: false, error: parts.join(' — ')};
+      }
+    }
+    return {success: false, error: 'Print failed'};
   }
 
   /**
@@ -1148,11 +1669,21 @@ class BluetoothPrinterService {
         return false;
       }
 
+      const sessionReady = await this.ensureFreshBluetoothSession();
+      if (!sessionReady) {
+        Toast.show({
+          type: 'error',
+          text1: 'Printer Not Connected',
+          text2: 'Could not open a Bluetooth print session. Re-pair the printer and try again.',
+        });
+        return false;
+      }
+
       const copies = Math.min(
         10,
         Math.max(1, Math.floor(Number(data.copies) || 1)),
       );
-      const document = this.buildItemLabelDocument(data);
+      const document = normalizeEscposDocument(this.buildItemLabelDocument(data));
       const job = {
         printers: [
           {
@@ -1179,15 +1710,7 @@ class BluetoothPrinterService {
         return true;
       }
 
-      const firstResult = result.results
-        ? Array.from(result.results.values())[0]
-        : null;
-      const errorMsg = firstResult?.error || 'Print failed';
-      throw new Error(
-        typeof errorMsg === 'string'
-          ? errorMsg
-          : errorMsg?.message || 'Print failed',
-      );
+      throw new Error(extractThermalPrintError(result, 'Print failed'));
     } catch (error: any) {
       console.error('Failed to print item label via Bluetooth:', error);
       Toast.show({
@@ -1199,6 +1722,28 @@ class BluetoothPrinterService {
       });
       return false;
     }
+  }
+
+  private async printReceiptDocument(
+    document: ReceiptDocument,
+    logoUrl?: string | null,
+  ): Promise<boolean> {
+    const logoSrc =
+      logoUrl ||
+      document.nodes.find((n) => n.type === "image" && n.src)?.src;
+    if (logoSrc) {
+      try {
+        await this.printReceiptLogo(logoSrc);
+      } catch (logoError) {
+        console.warn("[BluetoothPrinter] receipt logo skipped:", logoError);
+      }
+    }
+    const rawBytes = compileDocumentToEscPosBytes(document);
+    const printResult = await this.printRawEscpos(rawBytes);
+    if (!printResult.success) {
+      throw new Error(printResult.error || "Print failed");
+    }
+    return true;
   }
 
   /**
@@ -1225,53 +1770,35 @@ class BluetoothPrinterService {
         return false;
       }
 
-      console.log('Starting Bluetooth print...');
-
-      // Build receipt document
-      const document = this.buildReceiptDocument(data);
-
-      // Create print job
-      const job = {
-        printers: [
-          {
-            address: this.printerAddress,
-            options: {
-              paperWidthMm: 58, // 58mm paper
-              encoding: 'utf8' as const,
-              marginMm: 1,
-            },
-          },
-        ],
-        documents: [document],
-      };
-
-      // Print via Bluetooth
-      const result = await ThermalPrinter.printReceipt(job);
-
-      console.log('Print result:', result);
-
-      if (result.success) {
-        console.log('Bluetooth print completed successfully');
-
+      const sessionReady = await this.ensureFreshBluetoothSession();
+      if (!sessionReady) {
         Toast.show({
-          type: 'success',
-          text1: 'Print Successful',
-          text2: 'Receipt printed successfully',
+          type: 'error',
+          text1: 'Printer Not Connected',
+          text2: 'Could not open a Bluetooth print session. Re-pair the printer and try again.',
         });
-
-        return true;
-      } else {
-        // result.results is a Map<string, PrinterResult>
-        const firstResult = result.results
-          ? Array.from(result.results.values())[0]
-          : null;
-        const errorMsg = firstResult?.error || 'Print failed';
-        throw new Error(
-          typeof errorMsg === 'string'
-            ? errorMsg
-            : errorMsg?.message || 'Print failed',
-        );
+        return false;
       }
+
+      const process = data.compactReceipt
+        ? 'sales_history_reprint'
+        : 'pos_sale';
+      const document = await buildSaleReceiptDocument(
+        data,
+        process,
+        'bluetooth',
+      );
+      await this.printReceiptDocument(
+        document,
+        data.companyInfo?.logo,
+      );
+
+      Toast.show({
+        type: 'success',
+        text1: 'Print Successful',
+        text2: 'Receipt printed successfully',
+      });
+      return true;
     } catch (error: any) {
       console.error('Failed to print via Bluetooth:', error);
       Toast.show({
@@ -1300,77 +1827,13 @@ class BluetoothPrinterService {
         return false;
       }
 
-      const docs: any[] = [
-        {
-          type: 'text',
-          content: 'KITCHEN ORDER',
-          style: {align: 'center', bold: true, size: 'double'},
-        },
-        {type: 'line'},
-        {
-          type: 'text',
-          content: `Order: ${data.order_no}`,
-          style: {align: 'center', bold: true},
-        },
-        {type: 'text', content: data.table_label, style: {align: 'center'}},
-        {type: 'text', content: data.order_type_display, style: {align: 'center'}},
-      ];
-      if (data.waiter_name) {
-        docs.push({
-          type: 'text',
-          content: `Server: ${data.waiter_name}`,
-          style: {align: 'center'},
-        });
+      const sessionReady = await this.ensureFreshBluetoothSession();
+      if (!sessionReady) {
+        return false;
       }
-      docs.push({
-        type: 'text',
-        content: data.printed_at,
-        style: {align: 'center'},
-      });
-      docs.push({type: 'line'});
-      for (const item of data.items) {
-        docs.push({
-          type: 'text',
-          content: `${item.quantity}x  ${item.item_name}`,
-          style: {bold: true},
-        });
-        if (item.special_instructions) {
-          docs.push({
-            type: 'text',
-            content: `  ** ${item.special_instructions}`,
-          });
-        }
-        if (item.fire_state_display) {
-          docs.push({
-            type: 'text',
-            content: `  [${item.fire_state_display}]`,
-          });
-        }
-      }
-      docs.push({type: 'line'});
-      docs.push({
-        type: 'text',
-        content: '*** KITCHEN COPY ***',
-        style: {align: 'center', bold: true},
-      });
-      docs.push({type: 'feed', lines: 4});
-      docs.push({type: 'cut'});
 
-      const result = await ThermalPrinter.printReceipt({
-        printers: [
-          {
-            address: this.printerAddress,
-            options: {
-              paperWidthMm: 58,
-              encoding: 'utf8' as const,
-              marginMm: 1,
-            },
-          },
-        ],
-        documents: [docs],
-      });
-
-      return Boolean(result.success);
+      const document = await buildKotReceiptDocument(data, 'bluetooth');
+      return await this.printReceiptDocument(document);
     } catch (error) {
       console.error('Bluetooth KOT print failed:', error);
       return false;
@@ -1414,54 +1877,18 @@ class BluetoothPrinterService {
 
       console.log('Starting printer test...');
 
-      // Build test receipt document
-      const document: any[] = [
-        {
-          type: 'text',
-          content: 'ZENTRO APP - TEST',
-          style: {align: 'center', bold: true, size: 'double'},
-        },
-        {type: 'feed', lines: 1},
-        {type: 'line'},
-        {
-          type: 'text',
-          content: 'Printer Test Successful',
-          style: {align: 'center', bold: true},
-        },
-        {
-          type: 'text',
-          content: `Date: ${new Date().toLocaleString()}`,
-          style: {align: 'center'},
-        },
-        {
-          type: 'text',
-          content: `Device: ${this.connectedDevice.name}`,
-          style: {align: 'center'},
-        },
-        {type: 'line'},
-        {type: 'feed', lines: 3},
-        {type: 'cut'},
-      ];
+      const sessionReady = await this.ensureFreshBluetoothSession();
+      if (!sessionReady) {
+        Toast.show({
+          type: 'error',
+          text1: 'Printer Not Connected',
+          text2: 'Could not prepare Bluetooth print session.',
+        });
+        return false;
+      }
 
-      // Create print job
-      const job = {
-        printers: [
-          {
-            address: this.printerAddress!,
-            options: {
-              paperWidthMm: 58,
-              encoding: 'utf8' as const,
-              marginMm: 1,
-            },
-          },
-        ],
-        documents: [document],
-      };
-
-      // Print via Bluetooth
-      const result = await ThermalPrinter.printReceipt(job);
-
-      if (result.success) {
+      const rawResult = await this.printRawEscpos(this.buildEscPosTestBytes());
+      if (rawResult.success) {
         console.log('Printer test completed successfully');
 
         Toast.show({
@@ -1471,18 +1898,9 @@ class BluetoothPrinterService {
         });
 
         return true;
-      } else {
-        // result.results is a Map<string, PrinterResult>
-        const firstResult = result.results
-          ? Array.from(result.results.values())[0]
-          : null;
-        const errorMsg = firstResult?.error || 'Test print failed';
-        throw new Error(
-          typeof errorMsg === 'string'
-            ? errorMsg
-            : errorMsg?.message || 'Test print failed',
-        );
       }
+
+      throw new Error(rawResult.error || 'Test print failed');
     } catch (error: any) {
       console.error('Printer test failed:', error);
 

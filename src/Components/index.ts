@@ -17,6 +17,7 @@ import {PermissionButton} from './PermissionButton';
 import {PermissionTextButton} from './PermissionTextButton';
 import {PermissionIconButton} from './PermissionIconButton';
 import {PermissionView} from './PermissionView';
+import {SearchableSelectModal} from './SearchableSelectModal';
 
 export {
   CartQuantityButton,
@@ -33,4 +34,5 @@ export {
   PermissionTextButton,
   PermissionIconButton,
   PermissionView,
+  SearchableSelectModal,
 };

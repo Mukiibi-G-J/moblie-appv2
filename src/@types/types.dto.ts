@@ -150,6 +150,8 @@ export type ItemJournalEntryType =
   | 'NegativeAdjustment'
   | 'DirectCost';
 
+export type ItemJournalAdjustmentType = 'operational' | 'opening_balance';
+
 /** Create/update body for POST /api/item-journals/upsert/ */
 export interface ItemJournalUpsertPayload {
   id?: number;
@@ -165,6 +167,7 @@ export interface ItemJournalUpsertPayload {
   user: number;
   item_unit_of_measure?: number | null;
   item_specification?: number | null;
+  adjustment_type?: ItemJournalAdjustmentType;
   deleted?: boolean;
 }
 

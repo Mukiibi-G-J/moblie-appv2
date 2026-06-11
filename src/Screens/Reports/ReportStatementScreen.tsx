@@ -23,7 +23,8 @@ import {COLORS, FONTS, SIZES, icons} from '../../constants';
 import {useTheme} from '../../context/ThemeContext';
 import {useAppContext} from '../../context/Store';
 import {
-  exportReportPdfFromApi,
+  downloadBalanceSheetPdf,
+  downloadProfitLossPdf,
   fetchBalanceSheetReport,
   fetchProfitLossStatement,
 } from '../../services/app.services';
@@ -278,10 +279,7 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
   // Default report branch to the global working branch once known.
   useEffect(() => {
     if (branchFilter !== undefined) return;
-    const activeId = app?.branchSession?.active_branch_id ?? null;
-    if (activeId != null) {
-      setBranchFilter(activeId);
-    }
+    setBranchFilter(app?.branchSession?.active_branch_id ?? null);
   }, [app?.branchSession?.active_branch_id, branchFilter]);
 
   const branchRequestConfig = useMemo(() => {
@@ -293,6 +291,9 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
 
   const performFetch = useCallback(
     async (mode: 'full' | 'refresh') => {
+      if (branchFilter === undefined) {
+        return;
+      }
       const fetchId = ++latestFetchId.current;
       const showFullSpinner = mode === 'full';
       if (showFullSpinner) {
@@ -356,8 +357,12 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
   );
 
   useEffect(() => {
+    if (branchFilter === undefined) {
+      setLoading(true);
+      return;
+    }
     performFetch('full');
-  }, [performFetch]);
+  }, [performFetch, branchFilter]);
 
   const loadReport = useCallback(() => performFetch('full'), [performFetch]);
 
@@ -381,15 +386,26 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
     try {
       const apiType =
         reportType === 'profit-loss' ? 'profit_loss' : 'balance_sheet';
-      const filters: Record<string, unknown> =
+      const buf =
         reportType === 'profit-loss'
-          ? {start_date: plRange.startDate, end_date: plRange.endDate}
-          : {as_of_date: bsAsOf};
-      const buf = await exportReportPdfFromApi(apiType, filters);
+          ? await downloadProfitLossPdf({
+              startDate: plRange.startDate,
+              endDate: plRange.endDate,
+              branch: branchFilter,
+              requestConfig: branchRequestConfig,
+            })
+          : await downloadBalanceSheetPdf({
+              asOfDate: bsAsOf,
+              branch: branchFilter,
+              requestConfig: branchRequestConfig,
+            });
       const baseName = `zentro_${apiType}_${
         reportType === 'profit-loss' ? plRange.endDate : bsAsOf
       }`;
-      const {sharedOnIos} = await savePdfBufferAndShare(buf, baseName);
+      const {sharedOnIos, displayPath, openedViewer} = await savePdfBufferAndShare(
+        buf,
+        baseName,
+      );
       if (sharedOnIos) {
         Toast.show({
           type: 'success',
@@ -399,9 +415,10 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
       } else {
         Toast.show({
           type: 'success',
-          text1: 'PDF saved',
-          text2:
-            'File path copied. Paste in a file manager to open the PDF in Downloads or share it.',
+          text1: 'PDF downloaded',
+          text2: openedViewer
+            ? `Saved to ${displayPath}`
+            : `Saved to ${displayPath}. Open Downloads or Files to view it.`,
         });
       }
     } catch (e: unknown) {
@@ -415,6 +432,8 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
       setExportingPdf(false);
     }
   }, [
+    branchFilter,
+    branchRequestConfig,
     bsAsOf,
     canExportPdf,
     exportingPdf,

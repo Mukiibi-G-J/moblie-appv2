@@ -60,6 +60,12 @@ import { useCart } from '../../context/CartStore';
 import { useIsFocused } from '@react-navigation/native';
 import { handlePrint } from '../../Components/HandlePrint';
 import { SalesPostData, CartItem } from '../../@types/types.dto';
+import {
+  isInventoryPosItem,
+  isPosItemOutOfStock,
+  posItemMaxSaleQuantity,
+  posItemStockLabel,
+} from '../../utils/posItemStock';
 import SalesCompletionModal from '../../Components/SalesCompletionModal';
 import { useSearchMode } from '../../context/SearchModeStore';
 import { safeGoBack } from '../../hooks/NavigationService';
@@ -443,7 +449,7 @@ const Cart = ({
     );
     const quantity = existItem ? existItem.quantity + 1 : 1;
 
-    if (quantity > item.inventory) {
+    if (isInventoryPosItem(item) && quantity > item.inventory) {
       Toast.show({
         type: 'error',
         text1: '⚠️ Stock Limit Reached',
@@ -707,8 +713,7 @@ const Cart = ({
       }
   
       const currentQty = Number(previous.quantity) || 1;
-      const inventoryLimit = Number(previous.inventory) || 0;
-      const maxQty = Math.max(currentQty, inventoryLimit, 1);
+      const maxQty = posItemMaxSaleQuantity(previous, currentQty);
       const nextQty = Math.min(maxQty, Math.max(1, currentQty + delta));
   
       if (nextQty === currentQty) {
@@ -2043,7 +2048,9 @@ const Cart = ({
                   </Text>
                   <View style={styles.modalItemInfo}>
                     <Text style={[styles.modalStockText, ct.modalStock]}>
-                      Stock: {item.inventory}
+                      {isInventoryPosItem(item)
+                        ? `Stock: ${item.inventory}`
+                        : posItemStockLabel(item)}
                     </Text>
                     <Text style={styles.modalPriceText}>
                       UGX {formatMoney(item.unit_price)}

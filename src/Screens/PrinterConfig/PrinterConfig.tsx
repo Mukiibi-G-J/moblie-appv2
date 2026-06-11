@@ -95,7 +95,57 @@ const PrinterConfig: React.FC = () => {
     setConnectedDevice(device);
   };
 
+  const promptEnableBluetooth = (): Promise<boolean> =>
+    new Promise(resolve => {
+      Alert.alert(
+        'Bluetooth is turned off',
+        'Turn on Bluetooth to use a Bluetooth thermal printer. You can enable it now or in Android settings.',
+        [
+          {
+            text: 'Cancel',
+            style: 'cancel',
+            onPress: () => resolve(false),
+          },
+          {
+            text: 'Enable Bluetooth',
+            onPress: () => {
+              void (async () => {
+                const enabled = await bluetoothService.requestEnableBluetooth();
+                if (!enabled) {
+                  Toast.show({
+                    type: 'info',
+                    text1: 'Bluetooth still off',
+                    text2:
+                      'Enable Bluetooth in your device settings, then try again.',
+                  });
+                }
+                resolve(enabled);
+              })();
+            },
+          },
+        ],
+        {cancelable: true, onDismiss: () => resolve(false)},
+      );
+    });
+
+  const ensureBluetoothReady = async (): Promise<boolean> => {
+    if (Platform.OS !== 'android') {
+      return true;
+    }
+    if (await bluetoothService.isBluetoothEnabled()) {
+      return true;
+    }
+    return promptEnableBluetooth();
+  };
+
   const handlePrinterTypeChange = async (type: PrinterType) => {
+    if (type === 'bluetooth' && Platform.OS === 'android') {
+      const ready = await ensureBluetoothReady();
+      if (!ready) {
+        return;
+      }
+    }
+
     try {
       setIsLoading(true);
       await printService.setPrinterType(type);
@@ -125,6 +175,11 @@ const PrinterConfig: React.FC = () => {
         text1: 'Not supported',
         text2: 'Bluetooth printing is only available on Android',
       });
+      return;
+    }
+
+    const ready = await ensureBluetoothReady();
+    if (!ready) {
       return;
     }
 
@@ -162,6 +217,11 @@ const PrinterConfig: React.FC = () => {
   };
 
   const connectToPrinter = async (device: BluetoothDevice) => {
+    const ready = await ensureBluetoothReady();
+    if (!ready) {
+      return;
+    }
+
     try {
       setIsConnecting(true);
 
@@ -278,46 +338,56 @@ const PrinterConfig: React.FC = () => {
     } catch {}
   };
 
-  const testPrinter = async () => {
+  const ensurePrinterReadyForTest = async (): Promise<boolean> => {
+    if (printerType === 'usb' && !usbService.isConnected()) {
+      Alert.alert(
+        'Printer not connected',
+        'Please connect to a USB printer first before testing.',
+        [{text: 'OK'}],
+      );
+      return false;
+    }
+
+    if (printerType === 'bluetooth') {
+      const ready = await ensureBluetoothReady();
+      if (!ready) {
+        return false;
+      }
+      if (!bluetoothService.isPrinterConnected()) {
+        await bluetoothService.ensureConnectedFromStorage();
+      }
+      if (!bluetoothService.isPrinterConnected()) {
+        Alert.alert(
+          'Printer not connected',
+          'Please connect to a Bluetooth printer first before testing.',
+          [{text: 'OK'}],
+        );
+        return false;
+      }
+      checkBluetoothConnection();
+    }
+
+    return true;
+  };
+
+  const runPrinterTest = async (mode: 'short' | 'sale') => {
     try {
       setIsTesting(true);
+      const ready = await ensurePrinterReadyForTest();
+      if (!ready) {
+        return;
+      }
 
-      if (printerType === 'usb') {
-        if (!usbService.isConnected()) {
-          Alert.alert(
-            'Printer not connected',
-            'Please connect to a USB printer first before testing.',
-            [{text: 'OK'}],
-          );
-          return;
-        }
-        const success = await usbService.testPrint();
-        if (!success) {
-          throw new Error('USB printer test failed');
-        }
-      } else if (printerType === 'bluetooth') {
-        if (!bluetoothService.isPrinterConnected()) {
-          await bluetoothService.ensureConnectedFromStorage();
-        }
-        if (!bluetoothService.isPrinterConnected()) {
-          Alert.alert(
-            'Printer not connected',
-            'Please connect to a Bluetooth printer first before testing.',
-            [{text: 'OK'}],
-          );
-          return;
-        }
-        checkBluetoothConnection();
-
-        const success = await bluetoothService.testPrinter();
-        if (!success) {
-          throw new Error('Bluetooth printer test failed');
-        }
-      } else {
-        const success = await printService.testPrinter();
-        if (!success) {
-          throw new Error('Printer test failed');
-        }
+      const success =
+        mode === 'short'
+          ? await printService.testShortPrinter()
+          : await printService.testSaleReceipt();
+      if (!success) {
+        throw new Error(
+          mode === 'short'
+            ? 'Quick test print failed'
+            : 'Sales test receipt print failed',
+        );
       }
     } catch (error: any) {
       console.error('Printer test failed:', error);
@@ -332,10 +402,29 @@ const PrinterConfig: React.FC = () => {
     }
   };
 
+  const showTestPrintOptions = () => {
+    Alert.alert(
+      'Test print',
+      'Choose a test type:',
+      [
+        {
+          text: 'Quick test',
+          onPress: () => runPrinterTest('short'),
+        },
+        {
+          text: 'Sales receipt test',
+          onPress: () => runPrinterTest('sale'),
+        },
+        {text: 'Cancel', style: 'cancel'},
+      ],
+      {cancelable: true},
+    );
+  };
+
   const showHelpInfo = () => {
     Alert.alert(
       'Printer setup',
-      '1. Choose Auto detect, Bluetooth, or USB (AOCOM built-in).\n2. Bluetooth: pair your printer in Android Bluetooth settings, then tap "Scan for printers".\n3. USB: plug the printer in via USB, tap "Scan for USB printers", select the printer and grant USB permission when Android asks — prints directly, no dialog.\n4. Use Test printer to verify.',
+      '1. Choose Auto detect, Bluetooth, or USB (AOCOM built-in).\n2. Bluetooth: pair your printer in Android Bluetooth settings, then tap "Scan for printers".\n3. USB: plug the printer in via USB, tap "Scan for USB printers", select the printer and grant USB permission when Android asks — prints directly, no dialog.\n4. Tap Test printer and choose Quick test (short slip) or Sales receipt test (full sample sale).',
       [{text: 'OK'}],
     );
   };
@@ -734,29 +823,59 @@ const PrinterConfig: React.FC = () => {
                   Plug the USB cable into the AOCOM machine, power the printer on, then tap
                   "Scan for USB printers". Tap the printer in the list. When Android asks for
                   USB permission, tap Allow. The printer will appear as Connected above.
-                  Tap Test printer to verify.
+                  Tap Test printer to verify (quick or sales receipt).
                 </Text>
               </View>
             </>
           ) : null}
 
+          <View style={styles.testButtonRow}>
+            <TouchableOpacity
+              style={[
+                styles.secondaryTestButton,
+                {borderColor: colors.border},
+                styles.testButtonHalf,
+                isTesting && styles.primaryButtonDisabled,
+              ]}
+              onPress={() => runPrinterTest('short')}
+              disabled={isTesting}
+              activeOpacity={0.85}>
+              {isTesting ? (
+                <ActivityIndicator color={COLORS.primary} size="small" />
+              ) : (
+                <Text style={[styles.secondaryTestButtonText, {color: colors.text}]}>
+                  Quick test
+                </Text>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.primaryButton,
+                styles.testButtonHalf,
+                isTesting && styles.primaryButtonDisabled,
+              ]}
+              onPress={() => runPrinterTest('sale')}
+              disabled={isTesting}
+              activeOpacity={0.85}>
+              {isTesting ? (
+                <ActivityIndicator color={COLORS.white} size="small" />
+              ) : (
+                <Text style={styles.primaryButtonText}>Sales receipt</Text>
+              )}
+            </TouchableOpacity>
+          </View>
           <TouchableOpacity
-            style={[
-              styles.primaryButton,
-              styles.testButtonSpaced,
-              isTesting && styles.primaryButtonDisabled,
-            ]}
-            onPress={testPrinter}
+            style={styles.testMenuLink}
+            onPress={showTestPrintOptions}
             disabled={isTesting}
-            activeOpacity={0.85}>
-            {isTesting ? (
-              <ActivityIndicator color={COLORS.white} size="small" />
-            ) : (
-              <Text style={styles.primaryButtonText}>Test printer</Text>
-            )}
+            activeOpacity={0.7}>
+            <Text style={[styles.testButtonHelp, {color: COLORS.primary}]}>
+              Or choose test type…
+            </Text>
           </TouchableOpacity>
           <Text style={[styles.testButtonHelp, {color: colors.textSecondary}]}>
-            Print a test receipt to verify your printer is working
+            Quick test: short slip. Sales receipt: full sample sale with your
+            template.
           </Text>
         </ScrollView>
       </View>
@@ -987,6 +1106,33 @@ const styles = StyleSheet.create({
   infoCardBody: {
     fontSize: 15,
     lineHeight: 22,
+  },
+  testButtonRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: SIZES.padding,
+  },
+  testButtonHalf: {
+    flex: 1,
+    marginTop: 0,
+  },
+  secondaryTestButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    minHeight: 48,
+  },
+  secondaryTestButtonText: {
+    ...FONTS.body4,
+    fontWeight: '600',
+  },
+  testMenuLink: {
+    alignItems: 'center',
+    marginTop: 8,
+    marginBottom: 4,
   },
   testButtonHelp: {
     ...FONTS.body5,

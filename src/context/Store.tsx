@@ -27,10 +27,13 @@ import {
 } from '../storage/restaurantDeviceStorage';
 import {shouldOfferRestaurantPinFromToken} from '../utils/restaurantPinOffer';
 import {setVerifiedEmail} from '../utils/tenant';
+import {fetchSalesSetupBranchConfig} from '../services/branchProfile.service';
 
 export interface AppContextType {
   auth: AuthState;
   branchSession: BranchSessionState;
+  /** False until stored token / branch session hydration finishes on cold start. */
+  sessionHydrated: boolean;
   login: (userCredentials: {
     email: string;
     password: string;
@@ -136,6 +139,7 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
   );
   const [cartItems, setCartItems] = useState([]);
   const [selectedTab, setSelectedTab] = useState('Home');
+  const [sessionHydrated, setSessionHydrated] = useState(false);
 
   const clearAuthState = useCallback(() => {
     // Clear auth state without clearing AsyncStorage (for token expiry scenarios)
@@ -171,7 +175,11 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
         rawActiveBranchId != null ? Number(rawActiveBranchId) : null;
       const branchSelectionPending = rawPending === '1';
       const enable_multiple_branches = rawEnableMultiple === '1';
-      const can_switch_branch = rawCanSwitch === '1';
+      // Match web: old tokens / missing storage default to switch allowed.
+      const can_switch_branch =
+        rawCanSwitch == null || rawCanSwitch === ''
+          ? true
+          : rawCanSwitch === '1';
 
       setBranchSessionState({
         active_branch,
@@ -215,43 +223,77 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
     }));
   }, []);
 
+  const syncBranchFlagsFromSetup = useCallback(
+    async (jwtEnableMultiple: boolean) => {
+      let enableMultiple = jwtEnableMultiple;
+      try {
+        const setup = await fetchSalesSetupBranchConfig();
+        enableMultiple = setup.enable_multiple_branches === true;
+      } catch {
+        /* keep JWT value */
+      }
+      await AsyncStorage.setItem(
+        BRANCH_SESSION_KEYS.enableMultiple,
+        enableMultiple ? '1' : '0',
+      );
+      setBranchSessionState((prev) => ({
+        ...prev,
+        enable_multiple_branches: enableMultiple,
+      }));
+      return enableMultiple;
+    },
+    [],
+  );
+
   const refreshBranchCapabilities = useCallback(async () => {
-    // Default to JWT flags if present; can be refined by sales setup later.
-    const enableMultiple = auth.enable_multiple_branches === true;
     const canSwitch = auth.can_switch_branch !== false;
-    await Promise.all([
-      AsyncStorage.setItem(BRANCH_SESSION_KEYS.enableMultiple, enableMultiple ? '1' : '0'),
-      AsyncStorage.setItem(BRANCH_SESSION_KEYS.canSwitch, canSwitch ? '1' : '0'),
-    ]);
+    const enableMultiple = await syncBranchFlagsFromSetup(
+      auth.enable_multiple_branches === true,
+    );
+    await AsyncStorage.setItem(
+      BRANCH_SESSION_KEYS.canSwitch,
+      canSwitch ? '1' : '0',
+    );
     setBranchSessionState((prev) => ({
       ...prev,
       enable_multiple_branches: enableMultiple,
       can_switch_branch: canSwitch,
     }));
-  }, [auth.enable_multiple_branches, auth.can_switch_branch]);
+  }, [
+    auth.enable_multiple_branches,
+    auth.can_switch_branch,
+    syncBranchFlagsFromSetup,
+  ]);
 
   const ensureBranchSelectionGate = useCallback(
     async (args: {
       enableMultiple: boolean;
       canSwitch: boolean;
-      /** After login/PIN: force picker only when still no assigned branch in JWT (web sets branch from JWT first). */
+      /** After login/PIN: always prompt switchers (web `finalizeLoginSession`). */
       requireSelectionAfterTokenIssue?: boolean;
-      jwtHasAssignedBranch?: boolean;
     }) => {
-      if (!args.enableMultiple || !args.canSwitch) {
-        await AsyncStorage.setItem(BRANCH_SESSION_KEYS.selectionPending, '0');
-        setBranchSessionState((prev) => ({...prev, branchSelectionPending: false}));
-        return;
-      }
-
-      if (args.requireSelectionAfterTokenIssue && args.jwtHasAssignedBranch) {
+      if (!args.canSwitch) {
         await AsyncStorage.setItem(BRANCH_SESSION_KEYS.selectionPending, '0');
         setBranchSessionState((prev) => ({...prev, branchSelectionPending: false}));
         return;
       }
 
       if (args.requireSelectionAfterTokenIssue) {
+        // Web sets pending for any user who can switch; modal checks enable_multiple_branches.
         await AsyncStorage.setItem(BRANCH_SESSION_KEYS.selectionPending, '1');
+        setBranchSessionState((prev) => ({...prev, branchSelectionPending: true}));
+        return;
+      }
+
+      if (!args.enableMultiple) {
+        await AsyncStorage.setItem(BRANCH_SESSION_KEYS.selectionPending, '0');
+        setBranchSessionState((prev) => ({...prev, branchSelectionPending: false}));
+        return;
+      }
+
+      // App restart: honour persisted pending flag until user confirms (web redux-persist).
+      const rawPending = await AsyncStorage.getItem(BRANCH_SESSION_KEYS.selectionPending);
+      if (rawPending === '1') {
         setBranchSessionState((prev) => ({...prev, branchSelectionPending: true}));
         return;
       }
@@ -345,44 +387,35 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
       }
       await AsyncStorage.multiSet(storageItems);
 
-      setAuth(user);
-
       await autoRegisterRestaurantDeviceIfEligible(user);
 
-      await Promise.all([
-        AsyncStorage.setItem(
-          BRANCH_SESSION_KEYS.enableMultiple,
-          user.enable_multiple_branches === true ? '1' : '0',
-        ),
-        AsyncStorage.setItem(
-          BRANCH_SESSION_KEYS.canSwitch,
-          user.can_switch_branch === false ? '0' : '1',
-        ),
-      ]);
+      await AsyncStorage.setItem(
+        BRANCH_SESSION_KEYS.canSwitch,
+        user.can_switch_branch === false ? '0' : '1',
+      );
       setBranchSessionState((prev) => ({
         ...prev,
-        enable_multiple_branches: user.enable_multiple_branches === true,
         can_switch_branch: user.can_switch_branch !== false,
       }));
-      await applyGlobalDimensionFromJwt(decodedToken);
-      const jwtBranch = decodedToken.global_dimension_1;
-      const jwtHasAssignedBranch = Boolean(
-        jwtBranch &&
-          Number.isFinite(Number(jwtBranch.id)) &&
-          String(jwtBranch.code ?? '').trim().length > 0,
+      const enableMultiple = await syncBranchFlagsFromSetup(
+        user.enable_multiple_branches === true,
       );
+      await applyGlobalDimensionFromJwt(decodedToken);
       await ensureBranchSelectionGate({
-        enableMultiple: user.enable_multiple_branches === true,
+        enableMultiple,
         canSwitch: user.can_switch_branch !== false,
         requireSelectionAfterTokenIssue: true,
-        jwtHasAssignedBranch,
       });
 
-      setTimeout(() => {
-        setAuth((prevAuth) => ({...prevAuth, ...user}));
-      }, 50);
+      // Set auth last so navigation sees branchSelectionPending together with accessToken.
+      setAuth(user);
     },
-    [mapTokenToAuthState, ensureBranchSelectionGate, applyGlobalDimensionFromJwt],
+    [
+      mapTokenToAuthState,
+      ensureBranchSelectionGate,
+      applyGlobalDimensionFromJwt,
+      syncBranchFlagsFromSetup,
+    ],
   );
   useEffect(() => {
     const checkAccessToken = async () => {
@@ -419,39 +452,26 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
             permission_sets: user.permission_sets,
             page_permissions: Object.keys(user.page_permissions || {}),
           });
-          setAuth(user);
           // Hydrate branch session and align capability flags with JWT.
           await hydrateBranchSession();
-          // If JWT carries branch capability flags, persist them to branch session.
-          // This keeps gating consistent across restarts.
-          await Promise.all([
-            AsyncStorage.setItem(
-              BRANCH_SESSION_KEYS.enableMultiple,
-              user.enable_multiple_branches === true ? '1' : '0',
-            ),
-            AsyncStorage.setItem(
-              BRANCH_SESSION_KEYS.canSwitch,
-              user.can_switch_branch === false ? '0' : '1',
-            ),
-          ]);
+          await AsyncStorage.setItem(
+            BRANCH_SESSION_KEYS.canSwitch,
+            user.can_switch_branch === false ? '0' : '1',
+          );
           setBranchSessionState((prev) => ({
             ...prev,
-            enable_multiple_branches: user.enable_multiple_branches === true,
             can_switch_branch: user.can_switch_branch !== false,
           }));
+          const enableMultiple = await syncBranchFlagsFromSetup(
+            user.enable_multiple_branches === true,
+          );
           const dt = decodedToken as DecodedToken;
           await applyGlobalDimensionFromJwt(dt);
-          const jwtBranch = dt.global_dimension_1;
-          const jwtHasAssignedBranch = Boolean(
-            jwtBranch &&
-              Number.isFinite(Number(jwtBranch.id)) &&
-              String(jwtBranch.code ?? '').trim().length > 0,
-          );
           await ensureBranchSelectionGate({
-            enableMultiple: user.enable_multiple_branches === true,
+            enableMultiple,
             canSwitch: user.can_switch_branch !== false,
-            jwtHasAssignedBranch,
           });
+          setAuth(user);
         } catch (error) {
           console.log('Error decoding token, clearing auth state:', error);
           clearAuthState();
@@ -462,13 +482,16 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
         await hydrateBranchSession();
       }
     };
-    checkAccessToken();
+    checkAccessToken().finally(() => {
+      setSessionHydrated(true);
+    });
   }, [
     clearAuthState,
     mapTokenToAuthState,
     hydrateBranchSession,
     ensureBranchSelectionGate,
     applyGlobalDimensionFromJwt,
+    syncBranchFlagsFromSetup,
   ]);
 
   // Load cart items from AsyncStorage on mount
@@ -563,6 +586,7 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
     () => ({
       auth,
       branchSession,
+      sessionHydrated,
       login,
       loginWithTokens,
       logout,
@@ -574,6 +598,7 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
     [
       auth,
       branchSession,
+      sessionHydrated,
       clearAuthState,
       login,
       loginWithTokens,

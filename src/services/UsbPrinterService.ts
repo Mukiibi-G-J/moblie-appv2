@@ -1,6 +1,46 @@
+import {NativeModules} from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {USBPrinter} from 'react-native-thermal-receipt-printer';
+import {
+  prepareCompanyLogoForPrint,
+  resolveCompanyLogoUri,
+  isPlaceholderCompanyLogo,
+} from '../utils/companyLogoUrl';
 import type {PrintReceiptData} from './PrintService';
+import {printUsbDocument} from '../shared/receipt/compileToUsb';
+import {
+  buildKotReceiptDocument,
+  buildSaleReceiptDocument,
+} from './receiptPrintOrchestrator';
+import {
+  buildSampleSaleReceiptData,
+  fetchCompanyInfoForReceipt,
+} from '../utils/companyReceiptInfo';
+
+const RNUSBPrinter = NativeModules.RNUSBPrinter as
+  | {
+      printImageData?: (
+        imageUrl: string,
+        errorCallback: (error: string) => void,
+      ) => void;
+    }
+  | undefined;
+
+function printUsbLogoFromUrl(imageUrl: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (!RNUSBPrinter?.printImageData) {
+      reject(new Error('USB image print not available'));
+      return;
+    }
+    RNUSBPrinter.printImageData(imageUrl, (error: string) => {
+      if (error) {
+        reject(new Error(error));
+      } else {
+        resolve();
+      }
+    });
+  });
+}
 
 export interface UsbDevice {
   device_name: string;
@@ -243,76 +283,39 @@ class UsbPrinterService {
     return text;
   }
 
+  private async printReceiptLogo(logo?: string): Promise<void> {
+    if (!logo?.trim() || isPlaceholderCompanyLogo(logo)) {
+      return;
+    }
+
+    const prepared = await prepareCompanyLogoForPrint(logo);
+    const imageUrl = prepared?.url ?? (await resolveCompanyLogoUri(logo));
+    if (!imageUrl) {
+      return;
+    }
+
+    await printUsbLogoFromUrl(imageUrl);
+  }
+
   async printReceipt(data: PrintReceiptData): Promise<boolean> {
     try {
       if (!this.connectedDevice) {
         return false;
       }
 
-      if (data.compactReceipt) {
-        const text = this.printCompactReceiptUsb(data);
-        USBPrinter.printText(text);
-        return true;
+      if (data.companyInfo?.logo) {
+        try {
+          await this.printReceiptLogo(data.companyInfo.logo);
+        } catch (logoError) {
+          console.warn('[UsbPrinter] receipt logo skipped:', logoError);
+        }
       }
 
-      const companyName = data.companyInfo?.name || 'ZENTRO APP';
-      const receiptId = data.receiptId || `R${Date.now()}`;
-      const date = data.saleDate
-        ? String(data.saleDate).split('T')[0]
-        : new Date().toISOString().split('T')[0];
-
-      let text = '';
-      text += `<CB>${companyName.toUpperCase()}</CB>\n`;
-      if (data.companyInfo?.address) {
-        text += `<C>${data.companyInfo.address}</C>\n`;
-      }
-      if (data.companyInfo?.tin) {
-        text += `<C>TIN: ${data.companyInfo.tin}</C>\n`;
-      }
-      text += `<C>${LINE}</C>\n`;
-      text += `<C>Receipt #: ${receiptId}</C>\n`;
-      text += `<C>Date: ${date}</C>\n`;
-      text += `<C>Cashier: ${data.username}</C>\n`;
-      if (data.customerName) {
-        text += `<C>Customer: ${data.customerName}</C>\n`;
-      }
-      text += `<C>${LINE}</C>\n`;
-      text += '<B>ITEMS</B>\n';
-      text += `${LINE}\n`;
-
-      for (const item of data.cartItems) {
-        const lineTotal = (Number(item.quantity) || 0) * (Number(item.unit_price) || 0);
-        const name =
-          item.item_name.length > 20
-            ? item.item_name.substring(0, 19) + '\u2026'
-            : item.item_name;
-        text += `${name}\n`;
-        text += `${padLine(`  ${item.quantity} x ${this.fmt(item.unit_price)}`, this.fmt(lineTotal))}\n`;
-      }
-
-      text += `${LINE}\n`;
-      const subtotal = data.subtotal ?? data.total;
-      text += `${padLine('Subtotal:', this.fmt(subtotal))}\n`;
-      if (data.tax && data.tax > 0) {
-        text += `${padLine('Tax:', this.fmt(data.tax))}\n`;
-      }
-      if (data.discount && data.discount > 0) {
-        text += `${padLine('Discount:', `-${this.fmt(data.discount)}`)}\n`;
-      }
-      text += `<B>${padLine('TOTAL:', this.fmt(data.total))}</B>\n`;
-      if (data.paymentMethod) {
-        text += `${padLine('Payment:', data.paymentMethod)}\n`;
-      }
-      if (data.change && data.change > 0) {
-        text += `${padLine('Change:', this.fmt(data.change))}\n`;
-      }
-      text += `${LINE}\n`;
-      text += '<C>Thank you for your purchase!</C>\n';
-      text += '<C>www.zentroapp.app</C>\n';
-      text += '<C>Powered by Zentroapp</C>\n';
-      text += '\n\n\n\n';
-
-      USBPrinter.printText(text);
+      const process = data.compactReceipt
+        ? 'sales_history_reprint'
+        : 'pos_sale';
+      const document = await buildSaleReceiptDocument(data, process, 'usb');
+      await printUsbDocument(document);
       return true;
     } catch (error) {
       console.error('USB print failed:', error);
@@ -325,30 +328,8 @@ class UsbPrinterService {
       if (!this.connectedDevice) {
         return false;
       }
-      let text = '';
-      text += '<CB>KITCHEN ORDER</CB>\n';
-      text += `<C>${LINE}</C>\n`;
-      text += `<C>Order: ${data.order_no}</C>\n`;
-      text += `<C>${data.table_label}</C>\n`;
-      text += `<C>${data.order_type_display}</C>\n`;
-      if (data.waiter_name) {
-        text += `<C>Server: ${data.waiter_name}</C>\n`;
-      }
-      text += `<C>${data.printed_at}</C>\n`;
-      text += `<C>${LINE}</C>\n`;
-      for (const item of data.items) {
-        text += `<B>${item.quantity}x ${item.item_name}</B>\n`;
-        if (item.special_instructions) {
-          text += `  ** ${item.special_instructions}\n`;
-        }
-        if (item.fire_state_display) {
-          text += `  [${item.fire_state_display}]\n`;
-        }
-      }
-      text += `${LINE}\n`;
-      text += '<C>*** KITCHEN COPY ***</C>\n';
-      text += '\n\n\n\n';
-      USBPrinter.printText(text);
+      const document = await buildKotReceiptDocument(data, 'usb');
+      await printUsbDocument(document);
       return true;
     } catch (error) {
       console.error('USB KOT print failed:', error);
@@ -356,14 +337,31 @@ class UsbPrinterService {
     }
   }
 
+  async testShortPrint(): Promise<boolean> {
+    try {
+      if (!this.connectedDevice) {
+        return false;
+      }
+      const text =
+        `<C><B>ZENTRO APP - TEST</B></C>\n` +
+        `<C>Printer test OK</C>\n` +
+        `<C>${new Date().toLocaleString()}</C>\n\n\n`;
+      await USBPrinter.printText(text);
+      return true;
+    } catch (error) {
+      console.error('USB quick test failed:', error);
+      return false;
+    }
+  }
+
+  async testSaleReceipt(): Promise<boolean> {
+    const companyInfo = await fetchCompanyInfoForReceipt();
+    return this.printReceipt(buildSampleSaleReceiptData(companyInfo));
+  }
+
+  /** @deprecated Use testShortPrint or testSaleReceipt */
   async testPrint(): Promise<boolean> {
-    return this.printReceipt({
-      cartItems: [{item_name: 'Test Item', quantity: 1, unit_price: 1000}],
-      total: 1000,
-      username: 'Test',
-      receiptId: 'TEST-001',
-      saleDate: new Date().toISOString(),
-    });
+    return this.testSaleReceipt();
   }
 }
 

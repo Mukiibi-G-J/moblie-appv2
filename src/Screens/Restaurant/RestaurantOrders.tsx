@@ -34,6 +34,7 @@ import {
   receiptLabelFromPostedPayload,
   restaurantOrderToReceiptData,
 } from '../../services/restaurantReceiptAdapter';
+import {fetchCompanyInfoForReceipt} from '../../utils/companyReceiptInfo';
 
 const OPEN_ORDER_STATUSES = new Set([
   'new',
@@ -286,9 +287,11 @@ export default function RestaurantOrders() {
 
       let receiptPrinted = false;
       if (shouldPrint) {
+        const companyInfo = await fetchCompanyInfoForReceipt();
         const receiptData = restaurantOrderToReceiptData(order, {
           username: auth.username || auth.user_id || 'Staff',
           receiptIdOverride: receiptId,
+          companyInfo,
         });
         receiptPrinted =
           await PrintService.getInstance().printReceipt(receiptData);

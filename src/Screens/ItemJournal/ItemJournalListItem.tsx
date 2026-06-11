@@ -1,7 +1,13 @@
 import React from 'react';
-import {View, Text, TouchableOpacity, StyleSheet} from 'react-native';
-import {FONTS, SIZES} from '../../constants';
-import type {SemanticColors} from '../../theme/semanticColors';
+import {
+  Alert,
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  Image,
+} from 'react-native';
+import {COLORS, FONTS, icons} from '../../constants';
 
 export type ItemJournalLine = {
   id: number;
@@ -15,17 +21,15 @@ export type ItemJournalLine = {
   unit_cost: number | null;
   date: string;
   status: string;
-  /** ItemUnitOfMeasure PK from API */
   item_unit_of_measure?: number | null;
-  /** UOM code for display (from unit_of_measure_detail) */
   unit_of_measure_code?: string;
 };
 
 const ENTRY_LABELS: Record<string, string> = {
+  PositiveAdjustment: 'Increase',
+  NegativeAdjustment: 'Decrease',
   Purchase: 'Purchase',
   Sales: 'Sales',
-  PositiveAdjustment: 'Positive adjustment',
-  NegativeAdjustment: 'Negative adjustment',
   DirectCost: 'Direct cost',
 };
 
@@ -35,168 +39,173 @@ function entryTypeLabel(entryType: string): string {
 
 type Props = {
   line: ItemJournalLine;
-  colors: SemanticColors;
   onPress: () => void;
   onPost: () => void;
-  /** Tap row to edit (parent enforces Open-only). */
   canOpenLine: boolean;
   canPost: boolean;
 };
 
 const ItemJournalListItem: React.FC<Props> = ({
   line,
-  colors,
   onPress,
   onPost,
   canOpenLine,
   canPost,
 }) => {
   const isOpen = line.status === 'Open';
-  const cost = line.unit_cost != null ? String(line.unit_cost) : '—';
+  const initials =
+    line.item_name
+      ?.split(' ')
+      .filter(Boolean)
+      .slice(0, 2)
+      .map(part => part[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase() || 'IJ';
+
+  const secondaryLine = [
+    line.document_no,
+    entryTypeLabel(line.entry_type),
+    line.date,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  const qtyText = `Qty ${line.quantity}${
+    line.unit_of_measure_code ? ` ${line.unit_of_measure_code}` : ''
+  }`;
+
+  const handleOpenActions = () => {
+    const options: Array<{
+      text: string;
+      style?: 'cancel' | 'destructive';
+      onPress?: () => void;
+    }> = [];
+
+    if (canOpenLine && isOpen) {
+      options.push({
+        text: 'Edit line',
+        onPress: onPress,
+      });
+    }
+
+    if (canPost && isOpen) {
+      options.push({
+        text: 'Post to inventory',
+        onPress: onPost,
+      });
+    }
+
+    options.push({text: 'Cancel', style: 'cancel'});
+
+    if (options.length === 1) {
+      Alert.alert(line.document_no || 'Journal line', 'No actions available.', options);
+      return;
+    }
+
+    Alert.alert(line.item_name || 'Journal line', 'Choose an action', options);
+  };
 
   return (
-    <View
-      style={[
-        styles.card,
-        {
-          backgroundColor: colors.card,
-          borderColor: colors.border,
-        },
-        !canOpenLine && styles.cardDisabled,
-      ]}>
-      <TouchableOpacity
-        activeOpacity={0.7}
-        onPress={onPress}
-        disabled={!canOpenLine}>
-        <View style={styles.topRow}>
-          <Text style={[styles.docNo, {color: colors.textPrimary}]} numberOfLines={1}>
-            {line.document_no}
-          </Text>
-          <View
-            style={[
-              styles.badge,
-              {
-                backgroundColor:
-                  line.status === 'Open'
-                    ? 'rgba(76, 175, 80, 0.15)'
-                    : colors.screenMuted,
-              },
-            ]}>
-            <Text
-              style={[
-                styles.badgeText,
-                {color: line.status === 'Open' ? '#2E7D32' : colors.textSecondary},
-              ]}>
-              {line.status}
-            </Text>
-          </View>
-        </View>
-        <Text style={[styles.itemName, {color: colors.textPrimary}]} numberOfLines={2}>
+    <TouchableOpacity
+      activeOpacity={canOpenLine && isOpen ? 0.8 : 1}
+      style={styles.container}
+      onPress={canOpenLine && isOpen ? onPress : undefined}>
+      <View style={styles.avatar}>
+        <Text style={styles.avatarText}>{initials}</Text>
+      </View>
+
+      <View style={styles.content}>
+        <Text style={styles.itemName} numberOfLines={1}>
           {line.item_name}
         </Text>
-        <Text style={[styles.meta, {color: colors.textSecondary}]}>
-          {entryTypeLabel(line.entry_type)}
-          {line.date ? ` · ${line.date}` : ''}
+        <Text style={styles.secondaryText} numberOfLines={1}>
+          {secondaryLine}
         </Text>
-        <View style={styles.qtyRow}>
-          <Text style={[styles.qtyLabel, {color: colors.textSecondary}]}>Qty</Text>
-          <Text style={[styles.qtyValue, {color: colors.textPrimary}]}>
-            {line.quantity}
-            {line.unit_of_measure_code ? ` ${line.unit_of_measure_code}` : ''}
-          </Text>
-          <Text style={[styles.qtyLabel, {color: colors.textSecondary}, styles.costPad]}>
-            Cost
-          </Text>
-          <Text style={[styles.qtyValue, {color: colors.textPrimary}]}>{cost}</Text>
-        </View>
-      </TouchableOpacity>
-      {isOpen && canPost ? (
+        <Text
+          style={[
+            styles.metaText,
+            isOpen ? styles.metaTextOpen : styles.metaTextMuted,
+          ]}>
+          {qtyText} · {line.status}
+        </Text>
+      </View>
+
+      {(canOpenLine || canPost) && (
         <TouchableOpacity
-          style={[styles.postBtn, {borderColor: colors.border}]}
-          onPress={onPost}
-          activeOpacity={0.65}>
-          <Text style={[styles.postBtnText, {color: colors.textPrimary}]}>Post</Text>
+          onPress={handleOpenActions}
+          style={styles.actionButton}
+          hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
+          <Image source={icons.menu} style={styles.actionIcon} resizeMode="contain" />
         </TouchableOpacity>
-      ) : null}
-    </View>
+      )}
+    </TouchableOpacity>
   );
 };
 
 export default ItemJournalListItem;
 
 const styles = StyleSheet.create({
-  card: {
-    marginHorizontal: SIZES.padding,
-    marginBottom: 12,
-    padding: 14,
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
-  },
-  cardDisabled: {
-    opacity: 0.85,
-  },
-  topRow: {
+  container: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 6,
+    marginHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.lightGray1,
   },
-  docNo: {
-    ...FONTS.h3,
-    fontSize: 15,
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 10,
+    backgroundColor: COLORS.transparentPrimary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+  avatarText: {
+    color: COLORS.primary3,
+    fontSize: 16,
     fontWeight: '700',
+  },
+  content: {
     flex: 1,
-    marginRight: 8,
-  },
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  badgeText: {
-    ...FONTS.body5,
-    fontSize: 11,
-    fontWeight: '700',
   },
   itemName: {
-    ...FONTS.body3,
+    ...FONTS.body2,
+    color: COLORS.black,
+    fontWeight: '700',
     fontSize: 15,
-    fontWeight: '600',
     marginBottom: 4,
   },
-  meta: {
+  secondaryText: {
     ...FONTS.body4,
-    fontSize: 13,
-    marginBottom: 10,
-  },
-  qtyRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  qtyLabel: {
-    ...FONTS.body4,
+    color: COLORS.gray2,
     fontSize: 13,
   },
-  qtyValue: {
-    ...FONTS.body3,
-    fontSize: 14,
+  metaText: {
+    ...FONTS.body4,
+    fontSize: 13,
+    marginTop: 6,
     fontWeight: '600',
-    marginLeft: 6,
   },
-  costPad: {
-    marginLeft: 16,
+  metaTextOpen: {
+    color: COLORS.primary2,
   },
-  postBtn: {
-    marginTop: 12,
-    alignSelf: 'flex-start',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 8,
-    borderWidth: StyleSheet.hairlineWidth,
+  metaTextMuted: {
+    color: COLORS.gray2,
   },
-  postBtnText: {
-    ...FONTS.h3,
-    fontSize: 14,
-    fontWeight: '700',
+  actionButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.transparentPrimary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionIcon: {
+    width: 16,
+    height: 16,
+    tintColor: COLORS.primary3,
   },
 });

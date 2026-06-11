@@ -16,8 +16,7 @@ import {
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import {Picker} from '@react-native-picker/picker';
-import {QuickIconPressable} from '../../Components';
+import {QuickIconPressable, SearchableSelectModal} from '../../Components';
 import {COLORS, FONTS, icons} from '../../constants';
 import {
   Expense,
@@ -120,6 +119,10 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
   });
 
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [expenseTypePickerVisible, setExpenseTypePickerVisible] =
+    useState(false);
+  const [paymentMethodPickerVisible, setPaymentMethodPickerVisible] =
+    useState(false);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -198,6 +201,34 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     }
     return expenseTypes.find(t => t.id === formData.expense_type)?.name ?? null;
   }, [formData.expense_type, expenseTypes]);
+
+  const paymentMethodName = useMemo(() => {
+    if (!formData.payment_method) {
+      return null;
+    }
+    const method = paymentMethods.find(m => m.id === formData.payment_method);
+    return method?.description || method?.code || null;
+  }, [formData.payment_method, paymentMethods]);
+
+  const expenseTypeOptions = useMemo(
+    () =>
+      expenseTypes.map(type => ({
+        id: type.id,
+        label: type.name,
+        subtitle: type.code,
+      })),
+    [expenseTypes],
+  );
+
+  const paymentMethodOptions = useMemo(
+    () =>
+      paymentMethods.map(method => ({
+        id: method.id,
+        label: method.description || method.code,
+        subtitle: method.code !== method.description ? method.code : undefined,
+      })),
+    [paymentMethods],
+  );
 
   const previewAmountLabel = useMemo(() => {
     const raw = formData.amount?.replace(/,/g, '') ?? '';
@@ -477,34 +508,34 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                 {expenseTypes.length === 0 ? (
                   <View style={styles.inlineLoadingRow}>
                     <ActivityIndicator size="small" color={COLORS.primary2} />
-                    <Text style={styles.inlineLoadingText}>
+                    <Text style={[styles.inlineLoadingText, expTheme.inlineLoadingText]}>
                       Loading expense types…
                     </Text>
                   </View>
                 ) : (
-                  <View style={styles.pickerShell}>
-                    <Picker
-                      selectedValue={formData.expense_type || 0}
-                      onValueChange={value => {
-                        if (value === 0) {
-                          setFormData({...formData, expense_type: null});
-                        } else {
-                          setFormData({...formData, expense_type: value});
-                        }
-                      }}
-                      enabled={!isPosted}
-                      style={styles.picker}
-                      itemStyle={{color: COLORS.black}}>
-                      <Picker.Item label="Select expense type" value={0} />
-                      {expenseTypes.map(type => (
-                        <Picker.Item
-                          key={type.id}
-                          label={type.name}
-                          value={type.id}
-                        />
-                      ))}
-                    </Picker>
-                  </View>
+                  <TouchableOpacity
+                    style={[
+                      styles.selectRow,
+                      expTheme.selectRow,
+                      isPosted && [styles.selectRowDisabled, expTheme.selectRowDisabled],
+                    ]}
+                    onPress={() => !isPosted && setExpenseTypePickerVisible(true)}
+                    activeOpacity={0.7}
+                    disabled={isPosted}>
+                    <Text
+                      style={[
+                        styles.selectRowText,
+                        expTheme.selectRowText,
+                        !expenseTypeName && [
+                          styles.selectRowPlaceholder,
+                          expTheme.selectRowPlaceholder,
+                        ],
+                        isPosted && [styles.disabledText, expTheme.disabledText],
+                      ]}>
+                      {expenseTypeName || 'Select expense type'}
+                    </Text>
+                    <Text style={[styles.selectRowChevron, expTheme.selectRowChevron]}>›</Text>
+                  </TouchableOpacity>
                 )}
                 {errors.expense_type ? (
                   <Text style={styles.errorText}>{errors.expense_type}</Text>
@@ -553,29 +584,29 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                   Payment method
                   {isPosted ? '' : ' (optional)'}
                 </Text>
-                <View style={[styles.pickerShell, expTheme.pickerShell]}>
-                  <Picker
-                    selectedValue={formData.payment_method || 0}
-                    onValueChange={value => {
-                      if (value === 0) {
-                        setFormData({...formData, payment_method: null});
-                      } else {
-                        setFormData({...formData, payment_method: value});
-                      }
-                    }}
-                    enabled={!isPosted}
-                    style={[styles.picker, expTheme.picker]}
-                    itemStyle={expTheme.pickerItemStyle}>
-                    <Picker.Item label="Select payment method" value={0} />
-                    {paymentMethods.map(method => (
-                      <Picker.Item
-                        key={method.id}
-                        label={method.description || method.code}
-                        value={method.id}
-                      />
-                    ))}
-                  </Picker>
-                </View>
+                <TouchableOpacity
+                  style={[
+                    styles.selectRow,
+                    expTheme.selectRow,
+                    isPosted && [styles.selectRowDisabled, expTheme.selectRowDisabled],
+                  ]}
+                  onPress={() => !isPosted && setPaymentMethodPickerVisible(true)}
+                  activeOpacity={0.7}
+                  disabled={isPosted}>
+                  <Text
+                    style={[
+                      styles.selectRowText,
+                      expTheme.selectRowText,
+                      !paymentMethodName && [
+                        styles.selectRowPlaceholder,
+                        expTheme.selectRowPlaceholder,
+                      ],
+                      isPosted && [styles.disabledText, expTheme.disabledText],
+                    ]}>
+                    {paymentMethodName || 'Select payment method'}
+                  </Text>
+                  <Text style={[styles.selectRowChevron, expTheme.selectRowChevron]}>›</Text>
+                </TouchableOpacity>
               </View>
 
               {isEditMode ? (
@@ -613,6 +644,40 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
           </View>
         </SafeAreaView>
       </KeyboardAvoidingView>
+
+      <SearchableSelectModal
+        visible={expenseTypePickerVisible}
+        title="Select expense type"
+        options={expenseTypeOptions}
+        selectedId={formData.expense_type}
+        searchPlaceholder="Search expense types…"
+        onClose={() => setExpenseTypePickerVisible(false)}
+        onSelect={id => {
+          setFormData({
+            ...formData,
+            expense_type: typeof id === 'number' ? id : null,
+          });
+          setExpenseTypePickerVisible(false);
+        }}
+      />
+
+      <SearchableSelectModal
+        visible={paymentMethodPickerVisible}
+        title="Select payment method"
+        options={paymentMethodOptions}
+        selectedId={formData.payment_method}
+        searchPlaceholder="Search payment methods…"
+        allowClear
+        clearLabel="No payment method"
+        onClose={() => setPaymentMethodPickerVisible(false)}
+        onSelect={id => {
+          setFormData({
+            ...formData,
+            payment_method: typeof id === 'number' ? id : null,
+          });
+          setPaymentMethodPickerVisible(false);
+        }}
+      />
     </Modal>
   );
 };

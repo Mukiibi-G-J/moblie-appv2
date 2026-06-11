@@ -12,15 +12,15 @@ import {
   KeyboardAvoidingView,
   Platform,
   Image,
+  ImageSourcePropType,
 } from 'react-native';
-import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import {Picker} from '@react-native-picker/picker';
-import {QuickIconPressable} from '../../Components';
+import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import {QuickIconPressable, SearchableSelectModal} from '../../Components';
 import {
   COLORS,
   FONTS,
   SIZES,
-  ICON_BUTTON_HIT_SLOP,
   icons,
 } from '../../constants';
 import {useTheme} from '../../context/ThemeContext';
@@ -37,6 +37,11 @@ import {
 } from '../../@types/paymentJournal';
 import {PaymentJournalServices} from '../../services/PaymentJournalServices';
 import Toast from 'react-native-toast-message';
+
+const isProtectedGeneralCustomer = (customer?: {name?: string | null} | null) => {
+  const normalizedName = customer?.name?.trim().toLowerCase();
+  return normalizedName === 'general' || normalizedName === 'general customer';
+};
 
 interface PaymentFormModalProps {
   visible: boolean;
@@ -63,37 +68,58 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
   const canSave =
     (isEditMode && canEdit) || (!isEditMode && canCreate);
 
-  const themeStyles = useMemo(
+  const payTheme = useMemo(
     () => ({
-      loadingText: {
-        color: colors.textSecondary,
-      },
-      sectionTitle: {
-        color: colors.textPrimary,
-      },
-      label: {
-        color: colors.textPrimary,
-      },
+      pageRoot: {backgroundColor: colors.background},
+      safeArea: {backgroundColor: colors.background},
+      page: {backgroundColor: colors.background},
+      pageHeader: {borderBottomColor: colors.border},
+      headerIcon: {tintColor: colors.textPrimary},
+      pageTitle: {color: colors.textPrimary},
+      sectionTitle: {color: colors.textPrimary},
+      fieldLabel: {color: colors.textPrimary},
       input: {
         borderColor: colors.border,
         color: colors.textPrimary,
         backgroundColor: colors.inputBackground,
       },
-      disabledInput: {
+      inputDisabled: {
         backgroundColor: colors.screenMuted,
         color: colors.textSecondary,
       },
-      pickerWrap: {
+      disabledText: {color: colors.textSecondary},
+      selectRow: {
         borderColor: colors.border,
         backgroundColor: colors.inputBackground,
       },
-      picker: {
-        backgroundColor: colors.inputBackground,
-        color: colors.textPrimary,
+      selectRowText: {color: colors.textPrimary},
+      selectRowPlaceholder: {color: colors.textSecondary},
+      selectRowChevron: {color: colors.textSecondary},
+      inlineLoadingText: {color: colors.textSecondary},
+      sectionDivider: {backgroundColor: colors.border},
+      infoCard: {
+        borderColor: colors.border,
+        backgroundColor: colors.surface,
       },
+      infoCardTitle: {color: colors.textPrimary},
+      infoCardBody: {color: colors.textSecondary},
+      loadingText: {color: colors.textSecondary},
     }),
     [colors],
   );
+
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [documentTypePickerVisible, setDocumentTypePickerVisible] =
+    useState(false);
+  const [accountTypePickerVisible, setAccountTypePickerVisible] =
+    useState(false);
+  const [accountPickerVisible, setAccountPickerVisible] = useState(false);
+  const [paymentMethodPickerVisible, setPaymentMethodPickerVisible] =
+    useState(false);
+  const [appliesToDocTypePickerVisible, setAppliesToDocTypePickerVisible] =
+    useState(false);
+  const [appliesToDocumentPickerVisible, setAppliesToDocumentPickerVisible] =
+    useState(false);
 
   // Form state
   const [formData, setFormData] = useState<PaymentJournalFormValues>({
@@ -153,7 +179,9 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
         ]);
 
         setPaymentMethods(paymentMethodsRes);
-        setCustomers(customersRes.results);
+        setCustomers(
+          customersRes.results.filter(c => !isProtectedGeneralCustomer(c)),
+        );
         setVendors(vendorsRes.results);
         setGLAccounts(glAccountsRes);
         setContentTypes(contentTypesRes);
@@ -286,17 +314,26 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
   };
 
   // Handle account selection change
-  const handleAccountChange = async (accountId: number) => {
+  const handleAccountChange = async (accountId: number | string) => {
+    const resolvedAccountId =
+      typeof accountId === 'number'
+        ? accountId
+        : parseInt(String(accountId), 10) || null;
+
     setFormData({
       ...formData,
-      account_object_id: accountId,
+      account_object_id: resolvedAccountId,
       applies_to_doc_type: '',
       applies_to_content_type_id: null,
       applies_to_object_id: null,
     });
 
     // Load ledger entries
-    if (formData.account_type && accountId) {
+    if (
+      formData.account_type &&
+      accountId &&
+      typeof accountId === 'number'
+    ) {
       await loadLedgerEntries(formData.account_type, accountId);
     }
   };
@@ -455,10 +492,12 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
   // Get available accounts based on account type
   const getAvailableAccounts = () => {
     if (formData.account_type === 'Customer') {
-      return customers.map(customer => ({
-        id: customer.id,
-        label: `${customer.no} - ${customer.name}`,
-      }));
+      return customers
+        .filter(customer => !isProtectedGeneralCustomer(customer))
+        .map(customer => ({
+          id: customer.id,
+          label: `${customer.no} - ${customer.name}`,
+        }));
     } else if (formData.account_type === 'Vendor') {
       return vendors.map(vendor => ({
         id: vendor.id,
@@ -491,6 +530,160 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
     return [];
   };
 
+  const handleDateChange = (_event: unknown, selectedDate?: Date) => {
+    setShowDatePicker(false);
+    if (selectedDate) {
+      setFormData({
+        ...formData,
+        posting_date: selectedDate.toISOString().split('T')[0],
+      });
+    }
+  };
+
+  const formatAmountInput = (amount: number) => {
+    if (!amount) {
+      return '';
+    }
+    return amount.toLocaleString('en-US', {maximumFractionDigits: 0});
+  };
+
+  const handleAmountChange = (text: string) => {
+    const numericValue = text.replace(/[^0-9]/g, '');
+    const num = numericValue === '' ? 0 : parseInt(numericValue, 10);
+    if (!isNaN(num)) {
+      setFormData({...formData, amount: num});
+    }
+  };
+
+  const accountOptions = useMemo(
+    () => getAvailableAccounts(),
+    [formData.account_type, customers, vendors, glAccounts],
+  );
+
+  const ledgerEntryOptions = useMemo(
+    () => getAvailableLedgerEntries(),
+    [formData.account_type, customerLedgerEntries, vendorLedgerEntries],
+  );
+
+  const paymentMethodOptions = useMemo(
+    () =>
+      paymentMethods.map(method => ({
+        id: method.id,
+        label: method.description || method.code,
+        subtitle: method.code,
+      })),
+    [paymentMethods],
+  );
+
+  const accountTypeOptions = useMemo(
+    () => [
+      {id: 'Customer', label: 'Customer'},
+      {id: 'Vendor', label: 'Vendor'},
+      {id: 'G/L Account', label: 'G/L Account'},
+    ],
+    [],
+  );
+
+  const documentTypeOptions = useMemo(
+    () => [
+      {id: 'Payment', label: 'Payment'},
+      {id: 'Refund', label: 'Refund'},
+    ],
+    [],
+  );
+
+  const appliesToDocTypeOptions = useMemo(
+    () => [
+      {id: 'Invoice', label: 'Invoice'},
+      {id: 'Credit Memo', label: 'Credit Memo'},
+      {id: 'Payment', label: 'Payment'},
+    ],
+    [],
+  );
+
+  const selectedAccountLabel = useMemo(() => {
+    if (!formData.account_object_id || !formData.account_type) {
+      return null;
+    }
+    const match = accountOptions.find(
+      opt => String(opt.id) === String(formData.account_object_id),
+    );
+    if (match?.label) {
+      return match.label;
+    }
+    if (formData.account_type === 'Customer' && payment?.account_name) {
+      return payment.account_name;
+    }
+    return null;
+  }, [
+    accountOptions,
+    formData.account_object_id,
+    formData.account_type,
+    payment?.account_name,
+  ]);
+
+  const selectedPaymentMethodLabel = useMemo(() => {
+    if (!formData.payment_method) {
+      return null;
+    }
+    const method = paymentMethods.find(m => m.id === formData.payment_method);
+    return method ? `${method.code} - ${method.description}` : null;
+  }, [formData.payment_method, paymentMethods]);
+
+  const selectedAppliesToLabel = useMemo(() => {
+    if (!formData.applies_to_object_id) {
+      return null;
+    }
+    return (
+      ledgerEntryOptions.find(opt => opt.id === formData.applies_to_object_id)
+        ?.label ?? null
+    );
+  }, [formData.applies_to_object_id, ledgerEntryOptions]);
+
+  const previewAmountLabel = `UGX ${(formData.amount || 0).toLocaleString('en-US', {
+    maximumFractionDigits: 0,
+  })}`;
+
+  const previewAccountLabel =
+    selectedAccountLabel ||
+    (formData.account_type ? `${formData.account_type} account` : 'Payment');
+
+  const renderSelectRow = (
+    label: string,
+    value: string | null,
+    placeholder: string,
+    onPress: () => void,
+    error?: string,
+    spaced?: boolean,
+  ) => (
+    <>
+      <Text
+        style={[
+          styles.fieldLabel,
+          payTheme.fieldLabel,
+          spaced && styles.fieldLabelSpaced,
+        ]}>
+        {label}
+      </Text>
+      <TouchableOpacity
+        style={[styles.selectRow, payTheme.selectRow]}
+        onPress={onPress}
+        activeOpacity={0.7}>
+        <Text
+          style={[
+            styles.selectRowText,
+            payTheme.selectRowText,
+            !value && [styles.selectRowPlaceholder, payTheme.selectRowPlaceholder],
+          ]}
+          numberOfLines={2}>
+          {value || placeholder}
+        </Text>
+        <Text style={[styles.selectRowChevron, payTheme.selectRowChevron]}>›</Text>
+      </TouchableOpacity>
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+    </>
+  );
+
   return (
     <Modal
       visible={visible}
@@ -498,458 +691,429 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
       transparent={false}
       onRequestClose={onClose}>
       <KeyboardAvoidingView
-        style={[styles.pageRoot, {backgroundColor: colors.background}]}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <View style={[styles.page, {backgroundColor: colors.background}]}>
-          <View
-            style={[
-              styles.pageHeader,
-              {
-                paddingTop: Math.max(
-                  insets.top,
-                  Platform.OS === 'ios' ? 12 : 16,
-                ),
-              },
-            ]}>
-            <QuickIconPressable
-              onPress={onClose}
-              style={[
-                styles.headerIconButton,
-                {
-                  backgroundColor: colors.card,
-                  borderColor: colors.border,
-                  borderWidth: StyleSheet.hairlineWidth,
-                },
-              ]}
-              hitSlop={ICON_BUTTON_HIT_SLOP}
-              accessibilityLabel="Close">
-              <Image
-                source={icons.cross}
-                style={[
-                  styles.headerCloseIcon,
-                  {tintColor: colors.textPrimary},
-                ]}
-                resizeMode="contain"
-              />
-            </QuickIconPressable>
-            {canSave ? (
-              <TouchableOpacity
-                style={[
-                  styles.headerSaveButton,
-                  (loading || loadingDropdowns) &&
-                    styles.headerSaveButtonDisabled,
-                ]}
-                onPress={handleSave}
-                disabled={loading || loadingDropdowns}
-                activeOpacity={0.85}>
-                {loading ? (
-                  <ActivityIndicator size="small" color={COLORS.white} />
-                ) : (
-                  <Text style={styles.headerSaveText}>
-                    {isEditMode ? 'Save' : 'Create'}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            ) : (
-              <View style={styles.headerSaveSpacer} />
-            )}
-          </View>
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={[styles.pageRoot, payTheme.pageRoot]}>
+        <SafeAreaView
+          style={[styles.safeArea, payTheme.safeArea]}
+          edges={['top', 'left', 'right']}>
+          <View style={[styles.page, payTheme.page]}>
+            <View style={[styles.pageHeader, payTheme.pageHeader]}>
+              <QuickIconPressable
+                onPress={onClose}
+                style={styles.headerIconButton}
+                hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
+                accessibilityLabel="Close">
+                <Image
+                  source={icons.cross as ImageSourcePropType}
+                  style={[styles.headerIcon, payTheme.headerIcon]}
+                  resizeMode="contain"
+                />
+              </QuickIconPressable>
 
-          {loadingDropdowns ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={COLORS.primary2} />
-              <Text style={[styles.loadingText, themeStyles.loadingText]}>
-                Loading form data...
-              </Text>
-            </View>
-          ) : (
-            <ScrollView
-              style={styles.formContainer}
-              contentContainerStyle={[
-                styles.formContent,
-                {paddingBottom: Math.max(insets.bottom, 28) + 16},
-              ]}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}>
-              <Text style={[styles.pageTitle, {color: colors.textPrimary}]}>
-                {isEditMode ? 'Edit payment' : 'Create payment'}
-              </Text>
-
-              {/* Document Information Section */}
-              <Text style={[styles.sectionTitle, themeStyles.sectionTitle]}>
-                Document information
-              </Text>
-
-                {/* Document No (Read-only) */}
-                {isEditMode && payment?.document_no && (
-                  <View style={styles.fieldContainer}>
-                    <Text style={[styles.label, themeStyles.label]}>
-                      Document no
-                    </Text>
-                    <TextInput
-                      style={[
-                        styles.input,
-                        themeStyles.input,
-                        styles.disabledInput,
-                        themeStyles.disabledInput,
-                      ]}
-                      value={payment.document_no}
-                      editable={false}
-                    />
-                  </View>
-                )}
-
-                {/* Posting Date */}
-                <View style={styles.fieldContainer}>
-                  <Text style={[styles.label, themeStyles.label]}>
-                    Posting date *
-                  </Text>
-                  <TextInput
-                    style={[
-                      styles.input,
-                      themeStyles.input,
-                      errors.posting_date && styles.inputError,
-                    ]}
-                    value={formData.posting_date}
-                    onChangeText={text =>
-                      setFormData({...formData, posting_date: text})
-                    }
-                    placeholder="YYYY-MM-DD"
-                    placeholderTextColor={colors.placeholder}
-                  />
-                  {errors.posting_date && (
-                    <Text style={styles.errorText}>{errors.posting_date}</Text>
-                  )}
-                </View>
-
-                {/* Document Type */}
-                <View style={styles.fieldContainer}>
-                  <Text style={[styles.label, themeStyles.label]}>
-                    Document type
-                  </Text>
-                  <View
-                    style={[styles.pickerContainer, themeStyles.pickerWrap]}>
-                    <Picker
-                      selectedValue={formData.document_type}
-                      onValueChange={value =>
-                        setFormData({...formData, document_type: value})
-                      }
-                      style={[styles.picker, themeStyles.picker]}
-                      itemStyle={{color: colors.textPrimary}}
-                      dropdownIconColor={colors.textPrimary}>
-                      <Picker.Item label="Payment" value="Payment" />
-                      <Picker.Item label="Refund" value="Refund" />
-                    </Picker>
-                  </View>
-                </View>
-
-                {/* Status (Read-only) */}
-                {isEditMode && (
-                  <View style={styles.fieldContainer}>
-                    <Text style={[styles.label, themeStyles.label]}>Status</Text>
-                    <TextInput
-                      style={[
-                        styles.input,
-                        themeStyles.input,
-                        styles.disabledInput,
-                        themeStyles.disabledInput,
-                      ]}
-                      value={formData.status}
-                      editable={false}
-                    />
-                  </View>
-                )}
-
-                {/* Account Information Section */}
-                <Text
+              {canSave ? (
+                <TouchableOpacity
                   style={[
-                    styles.sectionTitle,
-                    styles.sectionTitleMargin,
-                    themeStyles.sectionTitle,
-                  ]}>
-                  Account information
+                    styles.headerSaveButton,
+                    (loading || loadingDropdowns) && styles.buttonDisabled,
+                  ]}
+                  onPress={handleSave}
+                  disabled={loading || loadingDropdowns}
+                  activeOpacity={0.85}>
+                  {loading ? (
+                    <ActivityIndicator size="small" color={COLORS.white} />
+                  ) : (
+                    <Text style={styles.headerSaveText}>Save</Text>
+                  )}
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.headerSaveSpacer} />
+              )}
+            </View>
+
+            {loadingDropdowns ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={COLORS.primary2} />
+                <Text style={[styles.loadingText, payTheme.loadingText]}>
+                  Loading form data…
+                </Text>
+              </View>
+            ) : (
+              <ScrollView
+                style={styles.formContainer}
+                contentContainerStyle={[
+                  styles.formContent,
+                  {paddingBottom: Math.max(insets.bottom, 28) + 16},
+                ]}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}>
+                <Text style={[styles.pageTitle, payTheme.pageTitle]}>
+                  {isEditMode ? 'Edit payment' : 'Add payment'}
                 </Text>
 
-                {/* Description */}
-                <View style={styles.fieldContainer}>
-                  <Text style={[styles.label, themeStyles.label]}>
+                <View style={styles.previewSection}>
+                  <View style={styles.paymentPreviewCard}>
+                    <View style={styles.paymentPreviewTop}>
+                      <Image
+                        source={icons.wallet as ImageSourcePropType}
+                        style={styles.paymentPreviewIcon}
+                        resizeMode="contain"
+                      />
+                      <Text style={styles.paymentPreviewAccount} numberOfLines={1}>
+                        {previewAccountLabel}
+                      </Text>
+                    </View>
+                    <Text style={styles.paymentPreviewAmount} numberOfLines={1}>
+                      {previewAmountLabel}
+                    </Text>
+                    <Text style={styles.paymentPreviewDate} numberOfLines={1}>
+                      {formData.posting_date || 'Posting date'} ·{' '}
+                      {formData.document_type}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.section}>
+                  <Text style={[styles.sectionTitle, payTheme.sectionTitle]}>
+                    Document
+                  </Text>
+
+                  {isEditMode && payment?.document_no ? (
+                    <>
+                      <Text style={[styles.fieldLabel, payTheme.fieldLabel]}>
+                        Document no.
+                      </Text>
+                      <TextInput
+                        style={[
+                          styles.input,
+                          payTheme.input,
+                          styles.inputDisabled,
+                          payTheme.inputDisabled,
+                        ]}
+                        value={payment.document_no}
+                        editable={false}
+                      />
+                    </>
+                  ) : null}
+
+                  {renderSelectRow(
+                    'Posting date *',
+                    formData.posting_date || null,
+                    'Select date',
+                    () => setShowDatePicker(true),
+                    errors.posting_date,
+                  )}
+                  {showDatePicker ? (
+                    <DateTimePicker
+                      value={
+                        formData.posting_date
+                          ? new Date(formData.posting_date)
+                          : new Date()
+                      }
+                      mode="date"
+                      display="default"
+                      onChange={handleDateChange}
+                      maximumDate={new Date()}
+                    />
+                  ) : null}
+
+                  {renderSelectRow(
+                    'Document type',
+                    formData.document_type,
+                    'Select document type',
+                    () => setDocumentTypePickerVisible(true),
+                    undefined,
+                    true,
+                  )}
+
+                  {isEditMode ? (
+                    <>
+                      <Text
+                        style={[
+                          styles.fieldLabel,
+                          payTheme.fieldLabel,
+                          styles.fieldLabelSpaced,
+                        ]}>
+                        Status
+                      </Text>
+                      <TextInput
+                        style={[
+                          styles.input,
+                          payTheme.input,
+                          styles.inputDisabled,
+                          payTheme.inputDisabled,
+                        ]}
+                        value={formData.status}
+                        editable={false}
+                      />
+                    </>
+                  ) : null}
+                </View>
+
+                <View style={[styles.sectionDivider, payTheme.sectionDivider]} />
+
+                <View style={styles.section}>
+                  <Text style={[styles.sectionTitle, payTheme.sectionTitle]}>
+                    Account
+                  </Text>
+
+                  <Text style={[styles.fieldLabel, payTheme.fieldLabel]}>
                     Description
                   </Text>
                   <TextInput
-                    style={[
-                      styles.input,
-                      themeStyles.input,
-                      styles.textArea,
-                    ]}
+                    style={[styles.input, payTheme.input, styles.textArea]}
                     value={formData.description}
                     onChangeText={text =>
                       setFormData({...formData, description: text})
                     }
-                    placeholder="Enter payment description"
+                    placeholder="What is this payment for?"
                     placeholderTextColor={colors.placeholder}
                     multiline
-                    numberOfLines={2}
+                    numberOfLines={4}
                   />
-                </View>
 
-                {/* Account Type */}
-                <View style={styles.fieldContainer}>
-                  <Text style={[styles.label, themeStyles.label]}>
-                    Account type *
-                  </Text>
-                  <View
-                    style={[styles.pickerContainer, themeStyles.pickerWrap]}>
-                    <Picker
-                      selectedValue={formData.account_type || ''}
-                      onValueChange={value => {
-                        if (value === '') {
-                          handleAccountTypeChange('');
-                        } else {
-                          handleAccountTypeChange(value);
-                        }
-                      }}
-                      style={[styles.picker, themeStyles.picker]}
-                      itemStyle={{color: colors.textPrimary}}
-                      dropdownIconColor={colors.textPrimary}>
-                      <Picker.Item
-                        label="-- Select Account Type --"
-                        value=""
-                      />
-                      <Picker.Item label="Customer" value="Customer" />
-                      <Picker.Item label="Vendor" value="Vendor" />
-                      <Picker.Item label="G/L Account" value="G/L Account" />
-                    </Picker>
-                  </View>
-                  {errors.account_type && (
-                    <Text style={styles.errorText}>{errors.account_type}</Text>
+                  {renderSelectRow(
+                    'Account type *',
+                    formData.account_type,
+                    'Select account type',
+                    () => setAccountTypePickerVisible(true),
+                    errors.account_type,
+                    true,
                   )}
+
+                  {formData.account_type ? (
+                    loadingDropdowns ? (
+                      <View style={styles.inlineLoadingRow}>
+                        <ActivityIndicator size="small" color={COLORS.primary2} />
+                        <Text
+                          style={[
+                            styles.inlineLoadingText,
+                            payTheme.inlineLoadingText,
+                          ]}>
+                          Loading accounts…
+                        </Text>
+                      </View>
+                    ) : (
+                      renderSelectRow(
+                        `${formData.account_type} *`,
+                        selectedAccountLabel,
+                        `Search ${formData.account_type.toLowerCase()}`,
+                        () => setAccountPickerVisible(true),
+                        errors.account_object_id,
+                        true,
+                      )
+                    )
+                  ) : null}
                 </View>
 
-                {/* Account Selection */}
-                {formData.account_type && (
-                  <View style={styles.fieldContainer}>
-                    <Text style={[styles.label, themeStyles.label]}>
-                      {formData.account_type} *
-                    </Text>
-                    <View
-                      style={[styles.pickerContainer, themeStyles.pickerWrap]}>
-                      <Picker
-                        selectedValue={
-                          formData.account_object_id?.toString() || '0'
-                        }
-                        onValueChange={value => {
-                          if (value === '0' || value === 0) {
-                            setFormData({
-                              ...formData,
-                              account_object_id: null,
-                            });
-                          } else {
-                            // For GL accounts, value is a string (account no)
-                            // For Customer/Vendor, value is a number (ID)
-                            const accountId =
-                              formData.account_type === 'G/L Account'
-                                ? value
-                                : parseInt(value.toString(), 10);
-                            handleAccountChange(accountId);
-                          }
-                        }}
-                        style={[styles.picker, themeStyles.picker]}
-                        itemStyle={{color: colors.textPrimary}}
-                        dropdownIconColor={colors.textPrimary}>
-                        <Picker.Item
-                          label={`Select ${formData.account_type.toLowerCase()}`}
-                          value="0"
-                        />
-                        {getAvailableAccounts().map(account => (
-                          <Picker.Item
-                            key={account.id.toString()}
-                            label={account.label}
-                            value={account.id.toString()}
-                          />
-                        ))}
-                      </Picker>
-                    </View>
-                    {errors.account_object_id && (
-                      <Text style={styles.errorText}>
-                        {errors.account_object_id}
-                      </Text>
-                    )}
-                  </View>
-                )}
+                <View style={[styles.sectionDivider, payTheme.sectionDivider]} />
 
-                {/* Payment Information Section */}
-                <Text
-                  style={[
-                    styles.sectionTitle,
-                    styles.sectionTitleMargin,
-                    themeStyles.sectionTitle,
-                  ]}>
-                  Payment information
-                </Text>
-
-                {/* Payment Method */}
-                <View style={styles.fieldContainer}>
-                  <Text style={[styles.label, themeStyles.label]}>
-                    Payment method (optional)
+                <View style={styles.section}>
+                  <Text style={[styles.sectionTitle, payTheme.sectionTitle]}>
+                    Payment details
                   </Text>
-                  <View
-                    style={[styles.pickerContainer, themeStyles.pickerWrap]}>
-                    <Picker
-                      selectedValue={formData.payment_method || 0}
-                      onValueChange={value => {
-                        if (value === 0) {
-                          setFormData({...formData, payment_method: null});
-                        } else {
-                          handlePaymentMethodChange(value);
-                        }
-                      }}
-                      style={[styles.picker, themeStyles.picker]}
-                      itemStyle={{color: colors.textPrimary}}
-                      dropdownIconColor={colors.textPrimary}>
-                      <Picker.Item label="Select payment method" value={0} />
-                      {paymentMethods.map(method => (
-                        <Picker.Item
-                          key={method.id}
-                          label={`${method.code} - ${method.description}`}
-                          value={method.id}
-                        />
-                      ))}
-                    </Picker>
-                  </View>
-                </View>
 
-                {/* Amount */}
-                <View style={styles.fieldContainer}>
-                  <Text style={[styles.label, themeStyles.label]}>
+                  {renderSelectRow(
+                    'Payment method (optional)',
+                    selectedPaymentMethodLabel,
+                    'Search payment methods',
+                    () => setPaymentMethodPickerVisible(true),
+                  )}
+
+                  <Text
+                    style={[
+                      styles.fieldLabel,
+                      payTheme.fieldLabel,
+                      styles.fieldLabelSpaced,
+                    ]}>
                     Amount (UGX) *
                   </Text>
                   <TextInput
                     style={[
                       styles.input,
-                      themeStyles.input,
+                      payTheme.input,
                       errors.amount && styles.inputError,
                     ]}
-                    value={
-                      formData.amount === 0 ? '' : formData.amount.toString()
-                    }
-                    onChangeText={text => {
-                      const numValue = text === '' ? 0 : parseInt(text, 10);
-                      if (!isNaN(numValue)) {
-                        setFormData({...formData, amount: numValue});
-                      }
-                    }}
-                    placeholder="Enter amount"
+                    value={formatAmountInput(formData.amount)}
+                    onChangeText={handleAmountChange}
+                    placeholder="0"
                     placeholderTextColor={colors.placeholder}
                     keyboardType="numeric"
                   />
-                  {errors.amount && (
+                  {errors.amount ? (
                     <Text style={styles.errorText}>{errors.amount}</Text>
-                  )}
+                  ) : null}
                 </View>
 
-                {/* Applies To Section */}
-                {formData.account_type &&
-                  (formData.account_type === 'Customer' ||
-                    formData.account_type === 'Vendor') && (
-                    <>
-                      <Text
-                        style={[
-                          styles.sectionTitle,
-                          styles.sectionTitleMargin,
-                          themeStyles.sectionTitle,
-                        ]}>
+                {formData.account_type === 'Customer' ||
+                formData.account_type === 'Vendor' ? (
+                  <>
+                    <View
+                      style={[styles.sectionDivider, payTheme.sectionDivider]}
+                    />
+                    <View style={styles.section}>
+                      <Text style={[styles.sectionTitle, payTheme.sectionTitle]}>
                         Applies to (optional)
                       </Text>
 
-                      <View style={styles.fieldContainer}>
-                        <Text style={[styles.label, themeStyles.label]}>
-                          Document type
-                        </Text>
-                        <View
-                          style={[
-                            styles.pickerContainer,
-                            themeStyles.pickerWrap,
-                          ]}>
-                          <Picker
-                            selectedValue={formData.applies_to_doc_type || ''}
-                            onValueChange={value =>
-                              setFormData({
-                                ...formData,
-                                applies_to_doc_type: value || '',
-                                applies_to_content_type_id: null,
-                                applies_to_object_id: null,
-                              })
-                            }
-                            style={[styles.picker, themeStyles.picker]}
-                            itemStyle={{color: colors.textPrimary}}
-                            dropdownIconColor={colors.textPrimary}>
-                            <Picker.Item label="-- Select --" value="" />
-                            <Picker.Item label="Invoice" value="Invoice" />
-                            <Picker.Item
-                              label="Credit Memo"
-                              value="Credit Memo"
-                            />
-                            <Picker.Item label="Payment" value="Payment" />
-                          </Picker>
-                        </View>
-                      </View>
-
-                      {formData.applies_to_doc_type && (
-                        <View style={styles.fieldContainer}>
-                          <Text style={[styles.label, themeStyles.label]}>
-                            Document
-                          </Text>
-                          <View
-                            style={[
-                              styles.pickerContainer,
-                              themeStyles.pickerWrap,
-                            ]}>
-                            <Picker
-                              selectedValue={formData.applies_to_object_id || 0}
-                              onValueChange={value => {
-                                if (value === 0) {
-                                  setFormData({
-                                    ...formData,
-                                    applies_to_content_type_id: null,
-                                    applies_to_object_id: null,
-                                  });
-                                } else {
-                                  // Set applies_to_content_type_id to match account_content_type_id
-                                  // since ledger entries are related to the same account type
-                                  setFormData({
-                                    ...formData,
-                                    applies_to_content_type_id:
-                                      formData.account_content_type_id,
-                                    applies_to_object_id: value,
-                                  });
-                                }
-                              }}
-                              style={[styles.picker, themeStyles.picker]}
-                              itemStyle={{color: colors.textPrimary}}
-                              dropdownIconColor={colors.textPrimary}>
-                              <Picker.Item label="Select document" value={0} />
-                              {getAvailableLedgerEntries().map(entry => (
-                                <Picker.Item
-                                  key={entry.id}
-                                  label={entry.label}
-                                  value={entry.id}
-                                />
-                              ))}
-                            </Picker>
-                          </View>
-                          {errors.applies_to_object_id && (
-                            <Text style={styles.errorText}>
-                              {errors.applies_to_object_id}
-                            </Text>
-                          )}
-                        </View>
+                      {renderSelectRow(
+                        'Document type',
+                        formData.applies_to_doc_type || null,
+                        'Select document type',
+                        () => setAppliesToDocTypePickerVisible(true),
+                        undefined,
+                        false,
                       )}
-                    </>
-                  )}
-            </ScrollView>
-          )}
-        </View>
+
+                      {formData.applies_to_doc_type
+                        ? renderSelectRow(
+                            'Document',
+                            selectedAppliesToLabel,
+                            'Search open documents',
+                            () => setAppliesToDocumentPickerVisible(true),
+                            errors.applies_to_object_id,
+                            true,
+                          )
+                        : null}
+                    </View>
+                  </>
+                ) : null}
+
+                <View style={[styles.sectionDivider, payTheme.sectionDivider]} />
+
+                <View style={styles.section}>
+                  <Text style={[styles.sectionTitle, payTheme.sectionTitle]}>
+                    Posting
+                  </Text>
+                  <View style={[styles.infoCard, payTheme.infoCard]}>
+                    <Text style={[styles.infoCardTitle, payTheme.infoCardTitle]}>
+                      Before you post
+                    </Text>
+                    <Text style={[styles.infoCardBody, payTheme.infoCardBody]}>
+                      Save the payment as Open first. Post it from the payment
+                      list when you are ready to create ledger entries.
+                    </Text>
+                  </View>
+                </View>
+              </ScrollView>
+            )}
+          </View>
+        </SafeAreaView>
       </KeyboardAvoidingView>
+
+      <SearchableSelectModal
+        visible={documentTypePickerVisible}
+        title="Document type"
+        options={documentTypeOptions}
+        selectedId={formData.document_type}
+        searchPlaceholder="Search document types…"
+        onClose={() => setDocumentTypePickerVisible(false)}
+        onSelect={id => {
+          if (typeof id === 'string') {
+            setFormData({...formData, document_type: id});
+          }
+          setDocumentTypePickerVisible(false);
+        }}
+      />
+
+      <SearchableSelectModal
+        visible={accountTypePickerVisible}
+        title="Account type"
+        options={accountTypeOptions}
+        selectedId={formData.account_type || null}
+        searchPlaceholder="Search account types…"
+        onClose={() => setAccountTypePickerVisible(false)}
+        onSelect={id => {
+          if (typeof id === 'string') {
+            handleAccountTypeChange(id);
+          }
+          setAccountTypePickerVisible(false);
+        }}
+      />
+
+      <SearchableSelectModal
+        visible={accountPickerVisible}
+        title={`Select ${formData.account_type || 'account'}`}
+        options={accountOptions}
+        selectedId={formData.account_object_id ?? null}
+        searchPlaceholder={`Search ${formData.account_type?.toLowerCase() || 'accounts'}…`}
+        onClose={() => setAccountPickerVisible(false)}
+        onSelect={id => {
+          if (id == null || id === '') {
+            setFormData({...formData, account_object_id: null});
+          } else if (formData.account_type === 'G/L Account') {
+            void handleAccountChange(String(id));
+          } else {
+            void handleAccountChange(Number(id));
+          }
+          setAccountPickerVisible(false);
+        }}
+      />
+
+      <SearchableSelectModal
+        visible={paymentMethodPickerVisible}
+        title="Payment method"
+        options={paymentMethodOptions}
+        selectedId={formData.payment_method}
+        searchPlaceholder="Search payment methods…"
+        allowClear
+        clearLabel="No payment method"
+        onClose={() => setPaymentMethodPickerVisible(false)}
+        onSelect={id => {
+          if (typeof id === 'number') {
+            handlePaymentMethodChange(id);
+          } else {
+            setFormData({...formData, payment_method: null});
+          }
+          setPaymentMethodPickerVisible(false);
+        }}
+      />
+
+      <SearchableSelectModal
+        visible={appliesToDocTypePickerVisible}
+        title="Applies to document type"
+        options={appliesToDocTypeOptions}
+        selectedId={formData.applies_to_doc_type || null}
+        searchPlaceholder="Search document types…"
+        allowClear
+        clearLabel="None"
+        onClose={() => setAppliesToDocTypePickerVisible(false)}
+        onSelect={id => {
+          setFormData({
+            ...formData,
+            applies_to_doc_type: typeof id === 'string' ? id : '',
+            applies_to_content_type_id: null,
+            applies_to_object_id: null,
+          });
+          setAppliesToDocTypePickerVisible(false);
+        }}
+      />
+
+      <SearchableSelectModal
+        visible={appliesToDocumentPickerVisible}
+        title="Applies to document"
+        options={ledgerEntryOptions}
+        selectedId={formData.applies_to_object_id ?? null}
+        searchPlaceholder="Search documents…"
+        allowClear
+        clearLabel="None"
+        onClose={() => setAppliesToDocumentPickerVisible(false)}
+        onSelect={id => {
+          if (typeof id === 'number') {
+            setFormData({
+              ...formData,
+              applies_to_content_type_id: formData.account_content_type_id,
+              applies_to_object_id: id,
+            });
+          } else {
+            setFormData({
+              ...formData,
+              applies_to_content_type_id: null,
+              applies_to_object_id: null,
+            });
+          }
+          setAppliesToDocumentPickerVisible(false);
+        }}
+      />
     </Modal>
   );
 };
@@ -957,39 +1121,52 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
 const styles = StyleSheet.create({
   pageRoot: {
     flex: 1,
+    backgroundColor: COLORS.white,
+  },
+  safeArea: {
+    flex: 1,
+    backgroundColor: COLORS.white,
   },
   page: {
     flex: 1,
+    backgroundColor: COLORS.white,
   },
   pageHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
+    paddingTop: Platform.OS === 'ios' ? 4 : 8,
     paddingBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.lightGray1,
   },
   headerIconButton: {
     width: 48,
     height: 48,
     borderRadius: 24,
-    justifyContent: 'center',
+    backgroundColor: COLORS.transparentPrimary,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  headerCloseIcon: {
+  headerIcon: {
     width: 20,
     height: 20,
+    tintColor: COLORS.primary3,
   },
   headerSaveButton: {
     minWidth: 108,
     height: 48,
     borderRadius: 24,
     backgroundColor: COLORS.primary2,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
     paddingHorizontal: 24,
-  },
-  headerSaveButtonDisabled: {
-    opacity: 0.55,
+    shadowColor: COLORS.primary3,
+    shadowOffset: {width: 0, height: 8},
+    shadowOpacity: 0.2,
+    shadowRadius: 16,
+    elevation: 6,
   },
   headerSaveSpacer: {
     minWidth: 108,
@@ -997,8 +1174,11 @@ const styles = StyleSheet.create({
   },
   headerSaveText: {
     color: COLORS.white,
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: '700',
+  },
+  buttonDisabled: {
+    opacity: 0.55,
   },
   loadingContainer: {
     flex: 1,
@@ -1016,61 +1196,170 @@ const styles = StyleSheet.create({
   },
   formContent: {
     paddingHorizontal: 20,
+    paddingBottom: Platform.OS === 'ios' ? 40 : 28,
   },
   pageTitle: {
     fontSize: 24,
     fontWeight: '700',
+    color: COLORS.black,
+    marginTop: 20,
+    marginBottom: 24,
     letterSpacing: -0.3,
-    marginTop: 8,
-    marginBottom: 20,
+  },
+  previewSection: {
+    alignItems: 'center',
+    marginBottom: 28,
+  },
+  paymentPreviewCard: {
+    width: '100%',
+    maxWidth: 320,
+    minHeight: 132,
+    borderRadius: 12,
+    backgroundColor: COLORS.primary3,
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    justifyContent: 'space-between',
+    shadowColor: COLORS.primary3,
+    shadowOffset: {width: 0, height: 10},
+    shadowOpacity: 0.22,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  paymentPreviewTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  paymentPreviewIcon: {
+    width: 22,
+    height: 22,
+    tintColor: COLORS.accent2,
+  },
+  paymentPreviewAccount: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.88)',
+  },
+  paymentPreviewAmount: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: COLORS.white,
+    marginTop: 12,
+    letterSpacing: -0.5,
+  },
+  paymentPreviewDate: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: 'rgba(255,255,255,0.75)',
+    marginTop: 6,
+  },
+  section: {
+    marginBottom: 26,
   },
   sectionTitle: {
-    ...FONTS.h4,
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.primary3,
+    marginBottom: 14,
+  },
+  fieldLabel: {
+    fontSize: 15,
     fontWeight: '600',
-    paddingHorizontal: 0,
-    paddingTop: SIZES.base * 1.5,
-    paddingBottom: SIZES.base,
+    color: COLORS.black,
+    marginBottom: 8,
   },
-  sectionTitleMargin: {
-    marginTop: SIZES.base,
-  },
-  fieldContainer: {
-    paddingHorizontal: SIZES.padding,
-    paddingVertical: SIZES.base,
-  },
-  label: {
-    ...FONTS.body3,
-    marginBottom: SIZES.base / 2,
-    fontWeight: '600',
+  fieldLabelSpaced: {
+    marginTop: 16,
   },
   input: {
-    height: 44,
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    borderRadius: SIZES.radius,
-    paddingHorizontal: SIZES.base,
-    ...FONTS.body3,
+    borderWidth: 1,
+    borderColor: COLORS.transparentPrimary2,
+    borderRadius: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    fontSize: 17,
+    color: COLORS.black,
+    backgroundColor: COLORS.white,
+    minHeight: 56,
   },
   textArea: {
-    height: 60,
+    minHeight: 110,
     textAlignVertical: 'top',
-    paddingTop: SIZES.base,
+    paddingTop: 16,
   },
-  disabledInput: {},
+  inputDisabled: {
+    backgroundColor: COLORS.lightGray2,
+    color: COLORS.gray2,
+  },
   inputError: {
     borderColor: COLORS.error,
   },
   errorText: {
     ...FONTS.body5,
     color: COLORS.error,
-    marginTop: SIZES.base / 2,
+    marginTop: 8,
+    fontSize: 13,
   },
-  pickerContainer: {
-    borderWidth: StyleSheet.hairlineWidth * 2,
-    borderRadius: SIZES.radius,
-    overflow: 'hidden',
+  selectRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    minHeight: 56,
+    paddingHorizontal: 18,
+    borderWidth: 1,
+    borderColor: COLORS.transparentPrimary2,
+    borderRadius: 14,
+    backgroundColor: COLORS.white,
   },
-  picker: {
-    width: '100%',
+  selectRowText: {
+    flex: 1,
+    fontSize: 17,
+    color: COLORS.black,
+  },
+  selectRowPlaceholder: {
+    color: COLORS.gray2,
+  },
+  selectRowChevron: {
+    fontSize: 22,
+    color: COLORS.gray2,
+    fontWeight: '300',
+    marginLeft: 8,
+  },
+  inlineLoadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+  },
+  inlineLoadingText: {
+    ...FONTS.body4,
+    color: COLORS.gray2,
+    marginLeft: 12,
+    fontSize: 15,
+  },
+  sectionDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: COLORS.transparentPrimary,
+    marginBottom: 26,
+  },
+  infoCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: COLORS.transparentPrimary2,
+    backgroundColor: COLORS.transparentPrimary,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+  },
+  infoCardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.primary3,
+    marginBottom: 8,
+  },
+  infoCardBody: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: COLORS.gray,
   },
 });
 

@@ -22,7 +22,13 @@ import ReactNativeModal from 'react-native-modal';
 import {Expense} from '../../@types/expense';
 import {ExpenseServices} from '../../services/ExpenseServices';
 import ExpenseListItem from './ExpenseListItem';
-import {COLORS, FONTS, SIZES} from '../../constants';
+import {
+  COLORS,
+  FONTS,
+  SIZES,
+  ICON_BUTTON_ACTIVE_OPACITY,
+  ICON_BUTTON_HIT_SLOP,
+} from '../../constants';
 import icons from '../../constants/icons';
 import {usePermissions} from '../../hooks/usePermissions';
 import {PAGE_NAMES} from '../../constants/pageNames';

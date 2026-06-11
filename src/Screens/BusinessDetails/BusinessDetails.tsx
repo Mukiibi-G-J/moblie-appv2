@@ -1,4 +1,4 @@
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {useFocusEffect} from '@react-navigation/native';
 import {
   View,
@@ -11,14 +11,27 @@ import {
   Platform,
   StatusBar,
   TouchableOpacity,
+  Alert,
+  TextInput,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
+import {
+  launchImageLibrary,
+  type ImagePickerResponse,
+} from 'react-native-image-picker';
+import Toast from 'react-native-toast-message';
 import {COLORS, FONTS, SIZES, icons} from '../../constants';
 import {useTheme} from '../../context/ThemeContext';
 import {safeGoBack} from '../../hooks/NavigationService';
 import {useCompanyInfo} from '../../hooks/useCompanyInfo';
 import {resolveCompanyLogoUri} from '../../utils/companyLogoUrl';
+import {
+  TenantCompanyApi,
+  updateCompanyInfo,
+  uploadCompanyLogo,
+} from '../../services/app.services';
+import {useAuth} from '../../context/Store';
 import {
   CompanyOverview,
   getCompanyOverview,
@@ -26,19 +39,81 @@ import {
 import {QuickIconPressable} from '../../Components';
 import {SubscriptionOverviewPanel} from '../../Components/SubscriptionOverviewPanel';
 
+const MAX_LOGO_BYTES = 5 * 1024 * 1024;
+const ALLOWED_LOGO_TYPES = new Set([
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/gif',
+]);
+
 function displayValue(v: string | null | undefined): string {
   const t = v?.trim();
   return t ? t : '—';
+}
+
+function getApiErrorMessage(error: unknown, fallback: string): string {
+  if (error && typeof error === 'object' && 'response' in error) {
+    const data = (error as {response?: {data?: {error?: string}}}).response?.data;
+    if (data?.error) {
+      return data.error;
+    }
+  }
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return fallback;
+}
+
+type CompanyFormState = {
+  displayName: string;
+  address: string;
+  city: string;
+  country: string;
+  phone: string;
+  email: string;
+  website: string;
+  tin: string;
+};
+
+function formFromCompany(company: TenantCompanyApi): CompanyFormState {
+  return {
+    displayName: company.displayName?.trim() || company.name?.trim() || '',
+    address: company.address?.trim() || '',
+    city: company.city?.trim() || '',
+    country: company.country?.trim() || '',
+    phone: company.phone?.trim() || '',
+    email: company.email?.trim() || '',
+    website: company.website?.trim() || '',
+    tin: company.tin?.trim() || '',
+  };
 }
 
 const BusinessDetails: React.FC = () => {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const {colors} = useTheme();
+  const {auth} = useAuth();
   const {data, loading, error, refetch, storeLabel} = useCompanyInfo();
   const [logoUri, setLogoUri] = useState<string | null>(null);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [savingInfo, setSavingInfo] = useState(false);
+  const [form, setForm] = useState<CompanyFormState>({
+    displayName: '',
+    address: '',
+    city: '',
+    country: '',
+    phone: '',
+    email: '',
+    website: '',
+    tin: '',
+  });
   const [subscriptionOverview, setSubscriptionOverview] =
     useState<CompanyOverview | null>(null);
+
+  const isCompanyAdmin =
+    Boolean(auth.is_superuser) ||
+    (Array.isArray(auth.authority) && auth.authority.includes('admin'));
 
   const refreshSubscriptionOverview = useCallback(async () => {
     const o = await getCompanyOverview();
@@ -70,17 +145,186 @@ const BusinessDetails: React.FC = () => {
     };
   }, [data?.logo]);
 
-  const rows: {label: string; value: string}[] = data
-    ? [
-        {label: 'Business name', value: displayValue(data.name)},
-        {label: 'Address', value: displayValue(data.address)},
-        {label: 'City', value: displayValue(data.city)},
-        {label: 'Country', value: displayValue(data.country)},
-        {label: 'Phone', value: displayValue(data.phone)},
-        {label: 'Email', value: displayValue(data.email)},
-        {label: 'TIN', value: displayValue(data.tin)},
-      ]
+  useEffect(() => {
+    if (data) {
+      setForm(formFromCompany(data));
+    }
+  }, [data]);
+
+  const isFormDirty = useMemo(() => {
+    if (!data || !isCompanyAdmin) {
+      return false;
+    }
+    const baseline = formFromCompany(data);
+    return (
+      form.displayName !== baseline.displayName ||
+      form.address !== baseline.address ||
+      form.city !== baseline.city ||
+      form.country !== baseline.country ||
+      form.phone !== baseline.phone ||
+      form.email !== baseline.email ||
+      form.website !== baseline.website ||
+      form.tin !== baseline.tin
+    );
+  }, [data, form, isCompanyAdmin]);
+
+  const handleLogoPickerResponse = useCallback(
+    async (response: ImagePickerResponse) => {
+      if (response.didCancel) {
+        return;
+      }
+      if (response.errorCode) {
+        Alert.alert(
+          'Error',
+          response.errorMessage || 'Could not open photo library.',
+        );
+        return;
+      }
+
+      const asset = response.assets?.[0];
+      if (!asset?.uri) {
+        return;
+      }
+
+      const mime = (asset.type || '').toLowerCase();
+      if (mime && !ALLOWED_LOGO_TYPES.has(mime)) {
+        Toast.show({
+          type: 'error',
+          text1: 'Invalid image',
+          text2: 'Please upload a JPEG, PNG, or GIF image.',
+        });
+        return;
+      }
+
+      if (asset.fileSize != null && asset.fileSize > MAX_LOGO_BYTES) {
+        Toast.show({
+          type: 'error',
+          text1: 'File too large',
+          text2: 'Please upload an image smaller than 5MB.',
+        });
+        return;
+      }
+
+      setUploadingLogo(true);
+      try {
+        await uploadCompanyLogo(asset.uri);
+        await refetch();
+        Toast.show({
+          type: 'success',
+          text1: 'Logo updated',
+          text2: 'Company logo saved successfully.',
+        });
+      } catch (e: unknown) {
+        const message =
+          e instanceof Error ? e.message : 'Failed to upload company logo.';
+        Toast.show({
+          type: 'error',
+          text1: 'Upload failed',
+          text2: message,
+        });
+      } finally {
+        setUploadingLogo(false);
+      }
+    },
+    [refetch],
+  );
+
+  const handleSaveCompanyInfo = useCallback(async () => {
+    if (!data || savingInfo || !isFormDirty) {
+      return;
+    }
+    setSavingInfo(true);
+    try {
+      await updateCompanyInfo({
+        displayName: form.displayName.trim() || data.name,
+        address: form.address.trim(),
+        city: form.city.trim(),
+        country: form.country.trim(),
+        phone: form.phone.trim(),
+        email: form.email.trim(),
+        website: form.website.trim(),
+        tin: form.tin.trim(),
+      });
+      await refetch();
+      Toast.show({
+        type: 'success',
+        text1: 'Company info saved',
+        text2: 'Your changes were updated successfully.',
+      });
+    } catch (e: unknown) {
+      Toast.show({
+        type: 'error',
+        text1: 'Save failed',
+        text2: getApiErrorMessage(e, 'Could not update company info.'),
+      });
+    } finally {
+      setSavingInfo(false);
+    }
+  }, [data, form, isFormDirty, refetch, savingInfo]);
+
+  const pickCompanyLogo = useCallback(async () => {
+    if (!isCompanyAdmin || uploadingLogo) {
+      return;
+    }
+    try {
+      const response = await launchImageLibrary({
+        mediaType: 'photo',
+        quality: 0.85,
+        includeBase64: false,
+        selectionLimit: 1,
+        maxWidth: 1024,
+        maxHeight: 1024,
+      });
+      await handleLogoPickerResponse(response);
+    } catch {
+      Alert.alert('Error', 'Could not open photo library. Please try again.');
+    }
+  }, [handleLogoPickerResponse, isCompanyAdmin, uploadingLogo]);
+
+  const readOnlyRows: {label: string; value: string}[] = data
+    ? [{label: 'Business name', value: displayValue(data.name)}]
     : [];
+
+  const readOnlyContactRows: {label: string; value: string}[] =
+    !isCompanyAdmin && data
+      ? [
+          {
+            label: 'Display name',
+            value: displayValue(data.displayName || data.name),
+          },
+          {label: 'Address', value: displayValue(data.address)},
+          {label: 'City', value: displayValue(data.city)},
+          {label: 'Country', value: displayValue(data.country)},
+          {label: 'Phone', value: displayValue(data.phone)},
+          {label: 'Email', value: displayValue(data.email)},
+          {label: 'Website', value: displayValue(data.website)},
+          {label: 'TIN', value: displayValue(data.tin)},
+        ]
+      : [];
+
+  const editableFields: {
+    key: keyof CompanyFormState;
+    label: string;
+    keyboardType?: 'default' | 'email-address' | 'phone-pad' | 'url';
+    autoCapitalize?: 'none' | 'sentences' | 'words';
+  }[] = [
+    {key: 'displayName', label: 'Display name', autoCapitalize: 'words'},
+    {key: 'address', label: 'Address', autoCapitalize: 'words'},
+    {key: 'city', label: 'City', autoCapitalize: 'words'},
+    {key: 'country', label: 'Country', autoCapitalize: 'words'},
+    {key: 'phone', label: 'Phone', keyboardType: 'phone-pad'},
+    {
+      key: 'email',
+      label: 'Email',
+      keyboardType: 'email-address',
+      autoCapitalize: 'none',
+    },
+    {key: 'website', label: 'Website', keyboardType: 'url', autoCapitalize: 'none'},
+    {key: 'tin', label: 'TIN', autoCapitalize: 'characters'},
+  ];
+
+  const cardTitle =
+    data?.displayName?.trim() || data?.name?.trim() || storeLabel;
 
   return (
     <SafeAreaView
@@ -159,23 +403,98 @@ const BusinessDetails: React.FC = () => {
             ) : null}
 
             <View style={[styles.card, {backgroundColor: colors.card}]}>
-              {logoUri ? (
-                <Image
-                  source={{uri: logoUri}}
-                  style={styles.logo}
-                  resizeMode="contain"
-                  accessibilityLabel="Company logo"
-                />
-              ) : null}
+              {isCompanyAdmin ? (
+                <TouchableOpacity
+                  style={styles.logoTapArea}
+                  onPress={() => void pickCompanyLogo()}
+                  disabled={uploadingLogo}
+                  accessibilityLabel="Change company logo"
+                  accessibilityRole="button">
+                  <View style={styles.logoWrap}>
+                    {logoUri ? (
+                      <Image
+                        source={{uri: logoUri}}
+                        style={styles.logo}
+                        resizeMode="contain"
+                        accessibilityLabel="Company logo"
+                      />
+                    ) : (
+                      <View
+                        style={[
+                          styles.logoPlaceholder,
+                          {borderColor: colors.border},
+                        ]}>
+                        <Text
+                          style={[
+                            styles.logoPlaceholderText,
+                            {color: colors.textSecondary},
+                          ]}>
+                          Add logo
+                        </Text>
+                      </View>
+                    )}
+                    {uploadingLogo ? (
+                      <View style={styles.logoOverlay}>
+                        <ActivityIndicator color={COLORS.white} />
+                      </View>
+                    ) : (
+                      <View
+                        style={[
+                          styles.logoEditBadge,
+                          {backgroundColor: COLORS.primary},
+                        ]}>
+                        <Image
+                          source={icons.plus as any}
+                          style={styles.logoEditIcon}
+                          resizeMode="contain"
+                        />
+                      </View>
+                    )}
+                  </View>
+                  <Text
+                    style={[styles.logoHint, {color: colors.textSecondary}]}>
+                    Tap to change logo
+                  </Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.logoTapArea}>
+                  <View style={styles.logoWrap}>
+                    {logoUri ? (
+                      <Image
+                        source={{uri: logoUri}}
+                        style={styles.logo}
+                        resizeMode="contain"
+                        accessibilityLabel="Company logo"
+                      />
+                    ) : (
+                      <View
+                        style={[
+                          styles.logoPlaceholder,
+                          {borderColor: colors.border},
+                        ]}>
+                        <Text
+                          style={[
+                            styles.logoPlaceholderText,
+                            {color: colors.textSecondary},
+                          ]}>
+                          No logo
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                </View>
+              )}
               <Text style={[styles.cardTitle, {color: colors.textPrimary}]}>
-                {data?.name?.trim() || storeLabel}
+                {cardTitle}
               </Text>
               <Text style={[styles.cardSubtitle, {color: colors.textSecondary}]}>
-                Company details, billing status, and remaining days.
+                {isCompanyAdmin
+                  ? 'Edit company contact details and manage billing.'
+                  : 'Company details, billing status, and remaining days.'}
               </Text>
             </View>
 
-            {rows.map(row => (
+            {readOnlyRows.map(row => (
               <View
                 key={row.label}
                 style={[styles.row, {backgroundColor: colors.card}]}>
@@ -187,6 +506,71 @@ const BusinessDetails: React.FC = () => {
                 </Text>
               </View>
             ))}
+
+            {isCompanyAdmin
+              ? editableFields.map(field => (
+                  <View
+                    key={field.key}
+                    style={[styles.row, {backgroundColor: colors.card}]}>
+                    <Text
+                      style={[styles.rowLabel, {color: colors.textSecondary}]}>
+                      {field.label}
+                    </Text>
+                    <TextInput
+                      style={[
+                        styles.input,
+                        {
+                          color: colors.textPrimary,
+                          borderColor: colors.border,
+                          backgroundColor: colors.background,
+                        },
+                      ]}
+                      value={form[field.key]}
+                      onChangeText={text =>
+                        setForm(prev => ({...prev, [field.key]: text}))
+                      }
+                      placeholder={`Enter ${field.label.toLowerCase()}`}
+                      placeholderTextColor={colors.textSecondary}
+                      keyboardType={field.keyboardType || 'default'}
+                      autoCapitalize={field.autoCapitalize || 'sentences'}
+                      autoCorrect={false}
+                    />
+                  </View>
+                ))
+              : readOnlyContactRows.map(row => (
+                  <View
+                    key={row.label}
+                    style={[styles.row, {backgroundColor: colors.card}]}>
+                    <Text
+                      style={[styles.rowLabel, {color: colors.textSecondary}]}>
+                      {row.label}
+                    </Text>
+                    <Text style={[styles.rowValue, {color: colors.textPrimary}]}>
+                      {row.value}
+                    </Text>
+                  </View>
+                ))}
+
+            {isCompanyAdmin ? (
+              <TouchableOpacity
+                style={[
+                  styles.saveBtn,
+                  {
+                    backgroundColor: isFormDirty
+                      ? COLORS.primary
+                      : colors.border,
+                  },
+                ]}
+                onPress={() => void handleSaveCompanyInfo()}
+                disabled={!isFormDirty || savingInfo}
+                activeOpacity={0.85}>
+                {savingInfo ? (
+                  <ActivityIndicator color={COLORS.white} />
+                ) : (
+                  <Text style={styles.saveBtnText}>Save company info</Text>
+                )}
+              </TouchableOpacity>
+            ) : null}
 
             {subscriptionOverview ? (
               <SubscriptionOverviewPanel overview={subscriptionOverview} />
@@ -262,12 +646,53 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 2,
   },
+  logoTapArea: {
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  logoWrap: {
+    position: 'relative',
+    width: 120,
+    height: 120,
+    marginBottom: 6,
+  },
   logo: {
     width: 120,
     height: 120,
-    alignSelf: 'center',
-    marginBottom: 12,
   },
+  logoPlaceholder: {
+    width: 120,
+    height: 120,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logoPlaceholderText: {...FONTS.body4},
+  logoOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logoEditBadge: {
+    position: 'absolute',
+    right: -4,
+    bottom: -4,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logoEditIcon: {
+    width: 14,
+    height: 14,
+    tintColor: COLORS.white,
+  },
+  logoHint: {...FONTS.body5, fontSize: 12},
   cardTitle: {
     ...FONTS.h3,
     textAlign: 'center',
@@ -291,6 +716,27 @@ const styles = StyleSheet.create({
   },
   rowLabel: {...FONTS.body4, marginBottom: 4, fontWeight: '600'},
   rowValue: {...FONTS.body3},
+  input: {
+    ...FONTS.body3,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: Platform.OS === 'ios' ? 10 : 8,
+    minHeight: 44,
+  },
+  saveBtn: {
+    borderRadius: 10,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+    marginBottom: SIZES.base,
+  },
+  saveBtnText: {
+    ...FONTS.body4,
+    color: COLORS.white,
+    fontWeight: '700',
+  },
 });
 
 export default BusinessDetails;

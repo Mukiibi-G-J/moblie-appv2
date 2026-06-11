@@ -3,6 +3,7 @@ import {useFocusEffect} from '@react-navigation/native';
 import {getCompanyInfo, TenantCompanyApi} from '../services/app.services';
 import {useTenantContext} from '../context/TenantContext';
 import {formatTenantLabel} from '../utils/tenantLabel';
+import {isSubscriptionExpiredError} from '../utils/subscriptionExpired';
 
 /**
  * Loads tenant company from GET /api/sales/company-info/ on screen focus.
@@ -28,6 +29,9 @@ export function useCompanyInfo() {
       }
     } catch (e: unknown) {
       if (isCancelled()) {
+        return;
+      }
+      if (isSubscriptionExpiredError(e)) {
         return;
       }
       const message =

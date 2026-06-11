@@ -6,6 +6,7 @@
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     
     <!-- ========== NETWORK PERMISSIONS ========== -->
     <!-- Required: For LAN/WiFi printing -->
@@ -43,6 +44,14 @@
     <!-- <uses-feature android:name="android.hardware.camera" android:required="false" /> -->
 
     <uses-feature android:name="android.hardware.usb.host" />
+
+    <!-- Allow opening saved PDFs in external viewer apps (Android 11+). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="application/pdf" />
+        </intent>
+    </queries>
 
     <application
       android:name=".MainApplication"

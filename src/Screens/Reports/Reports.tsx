@@ -498,7 +498,10 @@ const Reports = () => {
     try {
       const buf = await exportReportPdfFromApi(reportTypeApi, filters);
       const baseName = `zentro_${reportTypeApi}_${endDate}`;
-      const {sharedOnIos} = await savePdfBufferAndShare(buf, baseName);
+      const {sharedOnIos, displayPath, openedViewer} = await savePdfBufferAndShare(
+        buf,
+        baseName,
+      );
       if (sharedOnIos) {
         Toast.show({
           type: 'success',
@@ -508,9 +511,10 @@ const Reports = () => {
       } else {
         Toast.show({
           type: 'success',
-          text1: 'PDF saved',
-          text2:
-            'File path copied. Paste in a file manager to open or share the PDF.',
+          text1: 'PDF downloaded',
+          text2: openedViewer
+            ? `Saved to ${displayPath}`
+            : `Saved to ${displayPath}. Open Downloads or Files to view it.`,
         });
       }
     } catch (e: unknown) {

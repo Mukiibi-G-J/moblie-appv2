@@ -12,6 +12,7 @@ import {
   TEST_TENANT_SCHEMA,
 } from '../config/api.config';
 import {forceLogout} from '../utils/authEvents';
+import {isSubscriptionExpiredError} from '../utils/subscriptionExpired';
 
 interface ApiConfig {
   baseURL: string;
@@ -35,11 +36,18 @@ const PUBLIC_SCHEMA_PATH_MARKERS = [
   '/api/auth/restaurant-app/company-lookup/',
 ];
 
+function isPublicSchemaPath(url: string | undefined): boolean {
+  if (!url) {
+    return false;
+  }
+  return PUBLIC_SCHEMA_PATH_MARKERS.some(marker => url.includes(marker));
+}
+
 function shouldSendTestTenantHeader(url: string | undefined): boolean {
   if (!url) {
     return true;
   }
-  return !PUBLIC_SCHEMA_PATH_MARKERS.some(marker => url.includes(marker));
+  return !isPublicSchemaPath(url);
 }
 
 /** Single-host / dev: X-Tenant from saved company schema, else config fallback. */
@@ -136,7 +144,9 @@ export function createAnonymousAxiosInstance(tenant?: string) {
   const instance = axios.create({baseURL});
   instance.interceptors.request.use(
     async config => {
-      await maybeInjectBranchHeaders(config);
+      if (!isPublicSchemaPath(config.url)) {
+        await maybeInjectBranchHeaders(config);
+      }
       if (USE_TEST_ENV && shouldSendTestTenantHeader(config.url)) {
         const xTenant = await resolveTestXTenantHeader();
         if (xTenant) {
@@ -149,7 +159,16 @@ export function createAnonymousAxiosInstance(tenant?: string) {
   );
   instance.interceptors.response.use(
     response => response,
-    error => Promise.reject(error),
+    error => {
+      if (error.message === 'Network Error' && USE_TEST_ENV) {
+        return Promise.reject({
+          ...error,
+          customMessage:
+            'Cannot reach the dev server. Same WiFi: set TEST_API_CONNECT_MODE to "lan" in api.config.ts and run `python manage.py runserver 0.0.0.0:8000`. USB/wireless ADB: run `adb reverse tcp:8000 tcp:8000` and use "adb-reverse" mode.',
+        });
+      }
+      return Promise.reject(error);
+    },
   );
   return instance;
 }
@@ -191,16 +210,40 @@ const createAxiosInstance = (tenant?: string) => {
   );
 
   // Add response interceptor
-  const isSubscriptionExpiredPayload = (data: any, status?: number) => {
-    const code = data?.code;
-    return status === 402 || code === 'subscription_expired';
+  const redirectToSubscriptionFlow = async (
+    api: AxiosInstance,
+  ): Promise<void> => {
+    try {
+      const instructionsResp = await api.get<{
+        has_pending_verification?: boolean;
+        pending_payment_reference?: string;
+      }>('/api/company/subscription/mobile-money-instructions/');
+      const instructions = instructionsResp.data;
+
+      if (
+        instructions?.has_pending_verification &&
+        instructions.pending_payment_reference
+      ) {
+        navigate('SubscriptionMobileMoney', {
+          fromExpired: 1,
+          submitted: true,
+          reference: instructions.pending_payment_reference,
+        });
+      } else {
+        navigate('Subscription', {
+          fromExpiredModal: true,
+        });
+      }
+    } catch (e: any) {
+      if (e?.response?.status === 401) {
+        throw e;
+      }
+      navigate('Subscription', {fromExpiredModal: true});
+    }
   };
 
   const maybeHandleSubscriptionExpired = async (error: AxiosError) => {
-    const status = error.response?.status;
-    const data = error.response?.data as any;
-
-    if (!isSubscriptionExpiredPayload(data, status)) {
+    if (!isSubscriptionExpiredError(error)) {
       return false;
     }
 
@@ -219,51 +262,39 @@ const createAxiosInstance = (tenant?: string) => {
     }
 
     try {
-      // Fetch subscription instructions directly to avoid circular imports.
-      // If this call fails with 401, we let the 401 handler run (logout).
-      const instructionsResp = await instance.get<{
-        has_pending_verification?: boolean;
-        pending_payment_reference?: string;
-      }>(
-        '/api/company/subscription/mobile-money-instructions/',
-      );
-      const instructions = instructionsResp.data;
-
-      if (
-        instructions?.has_pending_verification &&
-        instructions.pending_payment_reference
-      ) {
-        navigate('SubscriptionMobileMoney', {
-          fromExpired: 1,
-          submitted: true,
-          reference: instructions.pending_payment_reference,
-        });
-      } else {
-        navigate('Subscription', {
-          fromExpiredModal: true,
-        });
-      }
-
+      await redirectToSubscriptionFlow(instance);
       return true;
     } catch (e: any) {
-      // If token is invalid, the 401 interceptor should handle logout/navigation.
-      const subStatus = e?.response?.status;
-      if (subStatus === 401) return false;
-      return false;
+      if (e?.response?.status === 401) {
+        return false;
+      }
+      navigate('Subscription', {fromExpiredModal: true});
+      return true;
     }
+  };
+
+  const isBenignPaginationError = (err: any) => {
+    const detail = err?.response?.data?.detail;
+    const message = err?.response?.data?.error;
+    return (
+      err?.response?.status === 404 &&
+      (detail === 'Invalid page.' || message === 'Invalid page.')
+    );
   };
 
   instance.interceptors.response.use(
     response => response,
     async error => {
-      console.log('Full error object:', {
-        message: error.message,
-        status: error.response?.status,
-        statusText: error.response?.statusText,
-        url: error.config?.url,
-        method: error.config?.method,
-        data: error.response?.data,
-      });
+      if (!isSubscriptionExpiredError(error) && !isBenignPaginationError(error)) {
+        console.log('Full error object:', {
+          message: error.message,
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          url: error.config?.url,
+          method: error.config?.method,
+          data: error.response?.data,
+        });
+      }
 
       // Handle 402 subscription expiry *before* rejecting `data.detail`.
       // Otherwise callers only see the detail string and no redirect happens.
@@ -461,11 +492,7 @@ class ApiService {
 
     // Handle 402 subscription expiry before extracting `detail`.
     try {
-      const status = error.response?.status;
-      const data = error.response?.data as any;
-      const isSubExpired = status === 402 || data?.code === 'subscription_expired';
-
-      if (isSubExpired) {
+      if (isSubscriptionExpiredError(error)) {
         const currentRouteName = navigationRef.current?.getCurrentRoute()?.name;
         const isAlreadyOnSubscription =
           currentRouteName === 'Subscription' ||
@@ -473,29 +500,34 @@ class ApiService {
 
         if (!isAlreadyOnSubscription) {
           const now = Date.now();
-          if (now - lastSubscriptionRedirectAt < 2000) {
-            return Promise.reject(error);
-          }
-          lastSubscriptionRedirectAt = now;
-
-          const instructionsResp = await this.axiosInstance.get<{
-            has_pending_verification?: boolean;
-            pending_payment_reference?: string;
-          }>(
-            '/api/company/subscription/mobile-money-instructions/',
-          );
-          const instructions = instructionsResp.data;
-          if (
-            instructions?.has_pending_verification &&
-            instructions.pending_payment_reference
-          ) {
-            navigate('SubscriptionMobileMoney', {
-              fromExpired: 1,
-              submitted: true,
-              reference: instructions.pending_payment_reference,
-            });
-          } else {
-            navigate('Subscription', {fromExpiredModal: true});
+          if (now - lastSubscriptionRedirectAt >= 2000) {
+            lastSubscriptionRedirectAt = now;
+            try {
+              const instructionsResp = await this.axiosInstance.get<{
+                has_pending_verification?: boolean;
+                pending_payment_reference?: string;
+              }>(
+                '/api/company/subscription/mobile-money-instructions/',
+              );
+              const instructions = instructionsResp.data;
+              if (
+                instructions?.has_pending_verification &&
+                instructions.pending_payment_reference
+              ) {
+                navigate('SubscriptionMobileMoney', {
+                  fromExpired: 1,
+                  submitted: true,
+                  reference: instructions.pending_payment_reference,
+                });
+              } else {
+                navigate('Subscription', {fromExpiredModal: true});
+              }
+            } catch (e: any) {
+              if (e?.response?.status === 401) {
+                throw e;
+              }
+              navigate('Subscription', {fromExpiredModal: true});
+            }
           }
         }
 

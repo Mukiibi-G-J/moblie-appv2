@@ -98,7 +98,7 @@ const ItemCategories = () => {
       accessDeniedMessage: { color: colors.textSecondary },
       footerPill: { backgroundColor: colors.backButtonBg },
       footerPillText: { color: colors.textSecondary },
-      spinner: colors.primary,
+      spinner: COLORS.primary,
     }),
     [colors],
   );

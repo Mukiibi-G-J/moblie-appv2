@@ -4,6 +4,19 @@ import PrinterSunmi from 'react-native-printer-sunmi';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BluetoothPrinterService from './BluetoothPrinterService';
 import UsbPrinterService, {KotData} from './UsbPrinterService';
+import {
+  prepareCompanyLogoForPrint,
+  RECEIPT_LOGO_WIDTH_PX,
+} from '../utils/companyLogoUrl';
+import {printSunmiDocument} from '../shared/receipt/compileToSunmi';
+import {
+  buildKotReceiptDocument,
+  buildSaleReceiptDocument,
+} from './receiptPrintOrchestrator';
+import {
+  buildSampleSaleReceiptData,
+  fetchCompanyInfoForReceipt,
+} from '../utils/companyReceiptInfo';
 
 // Types for printing
 export interface PrintItem {
@@ -416,42 +429,8 @@ class PrintService {
       if (!ok) {
         return false;
       }
-
-      PrinterSunmi.initLine({align: 'CENTER'});
-      PrinterSunmi.printText('KITCHEN ORDER', {textSize: 32, bold: true});
-      PrinterSunmi.printDividingLine('SOLID', 1);
-      PrinterSunmi.printText(`Order: ${data.order_no}`, {textSize: 24, bold: true});
-      PrinterSunmi.printText(data.table_label, {textSize: 22});
-      PrinterSunmi.printText(data.order_type_display, {textSize: 22});
-      if (data.waiter_name) {
-        PrinterSunmi.printText(`Server: ${data.waiter_name}`, {textSize: 20});
-      }
-      PrinterSunmi.printText(data.printed_at, {textSize: 18});
-      PrinterSunmi.printDividingLine('SOLID', 1);
-
-      PrinterSunmi.initLine({align: 'LEFT'});
-      for (const item of data.items) {
-        PrinterSunmi.printText(`${item.quantity}x  ${item.item_name}`, {
-          textSize: 26,
-          bold: true,
-        });
-        if (item.special_instructions) {
-          PrinterSunmi.printText(`  ** ${item.special_instructions}`, {
-            textSize: 20,
-          });
-        }
-        if (item.fire_state_display) {
-          PrinterSunmi.printText(`  [${item.fire_state_display}]`, {
-            textSize: 18,
-          });
-        }
-      }
-
-      PrinterSunmi.initLine({align: 'CENTER'});
-      PrinterSunmi.printDividingLine('SOLID', 1);
-      PrinterSunmi.printText('*** KITCHEN COPY ***', {textSize: 22, bold: true});
-      PrinterSunmi.addText('\n\n\n\n');
-      PrinterSunmi.printTrans();
+      const document = await buildKotReceiptDocument(data, 'sunmi');
+      await printSunmiDocument(document);
       return true;
     } catch (error) {
       console.error('Sunmi KOT print failed:', error);
@@ -470,20 +449,15 @@ class PrintService {
         return false;
       }
 
-      console.log('Starting to print receipt on Sunmi printer...');
-      const compact = !!data.compactReceipt;
-
-      await this.printHeader(data.companyInfo, compact);
-      await this.printReceiptInfo(data, compact);
-      await this.printItems(data.cartItems, compact);
-      await this.printTotals(data, compact);
-      await this.printFooter(data, compact);
-
-      console.log('Committing print job...');
-      PrinterSunmi.printTrans();
-      console.log('Print job committed successfully');
-
-      console.log('Receipt printed successfully on Sunmi printer');
+      const process = data.compactReceipt
+        ? 'sales_history_reprint'
+        : 'pos_sale';
+      const document = await buildSaleReceiptDocument(
+        data,
+        process,
+        'sunmi',
+      );
+      await printSunmiDocument(document);
       return true;
     } catch (error) {
       console.error('Failed to print receipt on Sunmi:', error);
@@ -646,6 +620,13 @@ class PrintService {
       console.log('Header line initialized');
 
       if (compact) {
+        if (companyInfo?.logo) {
+          try {
+            await this.printLogo(companyInfo.logo);
+          } catch (logoError) {
+            console.warn('Compact receipt logo skipped:', logoError);
+          }
+        }
         PrinterSunmi.printText('SALES RECEIPT', {textSize: 18, bold: true});
         const companyName = companyInfo?.name || 'ZENTRO APP';
         PrinterSunmi.printText(companyName, {textSize: 16, bold: true});
@@ -666,20 +647,12 @@ class PrintService {
         return;
       }
 
-      // Print logo if available
       if (companyInfo?.logo) {
         try {
-          console.log('Printing company logo...');
-          // await this.printLogo(companyInfo.logo);
-          console.log('Logo printed successfully');
+          await this.printLogo(companyInfo.logo);
         } catch (logoError) {
-          console.error('Failed to print logo, using fallback:', logoError);
-          // Fallback to text logo
-          PrinterSunmi.printText('🏪', { textSize: 32, bold: true });
+          console.warn('Receipt logo skipped:', logoError);
         }
-      } else {
-        // Default logo placeholder
-        PrinterSunmi.printText('🏪', { textSize: 32, bold: true });
       }
       
       // Company name (use dynamic or fallback)
@@ -715,73 +688,21 @@ class PrintService {
   /**
    * Print company logo
    */
-  private async printLogo(logoPath: string): Promise<void> {
-    try {
-      console.log('Printing logo from path:', logoPath);
-      
-      let localLogoPath = logoPath;
-      
-      // If it's a remote URL, download it first
-      if (logoPath.startsWith('http://') || logoPath.startsWith('https://')) {
-        try {
-          console.log('Downloading logo from URL:', logoPath);
-          localLogoPath = await this.downloadAndCacheLogo(logoPath);
-          console.log('Logo downloaded and cached to:', localLogoPath);
-        } catch (downloadError) {
-          console.error('Failed to download logo, using fallback:', downloadError);
-          // Fallback to emoji
-          PrinterSunmi.printText('🏪', { textSize: 32, bold: true });
-          return;
-        }
-      }
-      
-      // Method 1: Direct bitmap printing (simpler)
-      // console.log('Attempting to print logo with path:', localLogoPath);
-      // PrinterSunmi.printBitmap(localLogoPath, {
-      //   width: 200,
-      //   height: 100,
-      //   align: 'CENTER',
-      // });
-      
-      // Alternative Method 2: Canvas-based logo printing (more control)
-      // PrinterSunmi.initCanvas({ width: 320, height: 120 });
-      // PrinterSunmi.renderBitmap(localLogoPath, {
-      //   width: 200,
-      //   height: 100,
-      //   posX: 60, // Center the logo
-      //   posY: 10,
-      // });
-      // PrinterSunmi.printCanvas(1);
-      
-      console.log('Logo printing completed');
-    } catch (error) {
-      console.error('Error printing logo:', error);
-      throw error;
+  private async printLogo(logo: string): Promise<void> {
+    const prepared = await prepareCompanyLogoForPrint(logo);
+    if (!prepared) {
+      return;
     }
-  }
 
-  /**
-   * Download and cache logo from remote URL
-   */
-  private async downloadAndCacheLogo(logoUrl: string): Promise<string> {
-    try {
-      console.log('Starting logo download from:', logoUrl);
-      
-      // For React Native, we'll use a different approach
-      // Since FileReader and blob APIs might not work properly on mobile
-      
-      // Method 1: Try using the URL directly (some printer libraries support this)
-      console.log('Attempting to use URL directly for printing');
-      return logoUrl;
-      
-      // Method 2: If the above doesn't work, we'll need to implement
-      // a proper image download using react-native-fs or similar
-      // For now, this will fall back to the emoji if the URL doesn't work
-      
-    } catch (error) {
-      console.error('Error processing logo URL:', error);
-      throw error;
-    }
+    const bitmapPath = prepared.localPath.startsWith('file://')
+      ? prepared.localPath
+      : `file://${prepared.localPath}`;
+
+    PrinterSunmi.printBitmap(bitmapPath, {
+      width: RECEIPT_LOGO_WIDTH_PX,
+      align: 'CENTER',
+    });
+    PrinterSunmi.printDividingLine('EMPTY', 2);
   }
 
   /**
@@ -1193,27 +1114,35 @@ class PrintService {
   }
 
   /**
-   * Test printer functionality
+   * Quick test — short slip (minimal paper).
    */
-  public async testPrinter(): Promise<boolean> {
-    const savedType = await this.getSavedPrinterType();
-
-    if (savedType === 'usb') {
-      if (Platform.OS !== 'android') {
-        return false;
-      }
-      if (!this.usbService.isConnected()) {
-        Toast.show({
-          type: 'error',
-          text1: 'USB Printer not connected',
-          text2: 'Please connect a USB printer in Printer Configuration.',
-        });
-        return false;
-      }
-      return await this.usbService.testPrint();
-    }
-
+  public async testShortPrinter(): Promise<boolean> {
     try {
+      const savedType = await this.getSavedPrinterType();
+
+      if (savedType === 'usb') {
+        if (Platform.OS !== 'android') {
+          return false;
+        }
+        if (!this.usbService.isConnected()) {
+          Toast.show({
+            type: 'error',
+            text1: 'USB Printer not connected',
+            text2: 'Connect a USB printer in Printer Configuration.',
+          });
+          return false;
+        }
+        const ok = await this.usbService.testShortPrint();
+        if (ok) {
+          Toast.show({
+            type: 'success',
+            text1: 'Quick test',
+            text2: 'Printer responded successfully',
+          });
+        }
+        return ok;
+      }
+
       const resolved = await this.resolvePrinterType(savedType);
       this.printerType = resolved;
 
@@ -1231,15 +1160,21 @@ class PrintService {
           return false;
         }
 
-        PrinterSunmi.initLine({ align: 'CENTER' });
-        PrinterSunmi.printText('ZENTRO APP - TEST', { textSize: 35, bold: true });
-        PrinterSunmi.printDividingLine('EMPTY', 8);
-        PrinterSunmi.printText('Printer Test Successful', { textSize: 24 });
-        PrinterSunmi.printDividingLine('EMPTY', 8);
-        PrinterSunmi.printText(`Date: ${new Date().toLocaleString()}`, { textSize: 16 });
-        PrinterSunmi.addText('\n\n\n\n');
+        PrinterSunmi.initLine({align: 'CENTER'});
+        PrinterSunmi.printText('ZENTRO APP - TEST', {textSize: 35, bold: true});
+        PrinterSunmi.printDividingLine('EMPTY', 4);
+        PrinterSunmi.printText('Printer test OK', {textSize: 24, bold: true});
+        PrinterSunmi.printText(`Date: ${new Date().toLocaleString()}`, {
+          textSize: 16,
+        });
+        PrinterSunmi.addText('\n\n');
         PrinterSunmi.printTrans();
 
+        Toast.show({
+          type: 'success',
+          text1: 'Quick test',
+          text2: 'Printer responded successfully',
+        });
         return true;
       }
 
@@ -1249,9 +1184,46 @@ class PrintService {
       }
       return await this.bluetoothService.testPrinter();
     } catch (error) {
-      console.error('Printer test failed:', error);
+      console.error('Quick printer test failed:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Quick test failed',
+        text2: 'Could not print test slip',
+      });
       return false;
     }
+  }
+
+  /**
+   * Full test — sample sales receipt using your receipt template.
+   */
+  public async testSaleReceipt(): Promise<boolean> {
+    try {
+      const companyInfo = await fetchCompanyInfoForReceipt();
+      const sample = buildSampleSaleReceiptData(companyInfo);
+      const ok = await this.printReceipt(sample);
+      if (ok) {
+        Toast.show({
+          type: 'success',
+          text1: 'Test sales receipt',
+          text2: 'Sample sale receipt printed successfully',
+        });
+      }
+      return ok;
+    } catch (error) {
+      console.error('Sales receipt test failed:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Test print failed',
+        text2: 'Could not print sample sales receipt',
+      });
+      return false;
+    }
+  }
+
+  /** @deprecated Use testShortPrinter or testSaleReceipt */
+  public async testPrinter(): Promise<boolean> {
+    return this.testSaleReceipt();
   }
 
   /**
