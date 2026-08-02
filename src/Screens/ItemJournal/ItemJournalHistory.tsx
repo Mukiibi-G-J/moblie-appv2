@@ -16,6 +16,7 @@ import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import {safeGoBack} from '../../hooks/NavigationService';
 import {fetchItemJournal} from '../../services/app.services';
 import {COLORS, FONTS, SIZES, icons} from '../../constants';
+import {useTheme} from '../../context/ThemeContext';
 import {usePermissions} from '../../hooks/usePermissions';
 import {PAGE_NAMES} from '../../constants/pageNames';
 import {QuickIconPressable} from '../../Components';
@@ -27,6 +28,7 @@ const PAGE_NAME = PAGE_NAMES.ADJUST_INVENTORY_HISTORY;
 const ItemJournalHistory = () => {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
+  const {colors, isDark} = useTheme();
   const {canRead} = usePermissions();
   const hasAccess = canRead(PAGE_NAME);
 
@@ -122,10 +124,14 @@ const ItemJournalHistory = () => {
 
   if (!hasAccess) {
     return (
-      <View style={styles.container}>
-        <View style={styles.accessDeniedContainer}>
+      <View style={[styles.container, {backgroundColor: colors.background}]}>
+        <View
+          style={[
+            styles.accessDeniedContainer,
+            {backgroundColor: colors.card, borderColor: colors.border},
+          ]}>
           <Text style={styles.accessDeniedTitle}>Access Denied</Text>
-          <Text style={styles.accessDeniedMessage}>
+          <Text style={[styles.accessDeniedMessage, {color: colors.textSecondary}]}>
             You do not have permission to view posted adjustments.
           </Text>
         </View>
@@ -135,15 +141,19 @@ const ItemJournalHistory = () => {
 
   const renderEmptyState = () => (
     <View style={styles.emptyContainer}>
-      <Text style={styles.emptyTitle}>No posted adjustments</Text>
-      <Text style={styles.emptySubtext}>
+      <Text style={[styles.emptyTitle, {color: colors.textPrimary}]}>
+        No posted adjustments
+      </Text>
+      <Text style={[styles.emptySubtext, {color: colors.textSecondary}]}>
         Adjust your search to see more results.
       </Text>
     </View>
   );
 
   return (
-    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
+    <SafeAreaView
+      style={[styles.container, {backgroundColor: colors.background}]}
+      edges={['left', 'right', 'bottom']}>
       <View
         style={[
           styles.topHeader,
@@ -153,25 +163,43 @@ const ItemJournalHistory = () => {
               Platform.OS === 'android' ? StatusBar.currentHeight ?? 0 : 0,
               12,
             ),
+            borderBottomColor: colors.border,
           },
         ]}>
         <QuickIconPressable
-          style={styles.backButton}
+          style={[styles.backButton, {backgroundColor: colors.backButtonBg}]}
           onPress={() => safeGoBack(navigation, 'ItemJournal')}
           accessibilityLabel="Go back">
-          <Image source={icons.back} style={styles.backButtonIcon} resizeMode="contain" />
+          <Image
+            source={icons.back}
+            style={[styles.backButtonIcon, {tintColor: colors.textPrimary}]}
+            resizeMode="contain"
+          />
         </QuickIconPressable>
-        <Text style={styles.topTitle}>Posted adjustments</Text>
+        <Text style={[styles.topTitle, {color: colors.textPrimary}]}>
+          Posted adjustments
+        </Text>
         <View style={styles.headerSpacer} />
       </View>
 
       <View style={styles.searchSection}>
-        <View style={styles.searchInputContainer}>
-          <Image source={icons.search} style={styles.searchIcon} resizeMode="contain" />
+        <View
+          style={[
+            styles.searchInputContainer,
+            {
+              backgroundColor: colors.inputBackground,
+              borderColor: colors.border,
+            },
+          ]}>
+          <Image
+            source={icons.search}
+            style={[styles.searchIcon, {tintColor: colors.iconMuted}]}
+            resizeMode="contain"
+          />
           <TextInput
-            style={styles.searchInput}
+            style={[styles.searchInput, {color: colors.textPrimary}]}
             placeholder="Search by document, item, description..."
-            placeholderTextColor={COLORS.gray3}
+            placeholderTextColor={colors.placeholder}
             value={searchQuery}
             onChangeText={setSearchQuery}
           />
@@ -182,13 +210,37 @@ const ItemJournalHistory = () => {
       </View>
 
       <View style={styles.summaryRow}>
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryLabel}>Records</Text>
-          <Text style={styles.summaryValue}>{summary.count}</Text>
+        <View
+          style={[
+            styles.summaryCard,
+            {
+              backgroundColor: colors.card,
+              borderColor: colors.border,
+            },
+          ]}>
+          <Text style={[styles.summaryLabel, {color: colors.textSecondary}]}>
+            Records
+          </Text>
+          <Text style={[styles.summaryValue, {color: COLORS.primary2}]}>
+            {summary.count}
+          </Text>
         </View>
-        <View style={[styles.summaryCard, styles.summaryCardSecondary]}>
-          <Text style={styles.summaryLabel}>Total quantity</Text>
-          <Text style={[styles.summaryValue, styles.summaryValueSecondary]}>
+        <View
+          style={[
+            styles.summaryCard,
+            {
+              backgroundColor: isDark ? colors.card : '#F2F5FF',
+              borderColor: isDark ? colors.border : '#D3DBFF',
+            },
+          ]}>
+          <Text style={[styles.summaryLabel, {color: colors.textSecondary}]}>
+            Total quantity
+          </Text>
+          <Text
+            style={[
+              styles.summaryValue,
+              {color: isDark ? COLORS.primary2 : '#2F53D8'},
+            ]}>
             {summary.totalQty.toLocaleString()}
           </Text>
         </View>
@@ -197,7 +249,9 @@ const ItemJournalHistory = () => {
       {loading && page === 1 ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={COLORS.primary2} />
-          <Text style={styles.loadingText}>Loading posted adjustments...</Text>
+          <Text style={[styles.loadingText, {color: colors.textSecondary}]}>
+            Loading posted adjustments...
+          </Text>
         </View>
       ) : (
         <FlatList
@@ -246,7 +300,6 @@ export default ItemJournalHistory;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.white,
   },
   topHeader: {
     flexDirection: 'row',
@@ -254,20 +307,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: COLORS.lightGray1,
   },
   backButton: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: COLORS.transparentPrimary,
     alignItems: 'center',
     justifyContent: 'center',
   },
   backButtonIcon: {
     width: 20,
     height: 20,
-    tintColor: COLORS.primary3,
   },
   topTitle: {
     flex: 1,
@@ -275,7 +325,6 @@ const styles = StyleSheet.create({
     ...FONTS.h3,
     fontSize: 17,
     fontWeight: '700',
-    color: COLORS.black,
   },
   headerSpacer: {
     width: 44,
@@ -289,23 +338,19 @@ const styles = StyleSheet.create({
   searchInputContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.white,
     borderRadius: 20,
     paddingHorizontal: 16,
     height: 46,
     borderWidth: 1,
-    borderColor: COLORS.transparentPrimary2,
   },
   searchIcon: {
     width: 20,
     height: 20,
-    tintColor: COLORS.gray2,
     marginRight: 10,
   },
   searchInput: {
     flex: 1,
     ...FONTS.body3,
-    color: COLORS.black,
     paddingVertical: 0,
   },
   summaryRow: {
@@ -318,27 +363,16 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 14,
     borderRadius: 16,
-    backgroundColor: COLORS.transparentPrimary,
     borderWidth: 1,
-    borderColor: COLORS.transparentPrimary2,
-  },
-  summaryCardSecondary: {
-    backgroundColor: '#F2F5FF',
-    borderColor: '#D3DBFF',
   },
   summaryLabel: {
     ...FONTS.body4,
-    color: COLORS.gray2,
     marginBottom: 4,
     fontWeight: '600',
   },
   summaryValue: {
     ...FONTS.h3,
-    color: COLORS.primary2,
     fontWeight: '700',
-  },
-  summaryValueSecondary: {
-    color: '#2F53D8',
   },
   list: {
     flex: 1,
@@ -357,13 +391,11 @@ const styles = StyleSheet.create({
   },
   emptyTitle: {
     ...FONTS.h3,
-    color: COLORS.black,
     marginBottom: SIZES.base,
     textAlign: 'center',
   },
   emptySubtext: {
     ...FONTS.body3,
-    color: COLORS.gray2,
     textAlign: 'center',
     maxWidth: 280,
   },
@@ -375,7 +407,6 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     ...FONTS.body3,
-    color: COLORS.gray2,
     marginTop: SIZES.base,
   },
   footerLoader: {
@@ -389,7 +420,7 @@ const styles = StyleSheet.create({
     padding: 20,
     margin: 16,
     borderRadius: SIZES.radius,
-    backgroundColor: COLORS.white,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   accessDeniedTitle: {
     ...FONTS.h2,
@@ -399,7 +430,6 @@ const styles = StyleSheet.create({
   },
   accessDeniedMessage: {
     ...FONTS.body3,
-    color: COLORS.gray,
     textAlign: 'center',
   },
 });

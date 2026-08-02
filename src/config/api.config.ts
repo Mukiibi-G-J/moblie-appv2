@@ -3,6 +3,13 @@ import {Platform} from 'react-native';
 // Set USE_TEST_ENV to true to use test environment
 export const USE_TEST_ENV = false;
 
+/**
+ * Test-only master switch for simulated offline (requires USE_TEST_ENV = true).
+ * When false: no API blocking, Settings toggle hidden, production-safe default.
+ * When true: blocks axios calls; optional Settings toggle can turn it off without rebuild.
+ */
+export const SIMULATE_OFFLINE_POS = false;
+
 export const TEST_API_PORT = 8000;
 
 /** Your PC WiFi IPv4 — run `ipconfig` on Windows and pick the WiFi adapter address. */

@@ -1,4 +1,5 @@
 import React, {useEffect, useState} from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   View,
   Text,
@@ -277,7 +278,7 @@ const LoanFormModal: React.FC<Props> = ({
             </View>
 
     <View style={styles.field}>
-      <Text style={styles.label}>Loan Amount (UGX) *</Text>
+      <Text style={styles.label}>{formatCurrencyLabel('Loan Amount')} *</Text>
       <TextInput
         value={loanAmountInput}
         onChangeText={text => {
@@ -292,7 +293,7 @@ const LoanFormModal: React.FC<Props> = ({
         keyboardType="numeric"
       />
     </View>
-    <Text style={styles.helper}>Enter principal in UGX; required.</Text>
+    <Text style={styles.helper}>Enter principal in local currency; required.</Text>
 
     {renderInput(
       'Interest Rate (%)',

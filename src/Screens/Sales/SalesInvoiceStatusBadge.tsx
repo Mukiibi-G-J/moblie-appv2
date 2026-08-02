@@ -41,6 +41,12 @@ const SalesInvoiceStatusBadge: React.FC<SalesInvoiceStatusBadgeProps> = ({
             text: '#FB7185',
             border: 'rgba(251, 113, 133, 0.45)',
           };
+        case 'Reversed':
+          return {
+            background: 'rgba(244, 63, 94, 0.18)',
+            text: '#FB7185',
+            border: 'rgba(251, 113, 133, 0.45)',
+          };
         default:
           return {
             background: 'rgba(255,255,255,0.08)',
@@ -69,6 +75,12 @@ const SalesInvoiceStatusBadge: React.FC<SalesInvoiceStatusBadgeProps> = ({
           border: '#BFDBFE',
         };
       case 'Cancelled':
+        return {
+          background: '#FEECEC',
+          text: '#B42318',
+          border: '#F5B1AB',
+        };
+      case 'Reversed':
         return {
           background: '#FEECEC',
           text: '#B42318',

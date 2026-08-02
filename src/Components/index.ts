@@ -18,6 +18,7 @@ import {PermissionTextButton} from './PermissionTextButton';
 import {PermissionIconButton} from './PermissionIconButton';
 import {PermissionView} from './PermissionView';
 import {SearchableSelectModal} from './SearchableSelectModal';
+import StackScreenLayout from './layouts/StackScreenLayout';
 
 export {
   CartQuantityButton,
@@ -25,6 +26,7 @@ export {
   FooterTotal,
   FormInput,
   Header,
+  StackScreenLayout,
   StepperInput,
   TextButton,
   IconButton,

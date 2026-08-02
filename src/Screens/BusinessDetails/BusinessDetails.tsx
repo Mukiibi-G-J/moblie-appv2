@@ -28,10 +28,17 @@ import {useCompanyInfo} from '../../hooks/useCompanyInfo';
 import {resolveCompanyLogoUri} from '../../utils/companyLogoUrl';
 import {
   TenantCompanyApi,
+  getCurrencies,
   updateCompanyInfo,
   uploadCompanyLogo,
 } from '../../services/app.services';
 import {useAuth} from '../../context/Store';
+import {CurrencyPickerModal} from '../../Components/CurrencyPickerModal';
+import {
+  DEFAULT_LOCAL_CURRENCY_CODE,
+  mapCurrenciesToOptions,
+  type CurrencyOption,
+} from '../../utils/currency';
 import {
   CompanyOverview,
   getCompanyOverview,
@@ -93,7 +100,7 @@ const BusinessDetails: React.FC = () => {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const {colors} = useTheme();
-  const {auth} = useAuth();
+  const {auth, updateLocalCurrencyCode} = useAuth();
   const {data, loading, error, refetch, storeLabel} = useCompanyInfo();
   const [logoUri, setLogoUri] = useState<string | null>(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -110,6 +117,16 @@ const BusinessDetails: React.FC = () => {
   });
   const [subscriptionOverview, setSubscriptionOverview] =
     useState<CompanyOverview | null>(null);
+  const [localCurrencyCode, setLocalCurrencyCodeState] = useState(
+    auth.localCurrencyCode || DEFAULT_LOCAL_CURRENCY_CODE,
+  );
+  const [savedCurrencyCode, setSavedCurrencyCode] = useState(
+    auth.localCurrencyCode || DEFAULT_LOCAL_CURRENCY_CODE,
+  );
+  const [currencyOptions, setCurrencyOptions] = useState<CurrencyOption[]>([]);
+  const [loadingCurrencies, setLoadingCurrencies] = useState(false);
+  const [currencyModalVisible, setCurrencyModalVisible] = useState(false);
+  const [savingCurrency, setSavingCurrency] = useState(false);
 
   const isCompanyAdmin =
     Boolean(auth.is_superuser) ||
@@ -118,6 +135,41 @@ const BusinessDetails: React.FC = () => {
   const refreshSubscriptionOverview = useCallback(async () => {
     const o = await getCompanyOverview();
     setSubscriptionOverview(o);
+    const code =
+      o?.settings?.localCurrencyCode ||
+      auth.localCurrencyCode ||
+      DEFAULT_LOCAL_CURRENCY_CODE;
+    setLocalCurrencyCodeState(code);
+    setSavedCurrencyCode(code);
+  }, [auth.localCurrencyCode]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoadingCurrencies(true);
+      try {
+        const rows = await getCurrencies();
+        if (!cancelled) {
+          setCurrencyOptions(mapCurrenciesToOptions(rows));
+        }
+      } catch {
+        if (!cancelled) {
+          setCurrencyOptions([
+            {
+              value: DEFAULT_LOCAL_CURRENCY_CODE,
+              label: `${DEFAULT_LOCAL_CURRENCY_CODE}: Uganda Shilling`,
+            },
+          ]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingCurrencies(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useFocusEffect(
@@ -262,6 +314,39 @@ const BusinessDetails: React.FC = () => {
     }
   }, [data, form, isFormDirty, refetch, savingInfo]);
 
+  const isCurrencyDirty = localCurrencyCode !== savedCurrencyCode;
+
+  const handleSaveCurrency = useCallback(async () => {
+    if (!isCompanyAdmin || savingCurrency || !isCurrencyDirty) {
+      return;
+    }
+    setSavingCurrency(true);
+    try {
+      await updateCompanyInfo({localCurrencyCode});
+      setSavedCurrencyCode(localCurrencyCode);
+      updateLocalCurrencyCode(localCurrencyCode);
+      Toast.show({
+        type: 'success',
+        text1: 'Currency updated',
+        text2: `Local currency set to ${localCurrencyCode}`,
+      });
+    } catch (e: unknown) {
+      Toast.show({
+        type: 'error',
+        text1: 'Save failed',
+        text2: getApiErrorMessage(e, 'Could not update local currency.'),
+      });
+    } finally {
+      setSavingCurrency(false);
+    }
+  }, [
+    isCompanyAdmin,
+    isCurrencyDirty,
+    localCurrencyCode,
+    savingCurrency,
+    updateLocalCurrencyCode,
+  ]);
+
   const pickCompanyLogo = useCallback(async () => {
     if (!isCompanyAdmin || uploadingLogo) {
       return;
@@ -299,6 +384,13 @@ const BusinessDetails: React.FC = () => {
           {label: 'Email', value: displayValue(data.email)},
           {label: 'Website', value: displayValue(data.website)},
           {label: 'TIN', value: displayValue(data.tin)},
+          {
+            label: 'Local currency',
+            value: displayValue(
+              subscriptionOverview?.settings?.localCurrencyCode ||
+                auth.localCurrencyCode,
+            ),
+          },
         ]
       : [];
 
@@ -507,6 +599,29 @@ const BusinessDetails: React.FC = () => {
               </View>
             ))}
 
+            {isCompanyAdmin ? (
+              <View style={[styles.row, {backgroundColor: colors.card}]}>
+                <Text style={[styles.rowLabel, {color: colors.textSecondary}]}>
+                  Local currency
+                </Text>
+                <TouchableOpacity
+                  style={[
+                    styles.currencyPickerBtn,
+                    {
+                      borderColor: colors.border,
+                      backgroundColor: colors.background,
+                    },
+                  ]}
+                  onPress={() => setCurrencyModalVisible(true)}
+                  activeOpacity={0.8}>
+                  <Text style={[styles.rowValue, {color: colors.textPrimary}]}>
+                    {currencyOptions.find(o => o.value === localCurrencyCode)
+                      ?.label || localCurrencyCode}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
             {isCompanyAdmin
               ? editableFields.map(field => (
                   <View
@@ -552,32 +667,90 @@ const BusinessDetails: React.FC = () => {
                 ))}
 
             {isCompanyAdmin ? (
-              <TouchableOpacity
-                style={[
-                  styles.saveBtn,
-                  {
-                    backgroundColor: isFormDirty
-                      ? COLORS.primary
-                      : colors.border,
-                  },
-                ]}
-                onPress={() => void handleSaveCompanyInfo()}
-                disabled={!isFormDirty || savingInfo}
-                activeOpacity={0.85}>
-                {savingInfo ? (
-                  <ActivityIndicator color={COLORS.white} />
-                ) : (
-                  <Text style={styles.saveBtnText}>Save company info</Text>
-                )}
-              </TouchableOpacity>
+              <>
+                <TouchableOpacity
+                  style={[
+                    styles.saveBtn,
+                    {
+                      backgroundColor: isFormDirty
+                        ? COLORS.primary
+                        : colors.border,
+                    },
+                  ]}
+                  onPress={() => void handleSaveCompanyInfo()}
+                  disabled={!isFormDirty || savingInfo}
+                  activeOpacity={0.85}>
+                  {savingInfo ? (
+                    <ActivityIndicator color={COLORS.white} />
+                  ) : (
+                    <Text style={styles.saveBtnText}>Save company info</Text>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.saveBtn,
+                    styles.saveCurrencyBtn,
+                    {
+                      backgroundColor: isCurrencyDirty
+                        ? COLORS.primary
+                        : colors.border,
+                    },
+                  ]}
+                  onPress={() => void handleSaveCurrency()}
+                  disabled={!isCurrencyDirty || savingCurrency}
+                  activeOpacity={0.85}>
+                  {savingCurrency ? (
+                    <ActivityIndicator color={COLORS.white} />
+                  ) : (
+                    <Text style={styles.saveBtnText}>Save currency</Text>
+                  )}
+                </TouchableOpacity>
+              </>
             ) : null}
 
             {subscriptionOverview ? (
               <SubscriptionOverviewPanel overview={subscriptionOverview} />
             ) : null}
+
+            <TouchableOpacity
+              style={[
+                styles.modulesLinkCard,
+                {
+                  backgroundColor: colors.card,
+                  borderColor: colors.border,
+                },
+              ]}
+              onPress={() => navigation.navigate('AvailableModules')}
+              activeOpacity={0.85}>
+              <View style={styles.modulesLinkTextCol}>
+                <Text style={[styles.modulesLinkTitle, {color: colors.textPrimary}]}>
+                  All Available Modules
+                </Text>
+                <Text
+                  style={[styles.modulesLinkHint, {color: colors.textSecondary}]}>
+                  See what is included in your plan, trial modules, and add-ons
+                </Text>
+              </View>
+              <Image
+                source={icons.down_arrow as any}
+                style={[
+                  styles.modulesLinkChevron,
+                  {tintColor: colors.textTertiary, transform: [{rotate: '-90deg'}]},
+                ]}
+              />
+            </TouchableOpacity>
           </ScrollView>
         )}
       </View>
+      <CurrencyPickerModal
+        visible={currencyModalVisible}
+        options={currencyOptions}
+        loading={loadingCurrencies}
+        selectedCode={localCurrencyCode}
+        colors={colors}
+        onClose={() => setCurrencyModalVisible(false)}
+        onSelect={code => setLocalCurrencyCodeState(code)}
+      />
     </SafeAreaView>
   );
 };
@@ -636,6 +809,29 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   banner: {...FONTS.body4, marginBottom: SIZES.base, textAlign: 'center'},
+  modulesLinkCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 14,
+    marginTop: 16,
+  },
+  modulesLinkTextCol: {flex: 1, paddingRight: 8},
+  modulesLinkTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  modulesLinkHint: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  modulesLinkChevron: {
+    width: 16,
+    height: 16,
+    resizeMode: 'contain',
+  },
   card: {
     borderRadius: SIZES.radius,
     padding: SIZES.padding,
@@ -731,6 +927,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: 4,
     marginBottom: SIZES.base,
+  },
+  saveCurrencyBtn: {
+    marginTop: 0,
+  },
+  currencyPickerBtn: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    marginTop: 6,
   },
   saveBtnText: {
     ...FONTS.body4,

@@ -1,4 +1,5 @@
 import React, {useMemo} from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   View,
   Text,
@@ -53,7 +54,7 @@ const PurchaseHistoryListItem: React.FC<Props> = ({item, onPress}) => {
   const formatAmount = (raw: unknown) => {
     const n = Number(raw);
     const amount = Number.isFinite(n) ? n : 0;
-    return `UGX ${amount.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
+    return formatCurrencyCompact(amount);
   };
 
   const formatDate = (dateString?: string) => {

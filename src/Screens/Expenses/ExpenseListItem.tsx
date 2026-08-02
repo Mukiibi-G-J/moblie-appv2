@@ -8,6 +8,7 @@ import {
   ImageSourcePropType,
 } from 'react-native';
 import {COLORS, FONTS, SIZES, icons} from '../../constants';
+import {formatCurrencyCompact} from '../../utils/currency';
 import {Expense} from '../../@types/expense';
 import ExpenseStatusBadge from './ExpenseStatusBadge';
 import {useTheme} from '../../context/ThemeContext';
@@ -49,11 +50,7 @@ const ExpenseListItem: React.FC<ExpenseListItemProps> = ({
     [colors],
   );
 
-  const formatAmount = (amount: number) => {
-    return `UGX ${(amount || 0)
-      .toFixed(0)
-      .replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
-  };
+  const formatAmount = (amount: number) => formatCurrencyCompact(amount);
 
   const formatDate = (dateString: string) => {
     try {

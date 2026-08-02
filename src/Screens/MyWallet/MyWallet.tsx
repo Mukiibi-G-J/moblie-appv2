@@ -3,37 +3,33 @@ import React from 'react';
 import {COLORS, FONTS, SIZES} from '../../constants';
 import {usePermissions} from '../../hooks/usePermissions';
 import {PAGE_NAMES} from '../../constants/pageNames';
+import {StackScreenLayout} from '../../Components';
 
 const MyWallet = () => {
   const {canRead} = usePermissions();
-  const PAGE_NAME = PAGE_NAMES.PAYMENTS; // MyWallet uses Payments page permission
+  const PAGE_NAME = PAGE_NAMES.PAYMENTS;
 
-  // Early return if no read permission
   if (!canRead(PAGE_NAME)) {
     return (
-      <View style={styles.container}>
+      <StackScreenLayout title="My Wallet" showBack={false}>
         <View style={styles.accessDeniedContainer}>
           <Text style={styles.accessDeniedTitle}>Access Denied</Text>
           <Text style={styles.accessDeniedMessage}>
             You don't have permission to view your wallet.
           </Text>
         </View>
-      </View>
+      </StackScreenLayout>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <StackScreenLayout title="My Wallet" showBack={false}>
       <Text style={styles.text}>MyWallet</Text>
-    </View>
+    </StackScreenLayout>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.lightGray1,
-  },
   text: {
     ...FONTS.h3,
     color: COLORS.black,

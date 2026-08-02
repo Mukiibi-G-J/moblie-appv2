@@ -3,6 +3,7 @@ import {View, Text, Image, StyleSheet, ViewStyle, TextStyle} from 'react-native'
 import {FONTS, SIZES, icons} from '../constants';
 import {useTheme} from '../context/ThemeContext';
 import {QuickIconPressable} from './QuickIconPressable';
+import {useScreenTopInset} from '../hooks/useScreenTopInset';
 
 interface HeaderProps {
   title: string;
@@ -24,14 +25,15 @@ const Header: React.FC<HeaderProps> = ({
   showBack = false,
 }) => {
   const {colors} = useTheme();
+  const topInset = useScreenTopInset();
   return (
     <View
       style={[
         styles.headerSection,
-        {backgroundColor: colors.surface},
+        {backgroundColor: colors.surface, paddingTop: topInset},
         containerStyle,
       ]}>
-      <View style={[styles.headerCard, containerStyle]}>
+      <View style={styles.headerCard}>
         <View style={styles.headerMain}>
           {/* Left Component */}
           <View style={styles.leftComponent}>
@@ -82,7 +84,6 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   headerCard: {
-    marginTop: 8,
     paddingHorizontal: SIZES.padding,
   },
   headerMain: {

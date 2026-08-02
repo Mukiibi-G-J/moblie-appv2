@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import Toast from 'react-native-toast-message';
 import {COLORS, FONTS, SIZES} from '../../constants';
+import {formatCurrencyCompact} from '../../utils/currency';
 import Header from '../../Components/Header';
 import {usePermissions} from '../../hooks/usePermissions';
 import {PAGE_NAMES} from '../../constants/pageNames';
@@ -26,11 +27,7 @@ import LoanFormModal from './LoanFormModal';
 
 const STATUS_FILTERS: (LoanStatus | 'All')[] = ['Open', 'Posted', 'Cancelled', 'All'];
 
-const formatAmount = (amount?: number) => {
-  return `UGX ${(amount || 0)
-    .toFixed(0)
-    .replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
-};
+const formatAmount = (amount?: number) => formatCurrencyCompact(amount);
 
 const Loans: React.FC = () => {
   const {canRead, canCreate, canEdit, canDelete} = usePermissions();

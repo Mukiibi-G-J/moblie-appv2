@@ -26,6 +26,7 @@ import {
 import {QuickIconPressable} from './QuickIconPressable';
 import {CartItem, SalesInvoiceData} from '../@types/types.dto';
 import {validateCartTracking} from '../utils/salesTracking';
+import {formatCurrencyCompact} from '../utils/currency';
 import {
   fetchPaymentMethods,
   createSalesInvoice,
@@ -34,6 +35,12 @@ import {
   Customer,
   PaymentMethod,
 } from '../services/app.services';
+import {getLocalPaymentMethods} from '../services/localData';
+import {completeOfflineSale} from '../services/offline/OfflineSaleService';
+import {loadReceiptBusinessInfo} from '../services/companyInfoCache';
+import {useOfflineOptional} from '../context/OfflineContext';
+import {getEffectiveIsOnline} from '../utils/posConnectivity';
+import {getCartTrackingMode} from '../utils/posConnectivity';
 import PrintService, {CompanyInfo} from '../services/PrintService';
 import {useTheme} from '../context/ThemeContext';
 
@@ -66,6 +73,8 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
 }) => {
   const {colors, isDark} = useTheme();
   const insets = useSafeAreaInsets();
+  const offlineCtx = useOfflineOptional();
+  const isPosOnline = offlineCtx?.isOnline ?? getEffectiveIsOnline();
   const st = useMemo(
     () => ({
       modalView: {backgroundColor: colors.surface},
@@ -141,13 +150,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
   /** Main checkout vs cash / amount entry (tender) screen */
   const [screenMode, setScreenMode] = useState<'main' | 'tender'>('main');
 
-  const formatUGX = (amount: number) =>
-    `UGX ${amount.toLocaleString('en-US', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })}`;
-
-  const formatTotalDisplay = () => formatUGX(total);
+  const formatTotalDisplay = () => formatCurrencyCompact(total);
 
   useEffect(() => {
     if (isVisible) {
@@ -167,17 +170,25 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
   const fetchPaymentMethodsData = async () => {
     setLoadingPaymentMethods(true);
     try {
-      console.log('🔍 Fetching payment methods...');
+      if (!isPosOnline) {
+        const local = await getLocalPaymentMethods();
+        setPaymentMethods(local);
+        return;
+      }
       const paymentMethodsData = await fetchPaymentMethods();
-      console.log('✅ Payment methods fetched:', paymentMethodsData);
       setPaymentMethods(paymentMethodsData);
     } catch (error) {
       console.error('❌ Failed to fetch payment methods:', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Failed to load payment methods',
-      });
+      const local = await getLocalPaymentMethods();
+      if (local.length) {
+        setPaymentMethods(local);
+      } else {
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: 'Failed to load payment methods',
+        });
+      }
     } finally {
       setLoadingPaymentMethods(false);
     }
@@ -238,19 +249,115 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
       return;
     }
 
-    const trackingValidation = validateCartTracking(cartItems);
-    if (!trackingValidation.ok) {
-      setErrorMessage(trackingValidation.message);
-      return;
+    const trackingMode = getCartTrackingMode(isPosOnline);
+    if (trackingMode === 'strict') {
+      const trackingValidation = validateCartTracking(cartItems);
+      if (!trackingValidation.ok) {
+        setErrorMessage(trackingValidation.message);
+        return;
+      }
     }
 
     setIsProcessing(true);
 
+    const finalDocumentDate =
+      documentDate || new Date().toISOString().split('T')[0];
+
+    if (!isPosOnline) {
+      try {
+        const offlineResult = await completeOfflineSale({
+          cartItems,
+          customerName: selectedCustomer?.name || 'General Customer',
+          customerId: selectedCustomer?.id || null,
+          paymentMethodId: paymentMethod?.id || null,
+          amountReceived:
+            paymentMethod?.requires_amount_received === false
+              ? 0
+              : parseFloat(amountReceived) || total,
+          changeAmount:
+            paymentMethod?.requires_amount_received === false
+              ? 0
+              : Math.max(0, (parseFloat(amountReceived) || total) - total),
+          documentDate: finalDocumentDate,
+        });
+
+        if (printReceipt) {
+          try {
+            const printService = PrintService.getInstance();
+            const isPrinterAvailable = await printService.checkConnection();
+            if (isPrinterAvailable) {
+              let companyInfo: CompanyInfo | undefined;
+              try {
+                const cached = await loadReceiptBusinessInfo();
+                const company = (cached as {company?: Record<string, string>})
+                  ?.company;
+                if (company) {
+                  companyInfo = {
+                    name: company.name || 'ZENTRO APP',
+                    logo: company.logo || '',
+                    address: company.address || '',
+                    phone: company.phone || '',
+                    email: company.email || '',
+                    tin: company.tin || '',
+                  };
+                }
+              } catch {
+                /* optional */
+              }
+
+              await printService.printReceipt({
+                receiptId: offlineResult.receiptNo,
+                username,
+                customerName: selectedCustomer?.name || 'General Customer',
+                cartItems,
+                subtotal: total,
+                total,
+                tax: 0,
+                discount: 0,
+                amountReceived: parseFloat(amountReceived) || total,
+                change: calculateChange(),
+                paymentMethod: paymentMethod?.description || 'Cash',
+                saleDate: new Date().toISOString(),
+                companyInfo,
+              });
+            }
+          } catch {
+            /* non-fatal */
+          }
+        }
+
+        const statusLabel =
+          offlineResult.syncStatus === 'posted'
+            ? 'Sale posted'
+            : offlineResult.syncStatus === 'failed'
+              ? 'Saved — sync failed'
+              : 'Saved — pending sync';
+
+        Toast.show({
+          type: offlineResult.syncStatus === 'failed' ? 'error' : 'success',
+          text1: statusLabel,
+          text2: `Receipt ${offlineResult.receiptNo}`,
+        });
+
+        onSuccess({
+          id: offlineResult.localId,
+          invoice_no: offlineResult.receiptNo,
+          offline: true,
+          syncStatus: offlineResult.syncStatus,
+          syncError: offlineResult.syncError,
+        });
+        handleClose();
+      } catch (error: unknown) {
+        setErrorMessage(
+          error instanceof Error ? error.message : 'Offline sale failed',
+        );
+      } finally {
+        setIsProcessing(false);
+      }
+      return;
+    }
+
     try {
-      // Prepare sales invoice data following the frontend pattern exactly
-      // Use the provided documentDate, or fallback to current date
-      const finalDocumentDate =
-        documentDate || new Date().toISOString().split('T')[0];
 
       const salesInvoiceData: SalesInvoiceData = {
         customer: selectedCustomer?.id || 0,
@@ -566,7 +673,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
                 {amountReceived ? (
                   <View style={[styles.tenderChangeCard, st.tenderChange]}>
                     <Text style={[styles.changeLabel, st.changeLabel]}>Change</Text>
-                    <Text style={styles.changeValue}>{formatUGX(change)}</Text>
+                    <Text style={styles.changeValue}>{formatCurrencyCompact(change)}</Text>
                   </View>
                 ) : null}
               </View>
@@ -658,12 +765,12 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
             </View>
             <View style={styles.summaryRow}>
               <Text style={[styles.summaryLabel, st.summaryLabel]}>Subtotal:</Text>
-              <Text style={[styles.summaryValue, st.summaryValue]}>{formatUGX(total)}</Text>
+              <Text style={[styles.summaryValue, st.summaryValue]}>{formatCurrencyCompact(total)}</Text>
             </View>
             {/* Tax and discount rows removed */}
             <View style={[styles.summaryRow, styles.totalRow, st.totalRow]}>
               <Text style={[styles.totalLabel, st.totalLabel]}>Total:</Text>
-              <Text style={styles.totalValue}>{formatUGX(total)}</Text>
+              <Text style={styles.totalValue}>{formatCurrencyCompact(total)}</Text>
             </View>
               </View>
 

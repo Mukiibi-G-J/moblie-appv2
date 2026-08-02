@@ -1,4 +1,5 @@
 import React from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../utils/currency';
 import {
   View,
   Text,
@@ -64,7 +65,7 @@ export const NetworkAwareComponent = () => {
             <View key={item.id} style={styles.itemCard}>
               <Text style={styles.itemName}>{item.name}</Text>
               <Text style={styles.itemPrice}>
-                UGX {item.price.toLocaleString()}
+                {formatCurrencyCompact(item.price)}
               </Text>
             </View>
           ))}
@@ -80,7 +81,7 @@ export const NetworkAwareComponent = () => {
           <View key={item.id} style={styles.itemCard}>
             <Text style={styles.itemName}>{item.name}</Text>
             <Text style={styles.itemPrice}>
-              UGX {item.price.toLocaleString()}
+              {formatCurrencyCompact(item.price)}
             </Text>
           </View>
         ))}

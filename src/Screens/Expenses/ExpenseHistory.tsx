@@ -1,4 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   ActivityIndicator,
   FlatList,
@@ -488,14 +489,14 @@ const ExpenseHistory = () => {
       <View style={[styles.summaryCard, styles.summaryCardPrimary]}>
         <Text style={styles.summaryLabel}>Total Amount</Text>
         <Text style={styles.summaryValuePrimary}>
-          UGX {summary.totalAmount.toLocaleString()}
+          {formatCurrencyCompact(summary.totalAmount)}
         </Text>
         <Text style={styles.summarySubtext}>{summary.count} records</Text>
       </View>
       <View style={[styles.summaryCard, styles.summaryCardSecondary]}>
         <Text style={styles.summaryLabel}>Average</Text>
         <Text style={styles.summaryValueSecondary}>
-          UGX {summary.average.toFixed(0).toLocaleString()}
+          {formatCurrencyCompact(summary.average)}
         </Text>
         <Text style={styles.summarySubtext}>
           {summary.reversedCount} reversed

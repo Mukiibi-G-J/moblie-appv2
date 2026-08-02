@@ -1,4 +1,5 @@
 import React, {useState, useEffect, useMemo} from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   View,
   Text,
@@ -27,6 +28,7 @@ import {
 import {ExpenseServices} from '../../services/ExpenseServices';
 import Toast from 'react-native-toast-message';
 import {useTheme} from '../../context/ThemeContext';
+import {useScreenTopInset} from '../../hooks/useScreenTopInset';
 
 interface ExpenseFormModalProps {
   visible: boolean;
@@ -57,6 +59,7 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
   const isPosted = expense?.status === 'Posted';
 
   const {colors} = useTheme();
+  const topInset = useScreenTopInset();
   const expTheme = useMemo(
     () => ({
       pageRoot: {backgroundColor: colors.background},
@@ -233,10 +236,10 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
   const previewAmountLabel = useMemo(() => {
     const raw = formData.amount?.replace(/,/g, '') ?? '';
     if (!raw || parseFloat(raw) <= 0) {
-      return 'UGX —';
+      return '—';
     }
     const n = parseFloat(raw) || 0;
-    return `UGX ${n.toLocaleString('en-US', {maximumFractionDigits: 0})}`;
+    return formatCurrencyCompact(n);
   }, [formData.amount]);
 
   const handleSave = async () => {
@@ -371,9 +374,9 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
         style={[styles.pageRoot, expTheme.pageRoot]}>
         <SafeAreaView
           style={[styles.safeArea, expTheme.safeArea]}
-          edges={['top', 'left', 'right']}>
+          edges={['left', 'right']}>
           <View style={[styles.page, expTheme.page]}>
-            <View style={[styles.pageHeader, expTheme.pageHeader]}>
+            <View style={[styles.pageHeader, expTheme.pageHeader, {paddingTop: topInset}]}>
               <QuickIconPressable
                 onPress={onClose}
                 style={styles.headerIconButton}
@@ -560,7 +563,7 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
 
                 <Text
                   style={[styles.fieldLabel, expTheme.fieldLabel, styles.fieldLabelSpaced]}>
-                  Amount (UGX) *
+                  {formatCurrencyLabel('Amount')} *
                 </Text>
                 <TextInput
                   style={[
@@ -700,7 +703,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'ios' ? 4 : 8,
     paddingBottom: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.lightGray1,

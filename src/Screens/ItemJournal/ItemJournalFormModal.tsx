@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useCallback} from 'react';
+import React, {useState, useEffect, useCallback, useMemo} from 'react';
 import {
   View,
   Text,
@@ -15,7 +15,9 @@ import {
 import {Picker} from '@react-native-picker/picker';
 import Toast from 'react-native-toast-message';
 import {COLORS, FONTS, icons} from '../../constants';
+import {useTheme} from '../../context/ThemeContext';
 import {QuickIconPressable} from '../../Components';
+import {useScreenTopInset} from '../../hooks/useScreenTopInset';
 import {fetchItems, upsertItemJournal} from '../../services/app.services';
 import type {
   ItemJournalAdjustmentType,
@@ -62,7 +64,11 @@ function formatUnitCostForInput(value: number): string {
   if (!Number.isFinite(value) || value < 0) {
     return '0';
   }
-  return String(Math.round(value));
+  const rounded = Math.round(value * 100) / 100;
+  if (Number.isInteger(rounded)) {
+    return String(rounded);
+  }
+  return rounded.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
 }
 
 function mapRawItemUoms(raw: unknown): ItemUomOption[] {
@@ -120,6 +126,50 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
   editFormTitle = 'Edit adjustment',
 }) => {
   const isEditMode = !!line;
+  const {colors, isDark} = useTheme();
+  const topInset = useScreenTopInset();
+
+  const themed = useMemo(
+    () => ({
+      pageRoot: {backgroundColor: colors.background},
+      pageTitle: {color: colors.textPrimary},
+      previewSection: {
+        backgroundColor: colors.card,
+        borderColor: colors.border,
+      },
+      previewName: {color: colors.textPrimary},
+      previewSubtext: {color: colors.textSecondary},
+      sectionTitle: {color: colors.textPrimary},
+      sectionDivider: {backgroundColor: colors.border},
+      label: {color: colors.textSecondary},
+      input: {
+        color: colors.textPrimary,
+        backgroundColor: colors.inputBackground,
+        borderColor: colors.border,
+      },
+      disabledInput: {
+        backgroundColor: colors.screenMuted,
+        color: colors.textSecondary,
+      },
+      helperText: {color: colors.textSecondary},
+      pickerContainer: {
+        backgroundColor: colors.inputBackground,
+        borderColor: colors.border,
+      },
+      picker: {
+        color: colors.textPrimary,
+        backgroundColor: colors.inputBackground,
+      },
+      pickList: {borderColor: colors.border},
+      pickRow: {borderBottomColor: colors.border},
+      pickRowTitle: {color: colors.textPrimary},
+      pickRowSub: {color: colors.textSecondary},
+      inlineLoadingText: {color: colors.textSecondary},
+      headerIconButton: {backgroundColor: colors.backButtonBg},
+      headerIcon: {tintColor: colors.textPrimary},
+    }),
+    [colors],
+  );
 
   const [saving, setSaving] = useState(false);
   const [itemSearch, setItemSearch] = useState('');
@@ -341,16 +391,16 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
       animationType="slide"
       transparent={false}
       onRequestClose={onClose}>
-      <View style={styles.pageRoot}>
-        <View style={styles.pageHeader}>
+      <View style={[styles.pageRoot, themed.pageRoot]}>
+        <View style={[styles.pageHeader, {paddingTop: topInset}]}>
           <QuickIconPressable
             onPress={onClose}
-            style={styles.headerIconButton}
+            style={[styles.headerIconButton, themed.headerIconButton]}
             hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
             accessibilityLabel="Close">
             <Image
               source={icons.cross}
-              style={styles.headerIcon}
+              style={[styles.headerIcon, themed.headerIcon]}
               resizeMode="contain"
             />
           </QuickIconPressable>
@@ -375,19 +425,24 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}>
-          <Text style={styles.pageTitle}>
-            {isEditMode ? 'Edit adjustment' : 'Add adjustment'}
+          <Text style={[styles.pageTitle, themed.pageTitle]}>
+            {isEditMode ? editFormTitle : addFormTitle}
           </Text>
 
-          <View style={styles.previewSection}>
+          <View style={[styles.previewSection, themed.previewSection]}>
             <View style={styles.previewAvatar}>
               <Text style={styles.previewInitials}>{previewInitials}</Text>
             </View>
             <View style={styles.previewMeta}>
-              <Text style={styles.previewName} numberOfLines={1} ellipsizeMode="tail">
+              <Text
+                style={[styles.previewName, themed.previewName]}
+                numberOfLines={1}
+                ellipsizeMode="tail">
                 {previewName}
               </Text>
-              <Text style={styles.previewSubtext} numberOfLines={1}>
+              <Text
+                style={[styles.previewSubtext, themed.previewSubtext]}
+                numberOfLines={1}>
                 {isEditMode && line?.document_no
                   ? `${line.document_no} · ${entryLabel}`
                   : entryLabel}
@@ -396,22 +451,22 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
           </View>
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Item</Text>
+            <Text style={[styles.sectionTitle, themed.sectionTitle]}>Item</Text>
 
             {isEditMode ? (
               <>
                 <View style={styles.fieldGroup}>
-                  <Text style={styles.label}>Item name</Text>
+                  <Text style={[styles.label, themed.label]}>Item name</Text>
                   <TextInput
-                    style={[styles.input, styles.disabledInput]}
+                    style={[styles.input, themed.input, themed.disabledInput]}
                     value={selectedItemName}
                     editable={false}
                   />
                 </View>
                 <View style={styles.fieldGroup}>
-                  <Text style={styles.label}>Item number</Text>
+                  <Text style={[styles.label, themed.label]}>Item number</Text>
                   <TextInput
-                    style={[styles.input, styles.disabledInput]}
+                    style={[styles.input, themed.input, themed.disabledInput]}
                     value={selectedItemNo}
                     editable={false}
                   />
@@ -420,11 +475,11 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
             ) : (
               <>
                 <View style={styles.fieldGroup}>
-                  <Text style={styles.label}>Find item</Text>
+                  <Text style={[styles.label, themed.label]}>Find item</Text>
                   <TextInput
-                    style={styles.input}
+                    style={[styles.input, themed.input]}
                     placeholder="Type at least 2 characters"
-                    placeholderTextColor={COLORS.gray2}
+                    placeholderTextColor={colors.placeholder}
                     value={itemSearch}
                     onChangeText={t => {
                       setItemSearch(t);
@@ -442,15 +497,17 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
                 {itemsLoading ? (
                   <View style={styles.inlineLoading}>
                     <ActivityIndicator size="small" color={COLORS.primary2} />
-                    <Text style={styles.inlineLoadingText}>Searching items...</Text>
+                    <Text style={[styles.inlineLoadingText, themed.inlineLoadingText]}>
+                      Searching items...
+                    </Text>
                   </View>
                 ) : null}
                 {itemResults.length > 0 ? (
-                  <View style={styles.pickList}>
+                  <View style={[styles.pickList, themed.pickList]}>
                     {itemResults.map(it => (
                       <TouchableOpacity
                         key={it.no || it.item_name}
-                        style={styles.pickRow}
+                        style={[styles.pickRow, themed.pickRow]}
                         onPress={() => {
                           setSelectedItemNo(it.no || '');
                           setSelectedItemName(it.item_name);
@@ -464,9 +521,13 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
                           setUnitCostStr(formatUnitCostForInput(it.unit_cost));
                         }}
                         activeOpacity={0.8}>
-                        <Text style={styles.pickRowTitle}>{it.item_name}</Text>
+                        <Text style={[styles.pickRowTitle, themed.pickRowTitle]}>
+                          {it.item_name}
+                        </Text>
                         {it.no ? (
-                          <Text style={styles.pickRowSub}>{it.no}</Text>
+                          <Text style={[styles.pickRowSub, themed.pickRowSub]}>
+                            {it.no}
+                          </Text>
                         ) : null}
                       </TouchableOpacity>
                     ))}
@@ -477,13 +538,15 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
 
             {(selectedItemNo || isEditMode) && (
               <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Unit of measure</Text>
+                <Text style={[styles.label, themed.label]}>Unit of measure</Text>
                 {availableItemUoms.length > 1 ? (
-                  <View style={styles.pickerContainer}>
+                  <View style={[styles.pickerContainer, themed.pickerContainer]}>
                     <Picker
                       selectedValue={selectedItemUomId ?? availableItemUoms[0]?.id}
                       onValueChange={v => setSelectedItemUomId(Number(v))}
-                      style={styles.picker}>
+                      style={[styles.picker, themed.picker]}
+                      dropdownIconColor={colors.textPrimary}
+                      itemStyle={isDark ? {color: colors.textPrimary} : undefined}>
                       {availableItemUoms.map(u => (
                         <Picker.Item
                           key={u.id}
@@ -495,18 +558,18 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
                   </View>
                 ) : availableItemUoms.length === 1 ? (
                   <TextInput
-                    style={[styles.input, styles.disabledInput]}
+                    style={[styles.input, themed.input, themed.disabledInput]}
                     value={availableItemUoms[0].unit_of_measure}
                     editable={false}
                   />
                 ) : selectedItemUomId != null ? (
                   <TextInput
-                    style={[styles.input, styles.disabledInput]}
+                    style={[styles.input, themed.input, themed.disabledInput]}
                     value={selectedUomLabel}
                     editable={false}
                   />
                 ) : (
-                  <Text style={styles.helperText}>
+                  <Text style={[styles.helperText, themed.helperText]}>
                     No units loaded for this item. Check item setup in the web app.
                   </Text>
                 )}
@@ -514,18 +577,22 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
             )}
           </View>
 
-          <View style={styles.sectionDivider} />
+          <View style={[styles.sectionDivider, themed.sectionDivider]} />
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Adjustment</Text>
+            <Text style={[styles.sectionTitle, themed.sectionTitle]}>
+              Adjustment
+            </Text>
 
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Entry type</Text>
-              <View style={styles.pickerContainer}>
+              <Text style={[styles.label, themed.label]}>Entry type</Text>
+              <View style={[styles.pickerContainer, themed.pickerContainer]}>
                 <Picker
                   selectedValue={entryType}
                   onValueChange={v => setEntryType(v as ItemJournalEntryType)}
-                  style={styles.picker}>
+                  style={[styles.picker, themed.picker]}
+                  dropdownIconColor={colors.textPrimary}
+                  itemStyle={isDark ? {color: colors.textPrimary} : undefined}>
                   {ENTRY_OPTIONS.map(opt => (
                     <Picker.Item key={opt.value} label={opt.label} value={opt.value} />
                   ))}
@@ -534,56 +601,58 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
             </View>
 
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Quantity</Text>
+              <Text style={[styles.label, themed.label]}>Quantity</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, themed.input]}
                 keyboardType="number-pad"
                 value={quantityStr}
                 onChangeText={setQuantityStr}
                 placeholder="0"
-                placeholderTextColor={COLORS.gray2}
+                placeholderTextColor={colors.placeholder}
               />
             </View>
 
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Date</Text>
+              <Text style={[styles.label, themed.label]}>Date</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, themed.input]}
                 value={dateStr}
                 onChangeText={setDateStr}
                 placeholder="YYYY-MM-DD"
-                placeholderTextColor={COLORS.gray2}
+                placeholderTextColor={colors.placeholder}
               />
             </View>
           </View>
 
-          <View style={styles.sectionDivider} />
+          <View style={[styles.sectionDivider, themed.sectionDivider]} />
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Cost & notes</Text>
+            <Text style={[styles.sectionTitle, themed.sectionTitle]}>
+              Cost & notes
+            </Text>
 
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Unit cost</Text>
+              <Text style={[styles.label, themed.label]}>Unit cost</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, themed.input]}
                 keyboardType="decimal-pad"
                 value={unitCostStr}
                 onChangeText={setUnitCostStr}
                 placeholder="0"
-                placeholderTextColor={COLORS.gray2}
+                placeholderTextColor={colors.placeholder}
               />
             </View>
 
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Description</Text>
+              <Text style={[styles.label, themed.label]}>Description</Text>
               <TextInput
-                style={[styles.input, styles.textArea]}
+                style={[styles.input, styles.textArea, themed.input]}
                 multiline
                 numberOfLines={3}
                 value={description}
                 onChangeText={setDescription}
                 placeholder="Optional notes"
-                placeholderTextColor={COLORS.gray2}
+                placeholderTextColor={colors.placeholder}
               />
             </View>
           </View>
@@ -596,28 +665,24 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
 const styles = StyleSheet.create({
   pageRoot: {
     flex: 1,
-    backgroundColor: COLORS.white,
   },
   pageHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'ios' ? 12 : 16,
     paddingBottom: 8,
   },
   headerIconButton: {
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: COLORS.transparentPrimary,
     justifyContent: 'center',
     alignItems: 'center',
   },
   headerIcon: {
     width: 16,
     height: 16,
-    tintColor: COLORS.primary3,
   },
   headerSaveButton: {
     minWidth: 108,
@@ -648,7 +713,6 @@ const styles = StyleSheet.create({
   pageTitle: {
     fontSize: 24,
     fontWeight: '700',
-    color: COLORS.black,
     marginTop: 22,
     marginBottom: 24,
   },
@@ -657,9 +721,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 18,
     borderRadius: 18,
-    backgroundColor: COLORS.transparentPrimary,
     borderWidth: 1,
-    borderColor: COLORS.transparentPrimary2,
     marginBottom: 28,
   },
   previewAvatar: {
@@ -682,12 +744,10 @@ const styles = StyleSheet.create({
   previewName: {
     fontSize: 18,
     fontWeight: '700',
-    color: COLORS.primary3,
     marginBottom: 4,
   },
   previewSubtext: {
     ...FONTS.body4,
-    color: COLORS.secondary2,
   },
   section: {
     marginBottom: 26,
@@ -695,13 +755,10 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: COLORS.primary3,
     marginBottom: 14,
   },
   sectionDivider: {
-    height: 8,
-    borderRadius: 999,
-    backgroundColor: COLORS.transparentPrimary,
+    height: StyleSheet.hairlineWidth,
     marginTop: 6,
     marginBottom: 26,
   },
@@ -710,50 +767,37 @@ const styles = StyleSheet.create({
   },
   label: {
     ...FONTS.body4,
-    color: COLORS.black,
     marginBottom: 8,
     fontWeight: '600',
   },
   input: {
     minHeight: 58,
     borderWidth: 1,
-    borderColor: COLORS.transparentPrimary2,
     borderRadius: 14,
     paddingHorizontal: 18,
     paddingVertical: 16,
     ...FONTS.body3,
-    color: COLORS.black,
-    backgroundColor: COLORS.white,
   },
   textArea: {
     minHeight: 88,
     textAlignVertical: 'top',
     paddingTop: 16,
   },
-  disabledInput: {
-    backgroundColor: COLORS.lightGray2,
-    color: COLORS.gray2,
-  },
+  disabledInput: {},
   helperText: {
     ...FONTS.body4,
-    color: COLORS.gray2,
     lineHeight: 20,
   },
   pickerContainer: {
     borderWidth: 1,
-    borderColor: COLORS.transparentPrimary2,
     borderRadius: 14,
-    backgroundColor: COLORS.white,
     overflow: 'hidden',
   },
   picker: {
     width: '100%',
-    backgroundColor: COLORS.white,
-    color: COLORS.black,
   },
   pickList: {
     borderWidth: 1,
-    borderColor: COLORS.transparentPrimary2,
     borderRadius: 14,
     overflow: 'hidden',
     marginBottom: 8,
@@ -762,17 +806,14 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray1,
   },
   pickRowTitle: {
     ...FONTS.body3,
-    color: COLORS.black,
     fontWeight: '600',
     marginBottom: 2,
   },
   pickRowSub: {
     ...FONTS.body4,
-    color: COLORS.gray2,
   },
   inlineLoading: {
     flexDirection: 'row',
@@ -781,7 +822,6 @@ const styles = StyleSheet.create({
   },
   inlineLoadingText: {
     ...FONTS.body4,
-    color: COLORS.gray2,
     marginLeft: 8,
   },
   buttonDisabled: {

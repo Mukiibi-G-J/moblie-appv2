@@ -1,4 +1,5 @@
 import React, {useState, useEffect, useMemo} from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   View,
   Text,
@@ -15,6 +16,7 @@ import {
   ImageSourcePropType,
 } from 'react-native';
 import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
+import {useScreenTopInset} from '../../hooks/useScreenTopInset';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import {QuickIconPressable, SearchableSelectModal} from '../../Components';
 import {
@@ -65,6 +67,7 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
   const isEditMode = !!payment;
   const {colors} = useTheme();
   const insets = useSafeAreaInsets();
+  const topInset = useScreenTopInset();
   const canSave =
     (isEditMode && canEdit) || (!isEditMode && canCreate);
 
@@ -420,7 +423,7 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
         if (formData.amount > remainingAmount) {
           Alert.alert(
             'Validation Error',
-            `Payment amount (UGX ${formData.amount.toLocaleString()}) cannot exceed the selected invoice remaining amount (UGX ${remainingAmount.toLocaleString()})`,
+            `Payment amount (${formatCurrencyCompact(formData.amount)}) cannot exceed the selected invoice remaining amount (${formatCurrencyCompact(remainingAmount)})`,
           );
           return;
         }
@@ -519,12 +522,12 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
     if (formData.account_type === 'Customer') {
       return customerLedgerEntries.map(entry => ({
         id: entry.id,
-        label: `${entry.document_no} - UGX ${Math.abs(entry.remaining_amount).toLocaleString()}`,
+        label: `${entry.document_no} - ${formatCurrencyCompact(Math.abs(entry.remaining_amount))}`,
       }));
     } else if (formData.account_type === 'Vendor') {
       return vendorLedgerEntries.map(entry => ({
         id: entry.id,
-        label: `${entry.document_no} - UGX ${Math.abs(entry.remaining_amount).toLocaleString()}`,
+        label: `${entry.document_no} - ${formatCurrencyCompact(Math.abs(entry.remaining_amount))}`,
       }));
     }
     return [];
@@ -640,9 +643,7 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
     );
   }, [formData.applies_to_object_id, ledgerEntryOptions]);
 
-  const previewAmountLabel = `UGX ${(formData.amount || 0).toLocaleString('en-US', {
-    maximumFractionDigits: 0,
-  })}`;
+  const previewAmountLabel = formatCurrencyCompact(formData.amount || 0);
 
   const previewAccountLabel =
     selectedAccountLabel ||
@@ -695,9 +696,9 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
         style={[styles.pageRoot, payTheme.pageRoot]}>
         <SafeAreaView
           style={[styles.safeArea, payTheme.safeArea]}
-          edges={['top', 'left', 'right']}>
+          edges={['left', 'right']}>
           <View style={[styles.page, payTheme.page]}>
-            <View style={[styles.pageHeader, payTheme.pageHeader]}>
+            <View style={[styles.pageHeader, payTheme.pageHeader, {paddingTop: topInset}]}>
               <QuickIconPressable
                 onPress={onClose}
                 style={styles.headerIconButton}
@@ -925,7 +926,7 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
                       payTheme.fieldLabel,
                       styles.fieldLabelSpaced,
                     ]}>
-                    Amount (UGX) *
+                    {formatCurrencyLabel('Amount')} *
                   </Text>
                   <TextInput
                     style={[
@@ -1136,7 +1137,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'ios' ? 4 : 8,
     paddingBottom: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.lightGray1,

@@ -8,6 +8,25 @@ export const LOGIN_DRAFT_LOGIN_METHOD = '@zentro_login_draft_login_method';
 
 export type LoginDraftMethod = 'email' | 'phone';
 
+/** Pick email vs phone tab from the stored credential (not stale tab preference). */
+export function resolveLoginMethodFromCredential(
+  credential: string,
+  storedMethod?: LoginDraftMethod | null,
+): LoginDraftMethod {
+  const value = credential.trim();
+  if (!value) {
+    return storedMethod === 'phone' ? 'phone' : 'email';
+  }
+  if (value.includes('@')) {
+    return 'email';
+  }
+  const digits = value.replace(/\D/g, '');
+  if (digits.length >= 9) {
+    return 'phone';
+  }
+  return storedMethod === 'phone' ? 'phone' : 'email';
+}
+
 /** After company creation — pre-fill sign-in with the slug + email from signup. */
 export async function seedLoginCredentialsAfterSignup(
   companyName: string,
@@ -19,6 +38,7 @@ export async function seedLoginCredentialsAfterSignup(
   await AsyncStorage.multiSet([
     [LOGIN_DRAFT_TENANT, schema],
     [LOGIN_DRAFT_EMAIL, normalizedEmail],
+    [LOGIN_DRAFT_LOGIN_METHOD, 'email'],
   ]);
   await AsyncStorage.removeItem(LOGIN_DRAFT_PASSWORD);
 }

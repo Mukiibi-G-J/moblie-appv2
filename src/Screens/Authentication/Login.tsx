@@ -20,31 +20,20 @@ import CustomPhoneInput, {
   UGANDA_DIAL_CODE,
 } from '../../Components/CustomPhoneInput';
 import {COLORS} from '../../constants';
-import {authService} from '../../services/auth.services';
 import {restaurantCompanyLookup} from '../../services/restaurantPinApi';
 import Toast from 'react-native-toast-message';
-import {jwtDecode} from 'jwt-decode';
 import {RootStackParamList} from '../../@types/types.dto';
-import {useAppContext, AppContextType} from '../../context/Store';
-import {DecodedToken} from '../../types/auth';
-import {shouldOfferRestaurantPinFromToken} from '../../utils/restaurantPinOffer';
-import {getRestaurantPinStatus} from '../../services/restaurantPinApi';
-import {
-  setPinSetupPending,
-  RESTAURANT_SHOW_PIN_SETUP_IMMEDIATE_KEY,
-} from '../../storage/restaurantDeviceStorage';
-import {
-  getEmail,
-  getTenant,
-  setVerifiedEmail,
-} from '../../utils/tenant';
+import {useAppContext} from '../../context/Store';
+import {getEmail, getTenant} from '../../utils/tenant';
 import {
   LOGIN_DRAFT_TENANT,
   LOGIN_DRAFT_EMAIL,
   LOGIN_DRAFT_PASSWORD,
   LOGIN_DRAFT_LOGIN_METHOD,
+  resolveLoginMethodFromCredential,
   type LoginDraftMethod,
 } from '../../utils/loginCredentials';
+import {loginAndRouteAfterCredentials} from '../../utils/postAuthNavigation';
 import {showAuthSupportAlert} from '../../utils/authSupport';
 import {radii} from '../../design-system/theme';
 import {authOnboarding} from '../../design-system/authOnboardingTokens';
@@ -60,21 +49,6 @@ type LoginNav = NativeStackNavigationProp<RootStackParamList, 'SignIn'>;
 const emailLooksValid = (value: string) => /\S+@\S+\.\S+/.test(value.trim());
 
 const E164_RE = /^\+[1-9]\d{1,14}$/;
-
-function inferLoginMethod(value: string): LoginMethod {
-  const v = value.trim();
-  if (!v) {
-    return 'email';
-  }
-  if (v.includes('@')) {
-    return 'email';
-  }
-  const digits = v.replace(/\D/g, '');
-  if (digits.length >= 9) {
-    return 'phone';
-  }
-  return 'email';
-}
 
 function nationalFromStoredPhone(value: string): string {
   let d = value.replace(/\D/g, '');
@@ -146,6 +120,9 @@ const Login = () => {
 
   useFocusEffect(
     useCallback(() => {
+      if (loading) {
+        return;
+      }
       let cancelled = false;
       void (async () => {
         try {
@@ -167,10 +144,12 @@ const Login = () => {
           const p = map[LOGIN_DRAFT_PASSWORD];
 
           let t = storedTenant || map[LOGIN_DRAFT_TENANT]?.trim() || '';
-          let e = storedEmail || map[LOGIN_DRAFT_EMAIL]?.trim() || '';
-          const storedMethod =
-            (map[LOGIN_DRAFT_LOGIN_METHOD] as LoginDraftMethod | undefined) ||
-            inferLoginMethod(e);
+          const draftCredential = map[LOGIN_DRAFT_EMAIL]?.trim() || '';
+          let e = draftCredential || storedEmail;
+          const storedMethod = resolveLoginMethodFromCredential(
+            e,
+            map[LOGIN_DRAFT_LOGIN_METHOD] as LoginDraftMethod | undefined,
+          );
 
           if (t) {
             setTenant(t);
@@ -199,7 +178,7 @@ const Login = () => {
       return () => {
         cancelled = true;
       };
-    }, []),
+    }, [loading]),
   );
 
   const goBackToCredentials = useCallback(() => {
@@ -236,102 +215,38 @@ const Login = () => {
 
     setLoading(true);
     try {
-      const response = await authService.login({
-        tenant: schemaTenant,
-        email: credential,
+      const loginResult = await loginAndRouteAfterCredentials({
+        context: context ?? null,
+        navigation,
+        credential,
         password,
+        tenant: schemaTenant,
       });
-      if (response) {
-        await context?.login({
-          email: credential,
-          password,
-          tenant: schemaTenant,
-        });
 
-        const access = await AsyncStorage.getItem('accessToken');
-        if (!access) {
-          setLoading(false);
-          await saveLoginDraft(true);
-          Toast.show({
-            type: 'error',
-            text1: 'Login failed',
-            text2: 'Could not complete sign-in. Try again.',
-          });
-          return;
-        }
+      if (loginResult === 'otp') {
+        setLoading(false);
+        return;
+      }
 
-        const dec = jwtDecode(access) as DecodedToken;
-        if (dec.verified === false) {
-          const otpEmail = (dec.email || credential).trim();
-          await setVerifiedEmail(false);
-          await AsyncStorage.setItem('email', otpEmail);
-          setLoading(false);
-          Toast.show({
-            type: 'info',
-            text1: 'Verify your account',
-            text2: 'Enter the code sent to your phone.',
-          });
-          navigation.reset({
-            index: 0,
-            routes: [{name: 'Otp', params: {email: otpEmail}}],
-          });
-          return;
-        }
-
-        await setVerifiedEmail(true);
-
+      if (loginResult === 'home') {
+        await clearStoredLoginPassword();
+        await saveLoginDraft(false);
         Toast.show({
           type: 'success',
           text1: 'Login successful',
           text2: 'Redirecting to dashboard...',
         });
-
-        try {
-          if (
-            shouldOfferRestaurantPinFromToken(
-              dec.role_center_modules,
-              dec.enabled_modules,
-              dec.authority,
-            )
-          ) {
-            const status = await getRestaurantPinStatus(access);
-            if (status.eligible && (!status.has_pin || status.pin_expired)) {
-              const willShowBranchPicker =
-                dec.enable_multiple_branches === true &&
-                dec.can_switch_branch !== false;
-              const branchPendingRaw = await AsyncStorage.getItem(
-                'branch.branchSelectionPending',
-              );
-              const branchPending = branchPendingRaw === '1';
-              if (willShowBranchPicker && branchPending) {
-                await setPinSetupPending(true);
-              } else {
-                await AsyncStorage.setItem(
-                  RESTAURANT_SHOW_PIN_SETUP_IMMEDIATE_KEY,
-                  '1',
-                );
-              }
-            }
-          }
-        } catch {
-          /* non-fatal */
-        }
-
-        await clearStoredLoginPassword();
-        await saveLoginDraft(false);
-
-        setTimeout(() => {
-          setLoading(false);
-        }, 5000);
-      } else {
         setLoading(false);
-        await saveLoginDraft(true);
-        Toast.show({
-          type: 'error',
-          text1: 'Login failed',
-          text2: 'Please check your credentials and try again',
-        });
+        return;
       }
+
+      setLoading(false);
+      await saveLoginDraft(true);
+      Toast.show({
+        type: 'error',
+        text1: 'Login failed',
+        text2: 'Please check your credentials and try again',
+      });
     } catch (error: any) {
       console.log(error);
       setLoading(false);

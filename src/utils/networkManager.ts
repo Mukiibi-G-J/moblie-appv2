@@ -28,20 +28,6 @@ class NetworkManager {
     }
 
     private setupAxiosInterceptors() {
-        // Request Interceptor
-        axiosInstance.interceptors.request.use(
-            async config => {
-                const networkState = await NetInfo.fetch();
-                if (!networkState.isConnected) {
-                    throw new Error('No Internet Connection');
-                }
-                return config;
-            },
-            error => {
-                return Promise.reject(error);
-            }
-        );
-
         // Response Interceptor
         axiosInstance.interceptors.response.use(
             response => response,
@@ -63,6 +49,9 @@ class NetworkManager {
     }
 
     private handleApiError(error: any) {
+        if (error?.code === 'SIMULATED_OFFLINE') {
+            return;
+        }
         if (!error.response) {
             // Network error
             Toast.show({

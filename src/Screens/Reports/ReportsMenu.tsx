@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
+import {useScreenTopInset} from '../../hooks/useScreenTopInset';
 import {FONTS, SIZES, icons} from '../../constants';
 import {useTheme} from '../../context/ThemeContext';
 import {useTabContext} from '../../context/Store';
@@ -27,6 +28,7 @@ const ReportsMenu = () => {
   const navigation = useNavigation();
   const {colors} = useTheme();
   const insets = useSafeAreaInsets();
+  const topInset = useScreenTopInset();
   const {canRead} = usePermissions();
   const {selectedTab, setSelectedTab} = useTabContext();
 
@@ -61,7 +63,7 @@ const ReportsMenu = () => {
         style={[
           styles.titleBlock,
           {
-            paddingTop: Math.max(insets.top, 12) + 8,
+            paddingTop: topInset + 8,
             paddingHorizontal: SIZES.padding,
           },
         ]}>

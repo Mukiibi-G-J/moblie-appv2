@@ -6,7 +6,13 @@ import React, {
   useState,
 } from 'react';
 import {
+  formatCurrencyCompact,
+  formatCurrencyLabel,
+  getLocalCurrencyCode,
+} from '../../utils/currency';
+import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Image,
   Platform,
@@ -43,6 +49,7 @@ import {
   getCompanyInfo,
   getSalesInvoice,
   PaymentMethod,
+  reverseSalesInvoice,
   SalesHistorySummary,
   SalesUserSummaryRow,
 } from '../../services/app.services';
@@ -289,6 +296,8 @@ const SalesHistory = () => {
   const [userSummaries, setUserSummaries] = useState<SalesUserSummaryRow[]>([]);
   /** Mirrors web Sales History: User Setup → canViewOnlyTheirSales + ?user= JWT user_id */
   const [restrictToOwnSales, setRestrictToOwnSales] = useState(true);
+  const [canReverseSalesInvoice, setCanReverseSalesInvoice] = useState(false);
+  const [reversing, setReversing] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [showDetail, setShowDetail] = useState(false);
   const [selectedItem, setSelectedItem] = useState<SalesInvoice | null>(null);
@@ -368,9 +377,11 @@ const SalesHistory = () => {
           return;
         }
         setRestrictToOwnSales(setup?.canViewOnlyTheirSales ?? true);
+        setCanReverseSalesInvoice(setup?.canReverseSalesInvoice === true);
       } catch {
         if (!cancelled) {
           setRestrictToOwnSales(true);
+          setCanReverseSalesInvoice(false);
         }
       }
     })();
@@ -719,6 +730,79 @@ const SalesHistory = () => {
     [auth.full_name, auth.username, prepareInvoiceForPrint],
   );
 
+  const runReverseSales = useCallback(
+    async (invoice: SalesInvoice) => {
+      if (invoice.id == null) {
+        return;
+      }
+      setReversing(true);
+      try {
+        const result = await reverseSalesInvoice(
+          invoice.id,
+          'Reversed from Sales History (mobile app)',
+        );
+        Toast.show({
+          type: 'success',
+          text1: 'Invoice reversed',
+          text2: `${result.sales_invoice_no} → Credit memo ${result.credit_memo_no}`,
+        });
+        closeDetail();
+        setHasMore(true);
+        if (page === 1) {
+          loadSales();
+        } else {
+          setPage(1);
+        }
+      } catch (error: any) {
+        const detail =
+          error?.response?.data?.detail ||
+          error?.response?.data?.error ||
+          error?.message ||
+          'Failed to reverse sales invoice';
+        Toast.show({
+          type: 'error',
+          text1: 'Reverse failed',
+          text2: String(detail),
+        });
+      } finally {
+        setReversing(false);
+      }
+    },
+    [loadSales, page],
+  );
+
+  const promptReverseSales = useCallback(
+    (invoice: SalesInvoice) => {
+      if (!canReverseSalesInvoice) {
+        return;
+      }
+      if (!isPostedSale(invoice.status) || invoice.reversed) {
+        Toast.show({
+          type: 'info',
+          text1: 'Not available',
+          text2: 'Only posted, non-reversed invoices can be reversed.',
+        });
+        return;
+      }
+      const amount = formatCurrencyCompact(
+        Number(invoice.total_amount) || 0,
+      );
+      Alert.alert(
+        'Reverse sales invoice',
+        `Reverse invoice ${invoice.invoice_no || '—'} for ${invoice.customer_name || 'Walk-in customer'} (${amount})?\n\nThis creates a credit memo, reverses ledger entries, restores inventory, and marks the invoice as reversed. This cannot be undone.`,
+        [
+          {text: 'Cancel', style: 'cancel'},
+          {
+            text: 'Reverse',
+            style: 'destructive',
+            onPress: () => runReverseSales(invoice),
+          },
+        ],
+      );
+    },
+    [canReverseSalesInvoice, runReverseSales],
+  );
+
   const handleDatePickerChange = (event: any, selectedDate?: Date) => {
     if (Platform.OS === 'android') {
       setIsDatePickerVisible(false);
@@ -1045,7 +1129,7 @@ const SalesHistory = () => {
         ]}>
         <Text style={[styles.summaryLabel, t.summaryLabel]}>Revenue</Text>
         <Text style={[styles.summaryValuePrimary, t.summaryValuePrimary]}>
-          UGX {Math.round(revenue).toLocaleString()}
+          {formatCurrencyCompact(revenue)}
         </Text>
         <Text style={[styles.summarySubtext, t.summarySubtext]}>
           {invoiceCount} invoices
@@ -1075,7 +1159,7 @@ const SalesHistory = () => {
     return (
       <View style={styles.userSection}>
         <Text style={[styles.userSectionTitle, t.summaryLabel]}>
-          Sales by user
+          {restrictToOwnSales ? 'Your sales' : 'Sales by user'}
         </Text>
         <ScrollView
           horizontal
@@ -1089,7 +1173,7 @@ const SalesHistory = () => {
                 {u.user_name || 'Unknown'}
               </Text>
               <Text style={[styles.userChipMeta, t.userChipMeta]}>
-                UGX {Math.round(u.total_sales).toLocaleString()} ·{' '}
+                {formatCurrencyCompact(u.total_sales)} ·{' '}
                 {u.total_invoices} inv.
               </Text>
             </View>
@@ -1165,8 +1249,32 @@ const SalesHistory = () => {
                   <Text style={[styles.detailRowLabel, t.detailLabel]}>
                     Status
                   </Text>
-                  <SalesInvoiceStatusBadge status={displayItem.status} />
+                  {displayItem.reversed ? (
+                    <SalesInvoiceStatusBadge status="Reversed" />
+                  ) : (
+                    <SalesInvoiceStatusBadge status={displayItem.status} />
+                  )}
                 </View>
+              ) : null}
+              {displayItem.reversed ? (
+                <>
+                  {displayItem.reversed_by_user ? (
+                    <Row
+                      label="Reversed by"
+                      value={displayItem.reversed_by_user}
+                      t={t}
+                    />
+                  ) : null}
+                  {displayItem.reversed_date ? (
+                    <Row
+                      label="Reversed on"
+                      value={new Date(
+                        displayItem.reversed_date,
+                      ).toLocaleString()}
+                      t={t}
+                    />
+                  ) : null}
+                </>
               ) : null}
               <Row
                 label="Payment"
@@ -1178,9 +1286,9 @@ const SalesHistory = () => {
               ) : null}
               <Row
                 label="Total"
-                value={`UGX ${Math.round(
+                value={formatCurrencyCompact(
                   Number(displayItem.total_amount) || 0,
-                ).toLocaleString()}`}
+                )}
                 emphasize
                 t={t}
               />
@@ -1203,11 +1311,11 @@ const SalesHistory = () => {
                       </Text>
                     </View>
                     <Text style={[styles.lineMeta, t.detailLabel]}>
-                      Qty {line.quantity} {line.unit_of_measure || 'PCS'} · Unit UGX{' '}
+                      Qty {line.quantity} {line.unit_of_measure || 'PCS'} · Unit {getLocalCurrencyCode()}{' '}
                       {parseFloat(line.unit_price || '0').toLocaleString()}
                     </Text>
                     <Text style={[styles.lineTotal, t.summaryValuePrimary]}>
-                      UGX {parseFloat(line.total_amount || '0').toLocaleString()}
+                      {formatCurrencyCompact(parseFloat(line.total_amount || '0'))}
                     </Text>
                   </View>
                 ))}
@@ -1220,23 +1328,57 @@ const SalesHistory = () => {
                 styles.detailPrintBar,
                 {borderTopColor: colors.border, backgroundColor: colors.surface},
               ]}>
-              <TouchableOpacity
-                style={styles.printReceiptBtn}
-                onPress={() => handlePrintReceipt(displayItem)}
-                disabled={printingReceipt}
-                activeOpacity={0.85}>
-                {printingReceipt ? (
-                  <ActivityIndicator color={COLORS.white} size="small" />
-                ) : (
-                  <>
-                    <Image
-                      source={icons.printer as any}
-                      style={styles.printReceiptBtnIcon}
-                    />
-                    <Text style={styles.printReceiptBtnText}>Print receipt</Text>
-                  </>
-                )}
-              </TouchableOpacity>
+              <View style={styles.detailActionRow}>
+                {canReverseSalesInvoice && !displayItem.reversed ? (
+                  <TouchableOpacity
+                    style={[
+                      styles.reverseInvoiceBtn,
+                      (reversing || printingReceipt) && styles.detailActionBtnDisabled,
+                    ]}
+                    onPress={() => promptReverseSales(displayItem)}
+                    disabled={reversing || printingReceipt}
+                    activeOpacity={0.85}>
+                    {reversing ? (
+                      <ActivityIndicator color={COLORS.white} size="small" />
+                    ) : (
+                      <>
+                        <Image
+                          source={icons.update as any}
+                          style={styles.reverseInvoiceBtnIcon}
+                        />
+                        <Text style={styles.reverseInvoiceBtnText}>
+                          Reverse
+                        </Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                ) : null}
+                {!displayItem.reversed ? (
+                  <TouchableOpacity
+                    style={[
+                      styles.printReceiptBtn,
+                      styles.printReceiptBtnFlex,
+                      (reversing || printingReceipt) && styles.detailActionBtnDisabled,
+                    ]}
+                    onPress={() => handlePrintReceipt(displayItem)}
+                    disabled={printingReceipt || reversing}
+                    activeOpacity={0.85}>
+                    {printingReceipt ? (
+                      <ActivityIndicator color={COLORS.white} size="small" />
+                    ) : (
+                      <>
+                        <Image
+                          source={icons.printer as any}
+                          style={styles.printReceiptBtnIcon}
+                        />
+                        <Text style={styles.printReceiptBtnText}>
+                          Print receipt
+                        </Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                ) : null}
+              </View>
             </View>
           ) : null}
         </View>
@@ -1314,7 +1456,7 @@ const SalesHistory = () => {
               item={item}
               onPress={() => openSaleDetail(item)}
               onPrintPress={
-                isPostedSale(item.status)
+                isPostedSale(item.status) && !item.reversed
                   ? () => handlePrintReceipt(item)
                   : undefined
               }
@@ -1847,6 +1989,33 @@ const styles = StyleSheet.create({
     paddingBottom: SIZES.base,
     borderTopWidth: StyleSheet.hairlineWidth,
   },
+  detailActionRow: {
+    flexDirection: 'row',
+    gap: SIZES.base,
+  },
+  detailActionBtnDisabled: {
+    opacity: 0.65,
+  },
+  reverseInvoiceBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.error,
+    paddingVertical: 14,
+    borderRadius: SIZES.radius,
+  },
+  reverseInvoiceBtnIcon: {
+    width: 20,
+    height: 20,
+    tintColor: COLORS.white,
+    marginRight: 10,
+  },
+  reverseInvoiceBtnText: {
+    ...FONTS.body3,
+    color: COLORS.white,
+    fontWeight: '700',
+  },
   printReceiptBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1854,6 +2023,9 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primary,
     paddingVertical: 14,
     borderRadius: SIZES.radius,
+  },
+  printReceiptBtnFlex: {
+    flex: 1,
   },
   printReceiptBtnIcon: {
     width: 20,

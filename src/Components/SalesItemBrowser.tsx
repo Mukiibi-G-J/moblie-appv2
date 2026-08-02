@@ -1,4 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../utils/currency';
 import {
   ActivityIndicator,
   Alert,
@@ -27,9 +28,9 @@ import {
 import {QuickIconPressable} from './QuickIconPressable';
 import {
   fetchCategories,
-  fetchItems,
   ItemCategory,
 } from '../services/app.services';
+import {listItems} from '../services/itemCatalogService';
 import {
   loadFavoriteGridSlots,
   saveFavoriteGridSlots,
@@ -120,13 +121,10 @@ const getInitials = (value: string) =>
 const formatMoney = (value: number | string | undefined | null) => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
-    return 'UGX 0.00';
+    return formatCurrencyCompact(0);
   }
 
-  return `UGX ${parsed.toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+  return formatCurrencyCompact(parsed);
 };
 
 const SalesItemBrowser: React.FC<Props> = ({
@@ -372,15 +370,15 @@ const SalesItemBrowser: React.FC<Props> = ({
           setLoadingMore(true);
         }
 
-        const response: PaginatedItemsResponse = await fetchItems(
-          pageToLoad,
-          searchQuery,
-          isSearchPanelVisible
+        const response = await listItems({
+          page: pageToLoad,
+          q: searchQuery,
+          categoryId: isSearchPanelVisible
             ? undefined
             : selectedCategoryId
               ? Number(selectedCategoryId) || (selectedCategoryId as any)
               : undefined,
-        );
+        });
 
         const nextItems = Array.isArray(response?.results) ? response.results : [];
         mergeCachedItems(nextItems);
@@ -555,11 +553,10 @@ const SalesItemBrowser: React.FC<Props> = ({
       void (async () => {
         setAddFavoriteLoading(true);
         try {
-          const response: PaginatedItemsResponse = await fetchItems(
-            1,
-            addFavoriteSearchQuery,
-            undefined,
-          );
+          const response = await listItems({
+            page: 1,
+            q: addFavoriteSearchQuery,
+          });
           const list = Array.isArray(response?.results) ? response.results : [];
           setAddFavoriteResults(list);
           mergeCachedItems(list);

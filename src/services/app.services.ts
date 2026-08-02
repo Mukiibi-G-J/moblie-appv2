@@ -560,6 +560,7 @@ function buildSalesHistoryQueryParams(
 /** Fields used from GET /api/user-setup/my-setup/ (UserSetupSerializer). */
 export type MyUserSetupLite = {
   canViewOnlyTheirSales?: boolean;
+  canReverseSalesInvoice?: boolean;
 };
 
 /**
@@ -575,10 +576,13 @@ export const fetchMyUserSetup = async (): Promise<MyUserSetupLite | null> => {
     if (!d || typeof d !== 'object') {
       return null;
     }
-    const v = d.canViewOnlyTheirSales;
+    const own = d.canViewOnlyTheirSales;
+    const reverse = d.canReverseSalesInvoice;
     return {
       canViewOnlyTheirSales:
-        typeof v === 'boolean' ? v : undefined,
+        typeof own === 'boolean' ? own : undefined,
+      canReverseSalesInvoice:
+        typeof reverse === 'boolean' ? reverse : undefined,
     };
   } catch (e) {
     if (!isSubscriptionExpiredError(e)) {
@@ -632,6 +636,32 @@ export const fetchSalesSummary = async (
 /**
  * GET /api/sales/summary/?group_by=user — matches web SalesServices.getSalesUserSummary.
  */
+/** Calendar YYYY-MM-DD in local timezone. */
+export function getLocalDateYmd(d: Date = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Posted sales totals for one user today (web POS: SalesDesktop refreshTodayMySales).
+ */
+export const fetchTodayMySalesForUser = async (
+  userId: number,
+): Promise<SalesUserSummaryRow | null> => {
+  if (!Number.isFinite(userId)) {
+    return null;
+  }
+  const today = getLocalDateYmd();
+  const users = await fetchSalesUserSummary({
+    startDate: today,
+    endDate: today,
+    status: 'Posted',
+  });
+  return users.find(u => u.user_id === userId) ?? null;
+};
+
 export const fetchSalesUserSummary = async (
   filters?: Omit<SalesHistoryListFilters, 'page' | 'pageSize'>,
 ): Promise<SalesUserSummaryRow[]> => {
@@ -847,6 +877,29 @@ export const getSalesInvoice = async (invoiceId: number) => {
   }
 };
 
+export type ReverseSalesInvoiceResult = {
+  message: string;
+  sales_invoice_no: string;
+  credit_memo_no: string;
+  credit_memo_id: number;
+  status: string;
+  transaction_no: string;
+};
+
+/** Reverse a posted sales invoice (web parity: SalesServices.reverseSales). */
+export const reverseSalesInvoice = async (
+  salesId: number,
+  reason?: string,
+): Promise<ReverseSalesInvoiceResult> => {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant) || undefined;
+  const response = await axiosInstance.post(
+    `/api/sales/${salesId}/reverse_sales/`,
+    reason ? {reason} : {},
+  );
+  return response.data;
+};
+
 // Update sales invoice (for deleting drafts or full updates)
 // Matches web frontend pattern: sends id and system_id in the data object
 export const updateSalesInvoice = async (
@@ -907,6 +960,7 @@ export const fetchItems = async (
     const axiosInstance = createAxiosInstance(tenant) || undefined;
     const params: any = {
         page,
+        page_size: 20,
         q: searchQuery.trim(),
     };
 
@@ -1427,6 +1481,23 @@ export const updateItem = async (itemId: string | number, itemData: Item) => {
   }
 };
 
+export const deleteItem = async (item: Pick<Item, 'system_id' | 'no' | 'id'>) => {
+  try {
+    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+    const axiosInstance = createAxiosInstance(tenant) || undefined;
+
+    const response = await axiosInstance.post(`/api/items/upsert/`, {
+      system_id: item.system_id || item.no,
+      no: item.no,
+      item_id: item.id,
+      deleted: true,
+    });
+    return response;
+  } catch (error) {
+    throw error;
+  }
+};
+
 // Upload image for an item
 export const uploadItemImage = async (
   itemId: string | number,
@@ -1663,6 +1734,27 @@ export type UpdateCompanyInfoPayload = {
   address?: string;
   city?: string;
   country?: string;
+  localCurrencyCode?: string;
+};
+
+export type CurrencyCatalogEntry = {
+  code: string;
+  name: string;
+  minor_units: number;
+};
+
+export const getCurrencies = async (): Promise<CurrencyCatalogEntry[]> => {
+  try {
+    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+    const axiosInstance = createAxiosInstance(tenant) || undefined;
+    const response = await axiosInstance.get<{results: CurrencyCatalogEntry[]}>(
+      '/api/financials/currencies/',
+    );
+    return response.data?.results ?? [];
+  } catch (error: any) {
+    console.error('Error fetching currencies:', error);
+    throw error;
+  }
 };
 
 export type CompanyInfoApiResponse = {
@@ -1760,6 +1852,12 @@ export const upsertItemJournal = async (
   const api = await getAxiosInstance();
   const response = await api.post('/api/item-journals/upsert/', payload);
   return response;
+};
+
+/** Delete an open journal line (parity with web apiDeleteItemJournal). */
+export const deleteItemJournal = async (id: number) => {
+  const api = await getAxiosInstance();
+  return api.delete(`/api/item-journals/${id}/`);
 };
 
 export type UnitOfMeasure = {
@@ -1931,146 +2029,75 @@ export interface KPIMetrics {
   total_products: number;
 }
 
-/**
- * Fetch KPI metrics for dashboard
- */
-export const fetchKPIMetrics = async (): Promise<KPIMetrics | null> => {
+export type TopSellingItem = {
+  item_no: string;
+  name: string;
+  quantity: number;
+  total: number;
+};
+
+type HomeSnapshotDayTotals = {
+  total_sales: number;
+  total_products: number;
+  total_invoices: number;
+};
+
+export type HomeSnapshotResponse = {
+  today: HomeSnapshotDayTotals;
+  yesterday: HomeSnapshotDayTotals;
+  top_selling_items: TopSellingItem[];
+  total_catalog_products: number;
+};
+
+function growthPercent(current: number, previous: number): number {
+  if (previous <= 0) return 0;
+  return ((current - previous) / previous) * 100;
+}
+
+export function mapHomeSnapshotToKPI(
+  snapshot: HomeSnapshotResponse,
+): KPIMetrics {
+  const todayRevenue = snapshot.today.total_sales;
+  const yesterdayRevenue = snapshot.yesterday.total_sales;
+  const todayOrders = snapshot.today.total_invoices;
+  const yesterdayOrders = snapshot.yesterday.total_invoices;
+
+  return {
+    today_revenue: todayRevenue,
+    yesterday_revenue: yesterdayRevenue,
+    revenue_growth: growthPercent(todayRevenue, yesterdayRevenue),
+    today_orders: todayOrders,
+    yesterday_orders: yesterdayOrders,
+    order_growth: growthPercent(todayOrders, yesterdayOrders),
+    today_products_sold: snapshot.today.total_products,
+    total_products: snapshot.total_catalog_products,
+  };
+}
+
+export const fetchHomeSnapshot = async (
+  topItemsLimit: number = 5,
+): Promise<HomeSnapshotResponse | null> => {
   try {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
     const api = createAxiosInstance(tenant) || axiosInstance;
-    
-    // Get today's date
-    const today = new Date().toISOString().split('T')[0];
-    const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-    
-    // Fetch today's sales (include both Posted and Open status)
-    const todayResponse = await api.get('/api/sales/', {
-      params: {
-        document_date__gte: today,
-        document_date__lte: today,
-        // Don't filter by status - get all sales for today
-      },
+
+    const response = await api.get('/api/sales/home-snapshot/', {
+      params: { top_items_limit: topItemsLimit },
     });
-    
-    // Fetch yesterday's sales (include both Posted and Open status)
-    const yesterdayResponse = await api.get('/api/sales/', {
-      params: {
-        document_date__gte: yesterday,
-        document_date__lte: yesterday,
-        // Don't filter by status - get all sales for yesterday
-      },
-    });
-    
-    // Filter to only include Posted sales (or Open if Posted doesn't exist)
-    const filterPostedSales = (sales: any[]) => {
-      return sales.filter(sale => {
-        // Include Posted sales
-        if (sale.status === 'Posted') return true;
-        // Include Open sales if no Posted sales exist
-        if (sale.status === 'Open') return true;
-        return false;
-      });
-    };
-    
-    const todaySales = filterPostedSales(todayResponse?.data?.results || []);
-    const yesterdaySales = filterPostedSales(yesterdayResponse?.data?.results || []);
-    
-    // Debug logging
-    console.log('Today sales count:', todaySales.length);
-    console.log('Yesterday sales count:', yesterdaySales.length);
-    if (todaySales.length > 0) {
-      console.log('Sample today sale:', {
-        id: todaySales[0].id,
-        total_amount: todaySales[0].total_amount,
-        status: todaySales[0].status,
-        has_lines: !!todaySales[0].lines,
-        lines_count: todaySales[0].lines?.length || 0,
-      });
-    }
-    
-    // Helper function to get total amount from sale
-    const getSaleTotal = (sale: any): number => {
-      // First try to use total_amount directly from sale object
-      if (sale.total_amount !== undefined && sale.total_amount !== null) {
-        return typeof sale.total_amount === 'string' 
-          ? parseFloat(sale.total_amount) || 0 
-          : sale.total_amount;
-      }
-      
-      // Fall back to calculating from lines if total_amount is not available
-      if (sale.lines && Array.isArray(sale.lines)) {
-        return sale.lines.reduce((lineSum: number, line: any) => {
-          const lineAmount = line.total_amount || 0;
-          return lineSum + (typeof lineAmount === 'string' 
-            ? parseFloat(lineAmount) || 0 
-            : lineAmount);
-        }, 0);
-      }
-      
-      return 0;
-    };
-    
-    // Calculate today's revenue and orders
-    const todayRevenue = todaySales.reduce((sum: number, sale: any) => {
-      const saleTotal = getSaleTotal(sale);
-      return sum + saleTotal;
-    }, 0);
-    
-    const todayOrders = todaySales.length;
-    
-    // Debug logging
-    console.log('Today revenue calculated:', todayRevenue);
-    console.log('Today orders:', todayOrders);
-    
-    // Calculate yesterday's revenue and orders
-    const yesterdayRevenue = yesterdaySales.reduce((sum: number, sale: any) => {
-      return sum + getSaleTotal(sale);
-    }, 0);
-    
-    const yesterdayOrders = yesterdaySales.length;
-    
-    // Calculate products sold today
-    const todayProductsSold = todaySales.reduce((sum: number, sale: any) => {
-      if (sale.lines && Array.isArray(sale.lines)) {
-        return sum + sale.lines.reduce((lineSum: number, line: any) => {
-          const qty = line.quantity || 0;
-          return lineSum + (typeof qty === 'string' ? parseFloat(qty) || 0 : qty);
-        }, 0);
-      }
-      return sum;
-    }, 0);
-    
-    // Calculate growth percentages
-    const revenueGrowth = yesterdayRevenue > 0 
-      ? ((todayRevenue - yesterdayRevenue) / yesterdayRevenue) * 100 
-      : 0;
-    
-    const orderGrowth = yesterdayOrders > 0 
-      ? ((todayOrders - yesterdayOrders) / yesterdayOrders) * 100 
-      : 0;
-    
-    // Fetch total products count
-    const itemsResponse = await api.get('/api/items/', {
-      params: { page: 1 },
-    });
-    const totalProducts = itemsResponse?.data?.count || 0;
-    
-    return {
-      today_revenue: todayRevenue,
-      yesterday_revenue: yesterdayRevenue,
-      revenue_growth: revenueGrowth,
-      today_orders: todayOrders,
-      yesterday_orders: yesterdayOrders,
-      order_growth: orderGrowth,
-      today_products_sold: todayProductsSold,
-      total_products: totalProducts,
-    };
+
+    return response?.data ?? null;
   } catch (error: any) {
     if (!isSubscriptionExpiredError(error)) {
-      console.error('Error fetching KPI metrics:', error);
+      console.error('Error fetching home snapshot:', error);
     }
     return null;
   }
+};
+
+export const fetchKPIMetrics = async (): Promise<KPIMetrics | null> => {
+  const snapshot = await fetchHomeSnapshot();
+  if (!snapshot) return null;
+  return mapHomeSnapshotToKPI(snapshot);
 };
 
 export type RecentTransactionsFetchOptions = {
@@ -2094,6 +2121,7 @@ export const fetchRecentTransactions = async (
       page_size: pageSize,
       ordering: '-created_at',
       status: 'Posted',
+      exclude_reversed: 'true',
     };
     const uid = options?.userId;
     if (uid != null && Number.isFinite(uid)) {
@@ -2170,60 +2198,13 @@ export const fetchOutstandingReceivables = async () => {
 };
 
 /**
- * Fetch today's top selling items
+ * Fetch today's top selling items (via home snapshot endpoint).
  */
 export const fetchTopSellingItems = async (limit: number = 5) => {
   try {
-    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const api = createAxiosInstance(tenant) || axiosInstance;
-    
-    const today = new Date().toISOString().split('T')[0];
-    
-    // Fetch today's sales
-    const response = await api.get('/api/sales/', {
-      params: {
-        document_date__gte: today,
-        document_date__lte: today,
-      },
-    });
-    
-    const sales = response?.data?.results || [];
-    
-    // Aggregate items sold today
-    const itemCounts: { [key: string]: { name: string; quantity: number; total: number } } = {};
-    
-    sales.forEach((sale: any) => {
-      if (sale.lines && Array.isArray(sale.lines)) {
-        sale.lines.forEach((line: any) => {
-          const itemKey = line.item_no || line.item || 'unknown';
-          const itemName = line.item_name || 'Unknown Item';
-          const qty = typeof line.quantity === 'string' ? parseFloat(line.quantity) || 0 : (line.quantity || 0);
-          const total = typeof line.total_amount === 'string' ? parseFloat(line.total_amount) || 0 : (line.total_amount || 0);
-          
-          if (!itemCounts[itemKey]) {
-            itemCounts[itemKey] = {
-              name: itemName,
-              quantity: 0,
-              total: 0,
-            };
-          }
-          
-          itemCounts[itemKey].quantity += qty;
-          itemCounts[itemKey].total += total;
-        });
-      }
-    });
-    
-    // Convert to array and sort by quantity
-    const topItems = Object.entries(itemCounts)
-      .map(([key, value]) => ({
-        item_no: key,
-        ...value,
-      }))
-      .sort((a, b) => b.quantity - a.quantity)
-      .slice(0, limit);
-    
-    return topItems;
+    const snapshot = await fetchHomeSnapshot(limit);
+    if (!snapshot?.top_selling_items) return [];
+    return snapshot.top_selling_items.slice(0, limit);
   } catch (error: any) {
     if (!isSubscriptionExpiredError(error)) {
       console.error('Error fetching top selling items:', error);

@@ -1,4 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   ActivityIndicator,
   FlatList,
@@ -553,7 +554,7 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
 
   const formatCurrency = (value?: number) => {
     const amount = typeof value === 'number' ? value : 0;
-    return `UGX ${Math.round(amount).toLocaleString()}`;
+    return formatCurrencyCompact(amount);
   };
 
   const renderSummaryCard = (

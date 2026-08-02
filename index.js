@@ -35,7 +35,20 @@ if (typeof global.atob !== 'function') {
 }
 
 import {AppRegistry} from 'react-native';
+import messaging from '@react-native-firebase/messaging';
 import App from './App';
 import {name as appName} from './app.json';
+import {displayLocalNotification} from './src/services/NotificationService';
+
+messaging().setBackgroundMessageHandler(async remoteMessage => {
+  const title =
+    remoteMessage.notification?.title ?? remoteMessage.data?.title ?? 'Zentro';
+  const body =
+    remoteMessage.notification?.body ?? remoteMessage.data?.body ?? '';
+
+  if (title || body) {
+    await displayLocalNotification(String(title), String(body), remoteMessage.data as Record<string, string> | undefined);
+  }
+});
 
 AppRegistry.registerComponent(appName, () => App);

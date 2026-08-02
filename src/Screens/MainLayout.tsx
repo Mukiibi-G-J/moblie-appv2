@@ -7,6 +7,8 @@ import {PAGE_NAMES} from '../constants/pageNames';
 import {usePermissions} from '../hooks/usePermissions';
 import {useTabContext} from '../context/Store';
 import MainBottomTabBar from '../Components/MainBottomTabBar';
+import {CatalogSyncModal} from '../Components/CatalogSyncModal';
+import {useOfflineBootstrap} from '../hooks/useOfflineBootstrap';
 import Home from './Home/Home';
 import Cart from './Cart/Cart';
 import MoreMenu from './More/MoreMenu';
@@ -21,6 +23,7 @@ const MemoMoreMenu = React.memo(MoreMenu);
 
 const MainLayout: React.FC<MainLayoutProps> = ({navigation}) => {
   const {colors} = useTheme();
+  const {syncModalVisible, syncMessage, syncProgress} = useOfflineBootstrap();
   const {selectedTab, setSelectedTab} = useTabContext();
   const {isModuleVisible, hasAnyPageAccess} = usePermissions();
   const showMakeSaleTab =
@@ -69,6 +72,11 @@ const MainLayout: React.FC<MainLayoutProps> = ({navigation}) => {
 
   return (
     <View style={[styles.root, {backgroundColor: colors.background}]}>
+      <CatalogSyncModal
+        visible={syncModalVisible}
+        message={syncMessage}
+        progress={syncProgress}
+      />
       <View style={styles.content}>
         {bottomTabs.map(item => (
           <View

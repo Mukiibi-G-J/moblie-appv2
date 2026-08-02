@@ -1,4 +1,5 @@
 import React, {useEffect, useState} from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   View,
   Text,
@@ -193,7 +194,7 @@ const LoanRepaymentFormModal: React.FC<Props> = ({
               {errors.loan && <Text style={styles.error}>{errors.loan}</Text>}
             </View>
             {renderInput(
-              'Amount Paid (UGX) *',
+              formatCurrencyLabel('Amount Paid') + ' *',
               form.amount_paid?.toString() || '',
               text =>
                 setForm(prev => ({

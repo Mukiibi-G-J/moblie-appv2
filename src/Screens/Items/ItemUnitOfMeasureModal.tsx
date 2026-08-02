@@ -1,4 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   View,
   Text,
@@ -396,7 +397,7 @@ const ItemUnitOfMeasureModal: React.FC<ItemUnitOfMeasureModalProps> = ({
                     </Text>
                     <Text style={[styles.rowMeta, theme.rowMeta]}>
                       Qty per unit: {row.quantity_per_unit}
-                      {row.price != null ? ` · Price: UGX ${Math.round(Number(row.price))}` : ''}
+                      {row.price != null ? ` · Price: ${formatCurrencyCompact(Math.round(Number(row.price)))}` : ''}
                     </Text>
                   </View>
                   {row.default ? (
@@ -513,7 +514,7 @@ const ItemUnitOfMeasureModal: React.FC<ItemUnitOfMeasureModalProps> = ({
                   placeholderTextColor={colors.placeholder}
                 />
 
-                <Text style={[styles.fieldLabel, theme.label]}>Price (UGX, optional)</Text>
+                <Text style={[styles.fieldLabel, theme.label]}>{formatCurrencyLabel('Price')}, optional</Text>
                 <TextInput
                   style={[styles.input, theme.input]}
                   value={form.price}

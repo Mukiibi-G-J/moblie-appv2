@@ -23,6 +23,7 @@ import {
   CustomerFormValues,
 } from '../../@types/customer';
 import {QuickIconPressable} from '../../Components';
+import {useScreenTopInset} from '../../hooks/useScreenTopInset';
 import {CustomerServices} from '../../services/CustomerServices';
 import Toast from 'react-native-toast-message';
 import Contacts from 'react-native-contacts';
@@ -59,6 +60,7 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
 }) => {
   const isEditMode = !!customer;
   const isGeneralCustomer = isProtectedGeneralCustomer(customer);
+  const topInset = useScreenTopInset();
 
   // Form state
   const [formData, setFormData] = useState<CustomerFormValues>({
@@ -347,7 +349,7 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
       transparent={false}
       onRequestClose={onClose}>
       <View style={styles.pageRoot}>
-        <View style={styles.pageHeader}>
+        <View style={[styles.pageHeader, {paddingTop: topInset}]}>
           <QuickIconPressable
             onPress={onClose}
             style={styles.headerIconButton}
@@ -642,7 +644,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'ios' ? 12 : 16,
     paddingBottom: 8,
   },
   headerIconButton: {

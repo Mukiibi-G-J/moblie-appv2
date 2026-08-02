@@ -1,4 +1,5 @@
 import React, {useState, useEffect, useCallback, useRef} from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   View,
   Text,
@@ -39,7 +40,7 @@ const isProtectedGeneralVendor = (vendor?: Vendor | null) =>
 const Suppliers: React.FC = () => {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
-  const {colors} = useTheme();
+  const {colors, isDark} = useTheme();
   const {canRead, canCreate, canEdit, canDelete} = usePermissions();
   const PAGE_NAME = PAGE_NAMES.SUPPLIERS;
 
@@ -282,15 +283,21 @@ const Suppliers: React.FC = () => {
 
   const renderEmptyState = () => (
     <View style={styles.emptyContainer}>
-      <View style={styles.emptyIconContainer}>
+      <View
+        style={[
+          styles.emptyIconContainer,
+          {backgroundColor: colors.backButtonBg},
+        ]}>
         <Image
           source={icons.cross}
           style={styles.emptyIconImage}
           resizeMode="contain"
         />
       </View>
-      <Text style={styles.emptyText}>No suppliers found</Text>
-      <Text style={styles.emptySubtext}>
+      <Text style={[styles.emptyText, {color: colors.textPrimary}]}>
+        No suppliers found
+      </Text>
+      <Text style={[styles.emptySubtext, {color: colors.textSecondary}]}>
         {hasActiveFilters
           ? 'Try adjusting your filters or search query.'
           : canCreate(PAGE_NAME)
@@ -372,9 +379,13 @@ const Suppliers: React.FC = () => {
     return (
       <View style={[styles.container, {backgroundColor: colors.background}]}>
         {renderTopHeader(false)}
-        <View style={styles.accessDeniedContainer}>
+        <View
+          style={[
+            styles.accessDeniedContainer,
+            {backgroundColor: colors.card, borderColor: colors.border},
+          ]}>
           <Text style={styles.accessDeniedTitle}>Access Denied</Text>
-          <Text style={styles.accessDeniedMessage}>
+          <Text style={[styles.accessDeniedMessage, {color: colors.textSecondary}]}>
             You don't have permission to view suppliers.
           </Text>
         </View>
@@ -388,18 +399,25 @@ const Suppliers: React.FC = () => {
         {renderTopHeader(true)}
 
         <View style={styles.searchContainer}>
-        <View style={styles.searchInputContainer}>
+        <View
+          style={[
+            styles.searchInputContainer,
+            {
+              backgroundColor: colors.inputBackground,
+              borderColor: colors.border,
+            },
+          ]}>
           <View style={styles.searchIconContainer}>
             <Image
               source={icons.search}
-              style={styles.searchIcon}
+              style={[styles.searchIcon, {tintColor: colors.iconMuted}]}
               resizeMode="contain"
             />
           </View>
           <TextInput
-            style={styles.searchInput}
+            style={[styles.searchInput, {color: colors.textPrimary}]}
             placeholder="Search suppliers..."
-            placeholderTextColor={COLORS.gray3}
+            placeholderTextColor={colors.placeholder}
             value={searchQuery}
             onChangeText={setSearchQuery}
           />
@@ -412,7 +430,12 @@ const Suppliers: React.FC = () => {
         <TouchableOpacity
           style={[
             styles.filterButton,
-            hasActiveFilters && styles.filterButtonActive,
+            {
+              backgroundColor: hasActiveFilters
+                ? colors.backButtonBg
+                : colors.inputBackground,
+              borderColor: hasActiveFilters ? COLORS.primary2 : colors.border,
+            },
           ]}
           onPress={() => setFilterModalVisible(true)}
           activeOpacity={0.7}>
@@ -420,7 +443,7 @@ const Suppliers: React.FC = () => {
             source={icons.filter}
             style={[
               styles.filterIcon,
-              hasActiveFilters && styles.filterIconActive,
+              {tintColor: hasActiveFilters ? COLORS.primary2 : colors.iconMuted},
             ]}
             resizeMode="contain"
           />
@@ -432,7 +455,9 @@ const Suppliers: React.FC = () => {
       {loading && page === 1 ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={COLORS.primary2} />
-          <Text style={styles.loadingText}>Loading suppliers...</Text>
+          <Text style={[styles.loadingText, {color: colors.textSecondary}]}>
+            Loading suppliers...
+          </Text>
         </View>
       ) : (
         <FlatList
@@ -487,16 +512,26 @@ const Suppliers: React.FC = () => {
         transparent={true}
         onRequestClose={() => setFilterModalVisible(false)}>
         <View style={styles.filterModalOverlay}>
-          <View style={styles.filterModalContent}>
-            <View style={styles.filterModalHeader}>
-              <Text style={styles.filterModalTitle}>Filter Suppliers</Text>
+          <View
+            style={[
+              styles.filterModalContent,
+              {backgroundColor: colors.card},
+            ]}>
+            <View
+              style={[
+                styles.filterModalHeader,
+                {borderBottomColor: colors.border},
+              ]}>
+              <Text style={[styles.filterModalTitle, {color: colors.textPrimary}]}>
+                Filter Suppliers
+              </Text>
               <QuickIconPressable
                 onPress={() => setFilterModalVisible(false)}
                 style={styles.filterCloseButton}
                 accessibilityLabel="Close">
                 <Image
                   source={icons.cross}
-                  style={styles.filterCloseIcon}
+                  style={[styles.filterCloseIcon, {tintColor: colors.iconMuted}]}
                   resizeMode="contain"
                 />
               </QuickIconPressable>
@@ -505,11 +540,17 @@ const Suppliers: React.FC = () => {
             <ScrollView
               style={styles.filterScrollView}
               showsVerticalScrollIndicator={false}>
-              <View style={styles.filterSection}>
-                <Text style={styles.filterSectionLabel}>
+              <View
+                style={[
+                  styles.filterSection,
+                  {borderBottomColor: colors.border},
+                ]}>
+                <Text
+                  style={[styles.filterSectionLabel, {color: colors.textPrimary}]}>
                   Search Suppliers
                 </Text>
-                <Text style={styles.filterSectionSubtext}>
+                <Text
+                  style={[styles.filterSectionSubtext, {color: colors.textSecondary}]}>
                   Use the search bar above to find suppliers by name, phone, or
                   ID
                 </Text>
@@ -517,12 +558,25 @@ const Suppliers: React.FC = () => {
             </ScrollView>
 
             {/* Filter Actions */}
-            <View style={styles.filterActions}>
+            <View
+              style={[
+                styles.filterActions,
+                {borderTopColor: colors.border},
+              ]}>
               <TouchableOpacity
-                style={[styles.filterActionButton, styles.clearFilterButton]}
+                style={[
+                  styles.filterActionButton,
+                  styles.clearFilterButton,
+                  {
+                    backgroundColor: colors.screenMuted,
+                    borderColor: colors.border,
+                  },
+                ]}
                 onPress={handleClearFilter}
                 activeOpacity={0.7}>
-                <Text style={styles.clearFilterText}>Clear All</Text>
+                <Text style={[styles.clearFilterText, {color: colors.textSecondary}]}>
+                  Clear All
+                </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.filterActionButton, styles.applyFilterButton]}
@@ -541,9 +595,17 @@ const Suppliers: React.FC = () => {
         transparent={true}
         onRequestClose={() => setLedgerModalVisible(false)}>
         <View style={styles.filterModalOverlay}>
-          <View style={styles.filterModalContent}>
-            <View style={styles.filterModalHeader}>
-              <Text style={styles.filterModalTitle}>
+          <View
+            style={[
+              styles.filterModalContent,
+              {backgroundColor: colors.card},
+            ]}>
+            <View
+              style={[
+                styles.filterModalHeader,
+                {borderBottomColor: colors.border},
+              ]}>
+              <Text style={[styles.filterModalTitle, {color: colors.textPrimary}]}>
                 {selectedLedgerVendor?.name || 'Supplier'} balance
               </Text>
               <QuickIconPressable
@@ -552,16 +614,23 @@ const Suppliers: React.FC = () => {
                 accessibilityLabel="Close">
                 <Image
                   source={icons.cross}
-                  style={styles.filterCloseIcon}
+                  style={[styles.filterCloseIcon, {tintColor: colors.iconMuted}]}
                   resizeMode="contain"
                 />
               </QuickIconPressable>
             </View>
 
-            <View style={styles.ledgerSummaryCard}>
+            <View
+              style={[
+                styles.ledgerSummaryCard,
+                {
+                  backgroundColor: isDark ? colors.screenMuted : COLORS.transparentPrimary,
+                  borderColor: colors.border,
+                },
+              ]}>
               <Text style={styles.ledgerSummaryLabel}>Outstanding balance</Text>
               <Text style={styles.ledgerSummaryValue}>
-                UGX{' '}
+                {getLocalCurrencyCode()}{' '}
                 {(parseFloat(selectedLedgerVendor?.balance || '0') || 0)
                   .toFixed(0)
                   .replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
@@ -571,7 +640,9 @@ const Suppliers: React.FC = () => {
             {ledgerLoading ? (
               <View style={styles.loadingContainer}>
                 <ActivityIndicator size="large" color={COLORS.primary2} />
-                <Text style={styles.loadingText}>Loading ledger entries...</Text>
+                <Text style={[styles.loadingText, {color: colors.textSecondary}]}>
+                  Loading ledger entries...
+                </Text>
               </View>
             ) : (
               <FlatList
@@ -580,22 +651,29 @@ const Suppliers: React.FC = () => {
                 contentContainerStyle={styles.ledgerListContent}
                 ListEmptyComponent={
                   <View style={styles.ledgerEmptyContainer}>
-                    <Text style={styles.emptyText}>No ledger entries found</Text>
-                    <Text style={styles.emptySubtext}>
+                    <Text style={[styles.emptyText, {color: colors.textPrimary}]}>
+                      No ledger entries found
+                    </Text>
+                    <Text style={[styles.emptySubtext, {color: colors.textSecondary}]}>
                       This supplier has no open payable entries to drill into.
                     </Text>
                   </View>
                 }
                 renderItem={({item}) => (
-                  <View style={styles.ledgerRow}>
+                  <View
+                    style={[styles.ledgerRow, {borderBottomColor: colors.border}]}>
                     <View style={styles.ledgerRowTextWrap}>
-                      <Text style={styles.ledgerDocumentNo}>{item.document_no}</Text>
-                      <Text style={styles.ledgerDescription}>
+                      <Text
+                        style={[styles.ledgerDocumentNo, {color: colors.textPrimary}]}>
+                        {item.document_no}
+                      </Text>
+                      <Text
+                        style={[styles.ledgerDescription, {color: colors.textSecondary}]}>
                         {item.description || 'Supplier ledger entry'}
                       </Text>
                     </View>
                     <Text style={styles.ledgerAmount}>
-                      UGX {item.remaining_amount.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                      {formatCurrencyCompact(item.remaining_amount)}
                     </Text>
                   </View>
                 )}
@@ -624,7 +702,6 @@ const Suppliers: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.white,
   },
   list: {
     flex: 1,
@@ -685,12 +762,10 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.white,
     borderRadius: 20,
     paddingHorizontal: 16,
     height: 46,
     borderWidth: 1,
-    borderColor: COLORS.transparentPrimary2,
   },
   searchIconContainer: {
     marginRight: 10,
@@ -700,12 +775,10 @@ const styles = StyleSheet.create({
   searchIcon: {
     width: 20,
     height: 20,
-    tintColor: COLORS.gray2,
   },
   searchInput: {
     flex: 1,
     ...FONTS.body3,
-    color: COLORS.black,
     paddingVertical: 0,
   },
   searchLoadingContainer: {
@@ -715,23 +788,13 @@ const styles = StyleSheet.create({
     width: 46,
     height: 46,
     borderRadius: 16,
-    backgroundColor: COLORS.white,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: COLORS.transparentPrimary2,
-  },
-  filterButtonActive: {
-    backgroundColor: COLORS.transparentPrimary,
-    borderColor: COLORS.primary2,
   },
   filterIcon: {
     width: 20,
     height: 20,
-    tintColor: COLORS.gray2,
-  },
-  filterIconActive: {
-    tintColor: COLORS.primary2,
   },
   filterBadge: {
     position: 'absolute',
@@ -832,13 +895,11 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     ...FONTS.h3,
-    color: COLORS.black,
     marginBottom: SIZES.base,
     textAlign: 'center',
   },
   emptySubtext: {
     ...FONTS.body3,
-    color: COLORS.gray2,
     textAlign: 'center',
     maxWidth: 250,
     marginBottom: SIZES.base * 2,
@@ -867,7 +928,6 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     ...FONTS.body3,
-    color: COLORS.gray2,
     marginTop: SIZES.base,
   },
   footerLoader: {
@@ -902,9 +962,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
-    backgroundColor: COLORS.white,
     margin: 16,
     borderRadius: SIZES.radius,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   accessDeniedTitle: {
     ...FONTS.h2,
@@ -914,7 +974,6 @@ const styles = StyleSheet.create({
   },
   accessDeniedMessage: {
     ...FONTS.body3,
-    color: COLORS.gray,
     textAlign: 'center',
   },
   filterModalOverlay: {
@@ -923,7 +982,6 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   filterModalContent: {
-    backgroundColor: COLORS.white,
     borderTopLeftRadius: SIZES.radius * 2,
     borderTopRightRadius: SIZES.radius * 2,
     maxHeight: '80%',
@@ -935,11 +993,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: SIZES.base * 2,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray1,
   },
   filterModalTitle: {
     ...FONTS.h3,
-    color: COLORS.black,
     fontWeight: '600',
   },
   filterCloseButton: {
@@ -951,7 +1007,6 @@ const styles = StyleSheet.create({
   filterCloseIcon: {
     width: 20,
     height: 20,
-    tintColor: COLORS.gray2,
   },
   filterScrollView: {
     maxHeight: 400,
@@ -962,9 +1017,7 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     padding: 16,
     borderRadius: 16,
-    backgroundColor: COLORS.transparentPrimary,
     borderWidth: 1,
-    borderColor: COLORS.transparentPrimary2,
   },
   ledgerSummaryLabel: {
     ...FONTS.body4,
@@ -992,7 +1045,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray1,
     gap: 12,
   },
   ledgerRowTextWrap: {
@@ -1000,13 +1052,11 @@ const styles = StyleSheet.create({
   },
   ledgerDocumentNo: {
     ...FONTS.body3,
-    color: COLORS.black,
     fontWeight: '700',
     marginBottom: 4,
   },
   ledgerDescription: {
     ...FONTS.body4,
-    color: COLORS.gray2,
   },
   ledgerAmount: {
     ...FONTS.body4,
@@ -1016,17 +1066,14 @@ const styles = StyleSheet.create({
   filterSection: {
     padding: SIZES.base * 2,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray1,
   },
   filterSectionLabel: {
     ...FONTS.h4,
-    color: COLORS.black,
     marginBottom: SIZES.base * 1.5,
     fontWeight: '600',
   },
   filterSectionSubtext: {
     ...FONTS.body4,
-    color: COLORS.gray2,
     lineHeight: 20,
   },
   filterActions: {
@@ -1034,7 +1081,6 @@ const styles = StyleSheet.create({
     padding: SIZES.base * 2,
     gap: SIZES.base,
     borderTopWidth: 1,
-    borderTopColor: COLORS.lightGray1,
   },
   filterActionButton: {
     flex: 1,
@@ -1044,9 +1090,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   clearFilterButton: {
-    backgroundColor: COLORS.lightGray2,
     borderWidth: 1,
-    borderColor: COLORS.lightGray1,
   },
   applyFilterButton: {
     backgroundColor: COLORS.primary,
@@ -1058,7 +1102,6 @@ const styles = StyleSheet.create({
   },
   clearFilterText: {
     ...FONTS.button,
-    color: COLORS.gray2,
     fontSize: 14,
   },
   applyFilterText: {

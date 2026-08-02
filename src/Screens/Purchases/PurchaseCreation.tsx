@@ -1,4 +1,5 @@
 import React, {useState, useEffect, useCallback, useRef, useMemo} from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   View,
   Text,
@@ -1041,7 +1042,7 @@ const PurchaseCreation = () => {
                     </Text>
                   </View>
                   <Text style={styles.itemListItemPrice}>
-                    UGX{' '}
+                    {getLocalCurrencyCode()}{' '}
                     {(item.unit_cost || item.unit_price || 0).toLocaleString()}
                   </Text>
                 </TouchableOpacity>
@@ -1193,7 +1194,7 @@ const PurchaseCreation = () => {
             Line Total:
           </Text>
           <Text style={styles.lineItemTotalValue}>
-            UGX {(previewQuantity * previewUnitCost).toLocaleString()}
+            {formatCurrencyCompact(previewQuantity * previewUnitCost)}
           </Text>
         </View>
       </View>
@@ -1546,7 +1547,7 @@ const PurchaseCreation = () => {
                     Total amount
                   </Text>
                   <Text style={styles.totalValue}>
-                    UGX {(purchase.total_amount || 0).toLocaleString()}
+                    {formatCurrencyCompact(purchase.total_amount || 0)}
                   </Text>
                 </View>
               </View>

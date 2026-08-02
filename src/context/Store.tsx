@@ -28,6 +28,14 @@ import {
 import {shouldOfferRestaurantPinFromToken} from '../utils/restaurantPinOffer';
 import {setVerifiedEmail} from '../utils/tenant';
 import {fetchSalesSetupBranchConfig} from '../services/branchProfile.service';
+import {closePosDatabase} from '../db/persistence';
+import {clearOfflineBootstrapFlag} from '../services/offline/offlineBootstrap';
+import {clearPushToken, syncDevicePushTokenWithBackend} from '../services/NotificationService';
+import {
+  setLocalCurrencyCode as syncLocalCurrencyCode,
+  DEFAULT_LOCAL_CURRENCY_CODE,
+} from '../utils/currency';
+import {readCachedAvatarUrl, USER_AVATAR_STORAGE_KEY} from '../services/profile.service';
 
 export interface AppContextType {
   auth: AuthState;
@@ -45,6 +53,8 @@ export interface AppContextType {
   setActiveBranch: (branch: BranchValue | null) => Promise<void>;
   setBranchSelectionPending: (pending: boolean) => Promise<void>;
   refreshBranchCapabilities: () => Promise<void>;
+  updateLocalCurrencyCode: (code: string) => void;
+  patchAuth: (partial: Partial<AuthState>) => void;
 }
 const AppContext = createContext<AppContextType | null>(null);
 const SelectedTabContext = createContext<string>('Home');
@@ -130,6 +140,7 @@ const getEmptyAuthState = (): AuthState => ({
   page_permissions: {},
   userPermissions: defaultUserJwtPermissions(),
   enabled_modules: ['pos'],
+  localCurrencyCode: DEFAULT_LOCAL_CURRENCY_CODE,
 });
 
 export const AppProvider = ({children}: {children: React.ReactNode}) => {
@@ -141,8 +152,20 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
   const [selectedTab, setSelectedTab] = useState('Home');
   const [sessionHydrated, setSessionHydrated] = useState(false);
 
+  const updateLocalCurrencyCode = useCallback((code: string) => {
+    const normalized =
+      code?.trim()?.toUpperCase() || DEFAULT_LOCAL_CURRENCY_CODE;
+    syncLocalCurrencyCode(normalized);
+    setAuth(prev => ({...prev, localCurrencyCode: normalized}));
+  }, []);
+
+  const patchAuth = useCallback((partial: Partial<AuthState>) => {
+    setAuth(prev => ({...prev, ...partial}));
+  }, []);
+
   const clearAuthState = useCallback(() => {
     // Clear auth state without clearing AsyncStorage (for token expiry scenarios)
+    syncLocalCurrencyCode(DEFAULT_LOCAL_CURRENCY_CODE);
     setAuth(getEmptyAuthState());
 
     // Clear cart items from state
@@ -367,6 +390,9 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
       global_dimension_1: decodedToken.global_dimension_1 ?? null,
       enabled_modules: decodedToken.enabled_modules || ['pos'],
       schema_name: decodedToken.schema_name,
+      localCurrencyCode:
+        decodedToken.local_currency_code?.toUpperCase() ||
+        DEFAULT_LOCAL_CURRENCY_CODE,
     };
   }, []);
 
@@ -374,11 +400,7 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
     async (access: string, refresh?: string) => {
       const decodedToken = jwtDecode(access) as DecodedToken;
       const user = mapTokenToAuthState(decodedToken);
-      if (user.verified === true) {
-        await setVerifiedEmail(true);
-      } else if (user.verified === false) {
-        await setVerifiedEmail(false);
-      }
+      syncLocalCurrencyCode(user.localCurrencyCode);
 
       const storageItems: [string, string][] = [['accessToken', access]];
       if (refresh) {
@@ -387,28 +409,58 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
       }
       await AsyncStorage.multiSet(storageItems);
 
-      await autoRegisterRestaurantDeviceIfEligible(user);
-
+      const canSwitch = user.can_switch_branch !== false;
+      const enableMultipleJwt = user.enable_multiple_branches === true;
       await AsyncStorage.setItem(
         BRANCH_SESSION_KEYS.canSwitch,
-        user.can_switch_branch === false ? '0' : '1',
+        canSwitch ? '1' : '0',
       );
+      await AsyncStorage.setItem(
+        BRANCH_SESSION_KEYS.enableMultiple,
+        enableMultipleJwt ? '1' : '0',
+      );
+      if (canSwitch) {
+        await AsyncStorage.setItem(BRANCH_SESSION_KEYS.selectionPending, '1');
+      } else {
+        await AsyncStorage.setItem(BRANCH_SESSION_KEYS.selectionPending, '0');
+      }
       setBranchSessionState((prev) => ({
         ...prev,
-        can_switch_branch: user.can_switch_branch !== false,
+        can_switch_branch: canSwitch,
+        enable_multiple_branches: enableMultipleJwt,
+        branchSelectionPending: canSwitch,
       }));
-      const enableMultiple = await syncBranchFlagsFromSetup(
-        user.enable_multiple_branches === true,
-      );
+
+      // Authenticate immediately so navigation can leave the sign-in stack.
+      setAuth({...user});
+
+      if (user.verified === true) {
+        await setVerifiedEmail(true);
+      } else if (user.verified === false) {
+        await setVerifiedEmail(false);
+        if (user.email) {
+          await AsyncStorage.setItem('email', user.email);
+        }
+        // Skip branch/avatar setup until OTP — keeps signup → verify transition snappy.
+        return;
+      }
+
+      await autoRegisterRestaurantDeviceIfEligible(user);
+
+      const enableMultiple = await syncBranchFlagsFromSetup(enableMultipleJwt);
       await applyGlobalDimensionFromJwt(decodedToken);
       await ensureBranchSelectionGate({
         enableMultiple,
-        canSwitch: user.can_switch_branch !== false,
+        canSwitch,
         requireSelectionAfterTokenIssue: true,
       });
 
-      // Set auth last so navigation sees branchSelectionPending together with accessToken.
-      setAuth(user);
+      const cachedAvatar = await readCachedAvatarUrl();
+      if (cachedAvatar) {
+        setAuth((prev) => ({...prev, avatar_url: cachedAvatar}));
+      }
+
+      void syncDevicePushTokenWithBackend();
     },
     [
       mapTokenToAuthState,
@@ -436,6 +488,7 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
 
           // Map the decoded token to our expected structure
           const user = mapTokenToAuthState(decodedToken as DecodedToken);
+          syncLocalCurrencyCode(user.localCurrencyCode);
 
           if (user.verified === false) {
             await setVerifiedEmail(false);
@@ -471,7 +524,12 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
             enableMultiple,
             canSwitch: user.can_switch_branch !== false,
           });
-          setAuth(user);
+          const cachedAvatar = await readCachedAvatarUrl();
+          setAuth({
+            ...user,
+            avatar_url: cachedAvatar ?? undefined,
+          });
+          void syncDevicePushTokenWithBackend();
         } catch (error) {
           console.log('Error decoding token, clearing auth state:', error);
           clearAuthState();
@@ -563,6 +621,10 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
       AsyncStorage.removeItem(RESTAURANT_PIN_SETUP_PENDING_KEY),
       AsyncStorage.removeItem(RESTAURANT_SHOW_PIN_SETUP_IMMEDIATE_KEY),
       clearRestaurantPinRouteSessionFlags(),
+      clearOfflineBootstrapFlag(),
+      closePosDatabase(),
+      AsyncStorage.removeItem(USER_AVATAR_STORAGE_KEY),
+      clearPushToken(),
     ]);
 
     // Force a re-render to trigger navigation changes
@@ -594,12 +656,16 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
       setActiveBranch,
       setBranchSelectionPending,
       refreshBranchCapabilities,
+      updateLocalCurrencyCode,
+      patchAuth,
     }),
     [
       auth,
       branchSession,
       sessionHydrated,
       clearAuthState,
+      updateLocalCurrencyCode,
+      patchAuth,
       login,
       loginWithTokens,
       logout,
@@ -643,15 +709,20 @@ export const useTabContext = () => {
 export const useAuth = () => {
   const ctx = useAppContext();
   const auth = ctx?.auth;
-  if (!auth) {
+  if (!ctx || !auth) {
     return {
       accessToken: false as const,
       auth: getEmptyAuthState(),
+      updateLocalCurrencyCode: () => {},
     };
   }
   /** Unverified accounts may receive a JWT for OTP APIs; they must not access the main app. */
   const hasAccessToken = Boolean(
     auth.user_id && auth.username && auth.verified !== false,
   );
-  return {accessToken: hasAccessToken, auth};
+  return {
+    accessToken: hasAccessToken,
+    auth,
+    updateLocalCurrencyCode: ctx.updateLocalCurrencyCode,
+  };
 };

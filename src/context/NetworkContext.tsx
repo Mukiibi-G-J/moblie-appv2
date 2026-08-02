@@ -7,7 +7,8 @@ import React, {
 } from 'react';
 import NetInfo from '@react-native-community/netinfo';
 import Toast from 'react-native-toast-message';
-import {NetworkStatusCard} from '../Components/NetworkStatusCard';
+import {OfflineBanner} from '../Components/OfflineBanner';
+import {setNetInfoConnected} from '../utils/posConnectivity';
 
 interface NetworkContextType {
   isConnected: boolean;
@@ -28,7 +29,7 @@ export function NetworkProvider({children}: {children: React.ReactNode}) {
     type: null,
   });
 
-  const [showOfflineMessage, setShowOfflineMessage] = useState(false);
+  const [wasOffline, setWasOffline] = useState(false);
 
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener(state => {
@@ -38,13 +39,12 @@ export function NetworkProvider({children}: {children: React.ReactNode}) {
         type: state.type,
       };
       setNetworkState(newState);
+      setNetInfoConnected(newState.isConnected);
 
-      // Handle offline/online status
       if (!state.isConnected) {
-        setShowOfflineMessage(true);
-      } else {
-        setShowOfflineMessage(false);
-        // Show success toast when connection is restored
+        setWasOffline(true);
+      } else if (wasOffline) {
+        setWasOffline(false);
         Toast.show({
           type: 'success',
           text1: 'Connected',
@@ -56,13 +56,12 @@ export function NetworkProvider({children}: {children: React.ReactNode}) {
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [wasOffline]);
 
   return (
     <NetworkContext.Provider value={networkState}>
+      <OfflineBanner />
       {children}
-      {/* NetworkStatusCard will be available globally */}
-      <NetworkStatusCard visible={showOfflineMessage} />
     </NetworkContext.Provider>
   );
 }

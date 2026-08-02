@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import {COLORS, FONTS, SIZES, icons} from '../../constants';
 import {Customer} from '../../@types/customer';
+import {formatCurrencyCompact} from '../../utils/currency';
 
 const isProtectedGeneralCustomer = (customer: Customer) => {
   const normalizedName = customer.name?.trim().toLowerCase();
@@ -40,9 +41,7 @@ const CustomerListItem: React.FC<CustomerListItemProps> = ({
       .toUpperCase() || 'CU';
   const numericBalance = parseFloat(customer.balance || '0') || 0;
   const hasBalance = Math.abs(numericBalance) > 0;
-  const formattedBalance = `UGX ${numericBalance
-    .toFixed(0)
-    .replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
+  const formattedBalance = formatCurrencyCompact(numericBalance);
 
   const secondaryLine =
     customer.phone_number ||

@@ -1,4 +1,5 @@
 import React, {useEffect, useRef, useState, useCallback} from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   View,
   Text,
@@ -23,7 +24,7 @@ import {BankAccountServices} from '../../services/BankAccountServices';
 import BankAccountFormModal from './BankAccountFormModal';
 
 const formatAmount = (amt?: number) =>
-  `UGX ${(amt || 0).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
+  formatCurrencyCompact(amt);
 
 const BankAccounts: React.FC = () => {
   const {canRead, canCreate, canEdit, canDelete} = usePermissions();

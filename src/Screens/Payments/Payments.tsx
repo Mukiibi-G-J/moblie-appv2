@@ -14,6 +14,7 @@ import {
 import {useNavigation} from '@react-navigation/native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
+import {formatCurrencyCompact} from '../../utils/currency';
 import {
   COLORS,
   FONTS,
@@ -237,11 +238,7 @@ const Payments: React.FC = () => {
     loadPayments();
   };
 
-  const formatAmount = (amount: number) => {
-    return `UGX ${(amount || 0)
-      .toFixed(0)
-      .replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
-  };
+  const formatAmount = (amount: number) => formatCurrencyCompact(amount);
 
   const renderPaymentItem = ({item}: {item: PaymentJournal}) => {
     const accountLabel =

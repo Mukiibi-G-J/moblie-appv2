@@ -39,6 +39,9 @@ export interface StarterPackOverview {
 export interface CompanyOverview {
   subscription: SubscriptionOverview | null;
   starter_pack: StarterPackOverview;
+  settings?: {
+    localCurrencyCode: string;
+  };
 }
 
 export async function getCompanyOverview(): Promise<CompanyOverview | null> {

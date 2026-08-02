@@ -21,6 +21,8 @@ import CustomPhoneInput, {
 } from "../../Components/CustomPhoneInput";
 import Toast from "react-native-toast-message";
 import { seedLoginCredentialsAfterSignup } from "../../utils/loginCredentials";
+import { loginAndRouteAfterCredentials } from "../../utils/postAuthNavigation";
+import { useAppContext } from "../../context/Store";
 import {
     savePendingCompanyCreation,
     clearPendingCompanyCreation,
@@ -90,6 +92,7 @@ function deriveUserNameFromEmail(email: string): string {
 }
 
 const SignUp = ({ navigation }) => {
+    const context = useAppContext();
     const { colors, isDark } = useTheme();
 
     const [form, setForm] = React.useState({
@@ -401,8 +404,27 @@ const SignUp = ({ navigation }) => {
             await clearPendingCompanyCreation();
             Toast.show({
                 text1: "Company created",
-                text2: "Sign in with your email and password.",
+                text2: "Enter the verification code we sent you.",
                 type: "success",
+            });
+            setStatusMessage("Taking you to verification…");
+            const loginResult = await loginAndRouteAfterCredentials({
+                context,
+                navigation,
+                credential: form.email.trim(),
+                password: form.password,
+                tenant: schemaName,
+                otpToast: false,
+            });
+            if (loginResult === "otp" || loginResult === "home") {
+                return;
+            }
+            setPhase("idle");
+            setStatusMessage("");
+            Toast.show({
+                type: "error",
+                text1: "Could not start verification",
+                text2: "Sign in with your email and password.",
             });
             navigation.replace("SignIn");
         } catch (error: any) {
@@ -439,7 +461,6 @@ const SignUp = ({ navigation }) => {
                     text2: "Please check your connection and try again.",
                 });
             }
-        } finally {
             setPhase("idle");
             setStatusMessage("");
         }

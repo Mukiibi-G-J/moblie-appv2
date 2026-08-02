@@ -1,4 +1,5 @@
 import React, {useState, useEffect, useCallback, useRef} from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   View,
   Text,
@@ -566,7 +567,7 @@ const Customers = () => {
             <View style={styles.ledgerSummaryCard}>
               <Text style={styles.ledgerSummaryLabel}>Outstanding balance</Text>
               <Text style={styles.ledgerSummaryValue}>
-                UGX{' '}
+                {getLocalCurrencyCode()}{' '}
                 {(parseFloat(selectedLedgerCustomer?.balance || '0') || 0)
                   .toFixed(0)
                   .replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
@@ -600,7 +601,7 @@ const Customers = () => {
                       </Text>
                     </View>
                     <Text style={styles.ledgerAmount}>
-                      UGX {item.remaining_amount.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                      {formatCurrencyCompact(item.remaining_amount)}
                     </Text>
                   </View>
                 )}

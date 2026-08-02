@@ -33,6 +33,14 @@ const RESEND_TIMER_SECONDS = 30;
 const OTP_LENGTH = 6;
 const BRAND = '#0b5cff';
 
+function maskPhone(phone: string): string {
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length <= 4) {
+        return phone;
+    }
+    return `***${digits.slice(-4)}`;
+}
+
 const Otp = () => {
     const { colors } = useTheme();
     const route = useRoute();
@@ -41,6 +49,7 @@ const Otp = () => {
     const [email, setEmail] = useState(routeEmail);
     const navigation = useNavigation();
     const ctx = useAppContext() as AppContextType | null;
+    const userPhone = (ctx?.auth?.phone || '').trim();
 
     const [otpCode, setOtpCode] = useState('');
     const [isTimerActive, setIsTimerActive] = useState(false);
@@ -112,7 +121,10 @@ const Otp = () => {
             if (response.status === 200) {
                 Toast.show({
                     text1: 'Code sent',
-                    text2: 'Check your phone for the new OTP.',
+                    text2:
+                        email && userPhone
+                            ? 'Check your email and phone for the new code.'
+                            : 'Check your email for the new code.',
                     type: 'success',
                 });
             }
@@ -222,8 +234,8 @@ const Otp = () => {
             onBackPress={onBack}
             subtitle={
                 <Text style={[styles.subtitleLead, { color: colors.textSecondary }]}>
-                    We sent a {OTP_LENGTH}-digit code to your phone. Enter it below to
-                    continue.
+                    We sent a {OTP_LENGTH}-digit code to your email
+                    {userPhone ? ' and phone' : ''}. Enter it below to continue.
                 </Text>
             }
         >
@@ -244,10 +256,11 @@ const Otp = () => {
                     </Text>
                     <Text
                         style={[styles.emailValue, { color: BRAND }]}
-                        numberOfLines={2}
+                        numberOfLines={3}
                         selectable
                     >
                         {email || '—'}
+                        {userPhone ? `\n${maskPhone(userPhone)}` : ''}
                     </Text>
                 </View>
 

@@ -1,4 +1,5 @@
 import React from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../utils/currency';
 import {
   View,
   Text,
@@ -58,7 +59,7 @@ const FooterTotal: React.FC<FooterTotalProps> = ({
         ) : (
           <>
             <Text style={styles.checkoutButtonText}>
-              Charge UGX {total?.toLocaleString() || '0'}
+              Charge {getLocalCurrencyCode()} {total?.toLocaleString() || '0'}
             </Text>
             <Text style={styles.checkoutButtonSubtext}>
               {totalQuantity} {totalQuantity === 1 ? 'item' : 'items'}

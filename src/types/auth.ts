@@ -69,6 +69,7 @@ export interface DecodedToken {
   /** Company modules from JWT (web parity). */
   enabled_modules?: string[];
   schema_name?: string;
+  local_currency_code?: string;
 
   // Token metadata
   exp?: number;
@@ -110,4 +111,7 @@ export interface AuthState {
 
   enabled_modules?: string[];
   schema_name?: string;
+  localCurrencyCode?: string;
+  /** From GET /api/auth/profile/ — cached locally after upload. */
+  avatar_url?: string;
 }

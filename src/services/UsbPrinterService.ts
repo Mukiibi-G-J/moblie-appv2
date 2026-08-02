@@ -208,7 +208,8 @@ class UsbPrinterService {
   }
 
   private fmt(amount: number): string {
-    return `UGX ${Number(amount).toLocaleString('en-US', {maximumFractionDigits: 0})}`;
+    const {formatCurrencyCompact} = require('../utils/currency');
+    return formatCurrencyCompact(amount);
   }
 
   private printCompactReceiptUsb(data: PrintReceiptData): string {

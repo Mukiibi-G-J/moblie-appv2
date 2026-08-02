@@ -13,18 +13,27 @@ import {
   InteractionManager,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
-import {safeGoBack} from '../../hooks/NavigationService';
 import Toast from 'react-native-toast-message';
 import Clipboard from '@react-native-clipboard/clipboard';
-import {QuickIconPressable} from '../../Components';
-import {fetchItemJournal, postItemJournalLines} from '../../services/app.services';
+import {StackScreenLayout} from '../../Components';
+import {
+  deleteItemJournal,
+  fetchItemJournal,
+  postItemJournalLines,
+} from '../../services/app.services';
 import {COLORS, FONTS, SIZES, icons} from '../../constants';
+import {useTheme} from '../../context/ThemeContext';
 import {useAuth} from '../../context/Store';
 import {usePermissions} from '../../hooks/usePermissions';
+import {useScreenBottomInset} from '../../hooks/useScreenTopInset';
 import {PAGE_NAMES} from '../../constants/pageNames';
 import ItemJournalListItem, {type ItemJournalLine} from './ItemJournalListItem';
 import ItemJournalFormModal from './ItemJournalFormModal';
 import {normalizeLine} from './itemJournalUtils';
+import {
+  OPERATIONAL_JOURNAL_CONFIG,
+  type ItemJournalScreenConfig,
+} from './itemJournalScreenConfig';
 
 const PAGE_NAME = PAGE_NAMES.ITEM_JOURNAL;
 const HISTORY_PAGE_NAME = PAGE_NAMES.ADJUST_INVENTORY_HISTORY;
@@ -133,10 +142,17 @@ function showPostErrorAlert(message: string) {
   });
 }
 
-const ItemJournalScreen = () => {
+const ItemJournalScreen = ({
+  config = OPERATIONAL_JOURNAL_CONFIG,
+}: {
+  config?: ItemJournalScreenConfig;
+}) => {
   const navigation = useNavigation<any>();
+  const {colors} = useTheme();
   const {auth} = useAuth();
-  const {canRead, canCreate, canEdit} = usePermissions();
+  const {canRead, canCreate, canEdit, canDelete} = usePermissions();
+  const screenConfig = config;
+  const bottomInset = useScreenBottomInset(16);
 
   const userId = useMemo(() => {
     const n = parseInt(auth.user_id || '', 10);
@@ -145,14 +161,18 @@ const ItemJournalScreen = () => {
 
   if (!canRead(PAGE_NAME)) {
     return (
-      <View style={styles.container}>
-        <View style={styles.accessDeniedContainer}>
+      <StackScreenLayout title={screenConfig.pageTitle}>
+        <View
+          style={[
+            styles.accessDeniedContainer,
+            {backgroundColor: colors.card, borderColor: colors.border},
+          ]}>
           <Text style={styles.accessDeniedTitle}>Access Denied</Text>
-          <Text style={styles.accessDeniedMessage}>
-            You do not have permission to view stock adjustments.
+          <Text style={[styles.accessDeniedMessage, {color: colors.textSecondary}]}>
+            {screenConfig.accessDeniedMessage}
           </Text>
         </View>
-      </View>
+      </StackScreenLayout>
     );
   }
 
@@ -269,6 +289,47 @@ const ItemJournalScreen = () => {
     setFormVisible(true);
   };
 
+  const confirmRemove = (line: ItemJournalLine) => {
+    if (!canDelete(PAGE_NAME)) {
+      Alert.alert('Access denied', 'You do not have permission to remove journal lines.');
+      return;
+    }
+    if (line.status !== 'Open') {
+      Alert.alert('Cannot remove', 'Only Open lines can be removed.');
+      return;
+    }
+    Alert.alert(
+      'Remove journal line',
+      `Remove ${line.document_no}? This deletes the open line from the journal.`,
+      [
+        {text: 'Cancel', style: 'cancel'},
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteItemJournal(line.id);
+              Toast.show({type: 'success', text1: 'Journal line removed'});
+              setPage(1);
+              loadJournals(1);
+            } catch (e: unknown) {
+              const ax = e as {
+                response?: {data?: {detail?: unknown}};
+                message?: string;
+              };
+              const detail = ax?.response?.data?.detail;
+              const msg =
+                typeof detail === 'string'
+                  ? detail
+                  : ax?.message || 'Could not remove journal line.';
+              Toast.show({type: 'error', text1: 'Remove failed', text2: msg});
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const confirmPost = (line: ItemJournalLine) => {
     if (!canEdit(PAGE_NAME)) {
       Alert.alert('Access denied', 'You do not have permission to post.');
@@ -313,13 +374,28 @@ const ItemJournalScreen = () => {
     return (
       <>
         <TouchableOpacity
-          style={styles.postedAdjustmentsRow}
+          style={[
+            styles.postedAdjustmentsRow,
+            {backgroundColor: colors.background},
+          ]}
           onPress={() => navigation.navigate('ItemJournalHistory')}
           activeOpacity={0.65}>
-          <Text style={styles.postedAdjustmentsRowLabel}>View posted adjustments</Text>
-          <Text style={styles.postedAdjustmentsRowChevron}>›</Text>
+          <Text
+            style={[
+              styles.postedAdjustmentsRowLabel,
+              {color: colors.textPrimary},
+            ]}>
+            View posted adjustments
+          </Text>
+          <Text
+            style={[
+              styles.postedAdjustmentsRowChevron,
+              {color: colors.textSecondary},
+            ]}>
+            ›
+          </Text>
         </TouchableOpacity>
-        <View style={styles.rowDivider} />
+        <View style={[styles.rowDivider, {backgroundColor: colors.border}]} />
       </>
     );
   };
@@ -333,17 +409,19 @@ const ItemJournalScreen = () => {
           resizeMode="contain"
         />
       </View>
-      <Text style={styles.emptyText}>No adjustments found</Text>
-      <Text style={styles.emptySubtext}>
+      <Text style={[styles.emptyText, {color: colors.textPrimary}]}>
+        {screenConfig.emptyTitle}
+      </Text>
+      <Text style={[styles.emptySubtext, {color: colors.textSecondary}]}>
         {searchQuery.trim()
           ? 'Try adjusting your search query.'
           : canCreate(PAGE_NAME)
-            ? 'Create your first stock adjustment to get started.'
-            : 'No open adjustments available.'}
+            ? screenConfig.emptySubtextCreate
+            : screenConfig.emptySubtextNoCreate}
       </Text>
       {canCreate(PAGE_NAME) && (
         <TouchableOpacity style={styles.emptyButton} onPress={openCreate}>
-          <Text style={styles.emptyButtonText}>Add adjustment</Text>
+          <Text style={styles.emptyButtonText}>{screenConfig.emptyButtonLabel}</Text>
         </TouchableOpacity>
       )}
     </View>
@@ -360,55 +438,51 @@ const ItemJournalScreen = () => {
     );
   };
 
-  return (
-    <View style={styles.container}>
-      <View style={styles.headerSection}>
-        <View style={styles.titleRow}>
-          <QuickIconPressable
-            style={styles.backButton}
-            onPress={() => safeGoBack(navigation, 'Home')}
-            accessibilityLabel="Go back">
-            <Image
-              source={icons.back}
-              style={styles.backButtonIcon}
-              resizeMode="contain"
-            />
-          </QuickIconPressable>
-          <Text style={styles.screenTitle}>Adjust inventory</Text>
-          <View style={styles.titleRowSpacer} />
+  const searchBar = (
+    <View style={styles.searchContainer}>
+      <View
+        style={[
+          styles.searchInputContainer,
+          {
+            backgroundColor: colors.inputBackground,
+            borderColor: colors.border,
+          },
+        ]}>
+        <View style={styles.searchIconContainer}>
+          <Image
+            source={icons.search}
+            style={[styles.searchIcon, {tintColor: colors.iconMuted}]}
+            resizeMode="contain"
+          />
         </View>
-
-        <View style={styles.searchContainer}>
-          <View style={styles.searchInputContainer}>
-            <View style={styles.searchIconContainer}>
-              <Image
-                source={icons.search}
-                style={styles.searchIcon}
-                resizeMode="contain"
-              />
-            </View>
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search open adjustments..."
-              placeholderTextColor={COLORS.gray3}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-            />
-            {searchLoading && (
-              <View style={styles.searchLoadingContainer}>
-                <ActivityIndicator size="small" color={COLORS.primary2} />
-              </View>
-            )}
+        <TextInput
+          style={[styles.searchInput, {color: colors.textPrimary}]}
+          placeholder={screenConfig.searchPlaceholder}
+          placeholderTextColor={colors.placeholder}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+        {searchLoading && (
+          <View style={styles.searchLoadingContainer}>
+            <ActivityIndicator size="small" color={COLORS.primary2} />
           </View>
-        </View>
+        )}
       </View>
+    </View>
+  );
 
+  return (
+    <StackScreenLayout
+      title={screenConfig.pageTitle}
+      headerBottom={searchBar}>
       {renderPostedAdjustmentsRow()}
 
       {loading && page === 1 ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={COLORS.primary2} />
-          <Text style={styles.loadingText}>Loading adjustments...</Text>
+          <Text style={[styles.loadingText, {color: colors.textSecondary}]}>
+            Loading adjustments...
+          </Text>
         </View>
       ) : (
         <FlatList
@@ -420,8 +494,10 @@ const ItemJournalScreen = () => {
               line={item}
               onPress={() => openEdit(item)}
               onPost={() => confirmPost(item)}
+              onRemove={() => confirmRemove(item)}
               canOpenLine={canEdit(PAGE_NAME)}
               canPost={canEdit(PAGE_NAME)}
+              canRemove={canDelete(PAGE_NAME)}
             />
           )}
           ListEmptyComponent={renderEmptyState}
@@ -446,7 +522,10 @@ const ItemJournalScreen = () => {
       )}
 
       {canCreate(PAGE_NAME) && (
-        <TouchableOpacity style={styles.fab} onPress={openCreate} activeOpacity={0.8}>
+        <TouchableOpacity
+          style={[styles.fab, {bottom: bottomInset + 16}]}
+          onPress={openCreate}
+          activeOpacity={0.8}>
           <Text style={styles.fabText}>+</Text>
         </TouchableOpacity>
       )}
@@ -462,61 +541,22 @@ const ItemJournalScreen = () => {
         userId={userId}
         canCreate={canCreate(PAGE_NAME)}
         canEdit={canEdit(PAGE_NAME)}
+        lockedAdjustmentType={screenConfig.lockedAdjustmentType}
+        addFormTitle={screenConfig.addFormTitle}
+        editFormTitle={screenConfig.editFormTitle}
       />
-    </View>
+    </StackScreenLayout>
   );
 };
 
 export default ItemJournalScreen;
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.white,
-  },
   list: {
     flex: 1,
   },
   listContentContainer: {
     paddingBottom: 180,
-  },
-  headerSection: {
-    backgroundColor: COLORS.white,
-    paddingHorizontal: 20,
-    paddingTop: 18,
-    paddingBottom: 12,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 18,
-  },
-  backButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: COLORS.transparentPrimary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  backButtonIcon: {
-    width: 20,
-    height: 20,
-    tintColor: COLORS.primary3,
-  },
-  screenTitle: {
-    ...FONTS.h1,
-    color: COLORS.black,
-    fontSize: 22,
-    fontWeight: '700',
-    flex: 1,
-    textAlign: 'center',
-    marginHorizontal: 8,
-  },
-  titleRowSpacer: {
-    width: 44,
-    height: 44,
   },
   searchContainer: {
     flexDirection: 'row',
@@ -526,12 +566,10 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.white,
     borderRadius: 20,
     paddingHorizontal: 16,
     height: 46,
     borderWidth: 1,
-    borderColor: COLORS.transparentPrimary2,
   },
   searchIconContainer: {
     marginRight: 10,
@@ -541,12 +579,10 @@ const styles = StyleSheet.create({
   searchIcon: {
     width: 20,
     height: 20,
-    tintColor: COLORS.gray2,
   },
   searchInput: {
     flex: 1,
     ...FONTS.body3,
-    color: COLORS.black,
     paddingVertical: 0,
   },
   searchLoadingContainer: {
@@ -557,24 +593,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 16,
     paddingHorizontal: 20,
-    backgroundColor: COLORS.white,
   },
   postedAdjustmentsRowLabel: {
     ...FONTS.body3,
     fontSize: 16,
     fontWeight: '700',
-    color: COLORS.black,
     flex: 1,
   },
   postedAdjustmentsRowChevron: {
     ...FONTS.h3,
-    color: COLORS.gray2,
     fontSize: 22,
     fontWeight: '300',
   },
   rowDivider: {
     height: StyleSheet.hairlineWidth,
-    backgroundColor: COLORS.lightGray1,
     marginLeft: 20,
   },
   emptyListContainer: {
@@ -604,13 +636,11 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     ...FONTS.h3,
-    color: COLORS.black,
     marginBottom: SIZES.base,
     textAlign: 'center',
   },
   emptySubtext: {
     ...FONTS.body3,
-    color: COLORS.gray2,
     textAlign: 'center',
     maxWidth: 280,
     marginBottom: SIZES.base * 2,
@@ -639,7 +669,6 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     ...FONTS.body3,
-    color: COLORS.gray2,
     marginTop: SIZES.base,
   },
   footerLoader: {
@@ -649,7 +678,6 @@ const styles = StyleSheet.create({
   fab: {
     position: 'absolute',
     right: SIZES.padding,
-    bottom: 130,
     width: 56,
     height: 56,
     borderRadius: 28,
@@ -674,9 +702,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
-    backgroundColor: COLORS.white,
     margin: 16,
     borderRadius: SIZES.radius,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   accessDeniedTitle: {
     ...FONTS.h2,
@@ -686,7 +714,6 @@ const styles = StyleSheet.create({
   },
   accessDeniedMessage: {
     ...FONTS.body3,
-    color: COLORS.gray,
     textAlign: 'center',
   },
 });

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   View,
   Text,
@@ -29,6 +30,7 @@ import {
   fetchItems,
   isInvalidPageError,
   updateItem,
+  deleteItem,
   createItem,
   fetchCategories,
   fetchAllItemLedgerEntries,
@@ -67,6 +69,7 @@ export interface Item {
   category_id?: number | string | null;
   item_category?: any;
   description?: string;
+  bar_code_no?: string;
   unit_cost?: number;
   unit_of_measure?: string;
   created_at?: string;
@@ -109,6 +112,7 @@ const createEmptyItemDraft = (
   item_images: [],
   inventory: 0,
   description: '',
+  bar_code_no: '',
   type: defaultType,
 });
 
@@ -117,6 +121,7 @@ const EditItemModal = ({
   onClose,
   item,
   onSave,
+  onDelete,
   canEdit,
   canCreate,
   canDelete,
@@ -128,6 +133,7 @@ const EditItemModal = ({
   onClose: () => void;
   item: Item | null;
   onSave: (updatedItem: Item) => void;
+  onDelete?: (item: Item) => void;
   canEdit: boolean;
   canCreate?: boolean;
   canDelete: boolean;
@@ -145,6 +151,7 @@ const EditItemModal = ({
   const [categoriesLoading, setCategoriesLoading] = useState(false);
   const [imageUploadLoading, setImageUploadLoading] = useState(false);
   const [imageDeleteLoading, setImageDeleteLoading] = useState(false);
+  const [itemDeleteLoading, setItemDeleteLoading] = useState(false);
   const [imageUploadError, setImageUploadError] = useState < string | null > (null);
   const [inventoryEntriesVisible, setInventoryEntriesVisible] = useState(false);
   const [inventoryEntriesLoading, setInventoryEntriesLoading] = useState(false);
@@ -832,6 +839,33 @@ const EditItemModal = ({
     ]);
   };
 
+  const handleDeleteItem = () => {
+    if (!editedItem || !onDelete || !canDelete || isCreateMode) {
+      return;
+    }
+
+    const itemLabel = editedItem.item_name?.trim() || 'this item';
+    Alert.alert(
+      'Delete Item',
+      `Are you sure you want to delete "${itemLabel}"? This cannot be undone.`,
+      [
+        {text: 'Cancel', style: 'cancel'},
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setItemDeleteLoading(true);
+              await onDelete(editedItem);
+            } finally {
+              setItemDeleteLoading(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const handleSave = () => {
     if (editedItem) {
       onSave(editedItem);
@@ -1008,6 +1042,24 @@ const EditItemModal = ({
                     />
                   </View>
 
+                  <View style={[styles.squareOutlineField, editTheme.outlineField]}>
+                    <Text style={[styles.squareOutlineLabel, editTheme.outlineLabel]}>
+                      Barcode
+                    </Text>
+                    <TextInput
+                      style={[styles.squareOutlineInput, editTheme.outlineInput]}
+                      value={editedItem.bar_code_no ?? ''}
+                      onChangeText={text =>
+                        setEditedItem({...editedItem, bar_code_no: text})
+                      }
+                      placeholder="Scan or enter barcode"
+                      placeholderTextColor={colors.placeholder}
+                      autoCapitalize="characters"
+                      autoCorrect={false}
+                      maxLength={100}
+                    />
+                  </View>
+
                   <View
                     style={[
                       styles.squareOutlineField,
@@ -1169,9 +1221,9 @@ const EditItemModal = ({
                     Price and inventory
                   </Text>
                   <View style={[styles.squareOutlineField, editTheme.outlineField]}>
-                    <Text style={[styles.squareOutlineLabel, editTheme.outlineLabel]}>Price (UGX)</Text>
+                    <Text style={[styles.squareOutlineLabel, editTheme.outlineLabel]}>{formatCurrencyLabel('Price')}</Text>
                     <View style={styles.squarePriceRow}>
-                      <Text style={styles.squarePricePrefix}>UGX</Text>
+                      <Text style={styles.squarePricePrefix}>{getLocalCurrencyCode()}</Text>
                       <TextInput
                         style={[styles.squarePriceInput, editTheme.priceInput]}
                         value={formatAmountWithCommas(editedItem.unit_price)}
@@ -1193,12 +1245,12 @@ const EditItemModal = ({
                   {canSeeBuyingPriceUi ? (
                     <View style={[styles.squareOutlineField, editTheme.outlineField]}>
                       <Text style={[styles.squareOutlineLabel, editTheme.outlineLabel]}>
-                        Buying price / Unit cost (UGX)
+                        {formatCurrencyLabel('Buying price / Unit cost')}
                       </Text>
                       {editedItem.type === 'Service' ||
                       editedItem.type === 'Non-Inventory' ? (
                         <View style={styles.squarePriceRow}>
-                          <Text style={styles.squarePricePrefix}>UGX</Text>
+                          <Text style={styles.squarePricePrefix}>{getLocalCurrencyCode()}</Text>
                           <TextInput
                             style={[styles.squarePriceInput, editTheme.priceInput]}
                             value={formatAmountWithCommas(editedItem.unit_cost ?? 0)}
@@ -1222,7 +1274,7 @@ const EditItemModal = ({
                               styles.squareOutlineStaticValue,
                               editTheme.staticValue,
                             ]}>
-                            UGX {formatAmountWithCommas(editedItem.unit_cost ?? 0)}
+                            {formatCurrencyCompact(editedItem.unit_cost ?? 0)}
                           </Text>
                         </View>
                       )}
@@ -1304,6 +1356,28 @@ const EditItemModal = ({
                         </Text>
                       </TouchableOpacity>
                     </View>
+                  ) : null}
+
+                  {!isCreateMode && canDelete && onDelete ? (
+                    <>
+                      <View style={[styles.editItemThickBar, editTheme.thickBar]} />
+                      <TouchableOpacity
+                        style={[
+                          styles.squareDeleteItemButton,
+                          itemDeleteLoading && {opacity: 0.6},
+                        ]}
+                        onPress={handleDeleteItem}
+                        disabled={itemDeleteLoading}
+                        activeOpacity={0.75}>
+                        {itemDeleteLoading ? (
+                          <ActivityIndicator size="small" color={COLORS.error} />
+                        ) : (
+                          <Text style={styles.squareDeleteItemButtonText}>
+                            Delete item
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                    </>
                   ) : null}
                 </ScrollView>
               </>
@@ -1795,17 +1869,8 @@ const Items = () => {
     setEditModal(true);
   };
 
-  const formatCurrencyLabel = (value: number | string | undefined | null) => {
-    const numericValue =
-      typeof value === 'number' ? value : parseFloat(String(value || 0));
-    if (!Number.isFinite(numericValue)) {
-      return 'UGX 0.00';
-    }
-    return `UGX ${numericValue.toLocaleString('en-US', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })}`;
-  };
+  const formatItemPrice = (value: number | string | undefined | null) =>
+    formatCurrencyCompact(value);
 
   const getItemInitials = (name?: string) => {
     const words = (name || '')
@@ -1866,9 +1931,16 @@ const Items = () => {
               {item?.item_name || 'Unnamed Item'}
             </Text>
             <Text style={[styles.itemPrice, { color: colors.textPrimary }]}>
-              {formatCurrencyLabel(item?.unit_price)}
+              {formatItemPrice(item?.unit_price)}
             </Text>
           </View>
+          {item?.bar_code_no?.trim() ? (
+            <Text
+              style={[styles.itemBarcodeMeta, {color: colors.textSecondary}]}
+              numberOfLines={1}>
+              Barcode: {item.bar_code_no.trim()}
+            </Text>
+          ) : null}
           {stockFilter !== 'all' && item?.type !== 'Service' && item?.type !== 'Non-Inventory' ? (
             <Text
               style={[
@@ -1888,6 +1960,43 @@ const Items = () => {
         </View>
       </TouchableOpacity>
     );
+  };
+
+  const handleItemDelete = async (itemToDelete: Item) => {
+    if (!canDelete(PAGE_NAME)) {
+      Alert.alert('Access Denied', 'You do not have permission to delete items.');
+      return;
+    }
+
+    const itemId = itemToDelete.id || itemToDelete.no;
+    if (!itemToDelete.system_id && !itemId) {
+      Alert.alert('Error', 'Cannot delete item: missing item identifier.');
+      return;
+    }
+
+    try {
+      const response = await deleteItem(itemToDelete);
+      if (response.status === 200) {
+        Toast.show({
+          type: 'success',
+          text1: 'Item deleted',
+          text2: 'The item has been removed from your catalog.',
+        });
+        setEditModal(false);
+        setSelectedItem(null);
+        loadItems();
+      } else {
+        Alert.alert('Error', 'Failed to delete item');
+      }
+    } catch (error: any) {
+      console.error('Error deleting item:', error);
+      const errorMessage =
+        error?.response?.data?.detail ||
+        error?.response?.data?.message ||
+        error?.message ||
+        'Failed to delete item';
+      Alert.alert('Error', String(errorMessage));
+    }
   };
 
   const handleItemSave = async (selectedItem: Item) => {
@@ -1964,6 +2073,10 @@ const Items = () => {
 
       if (draftItem.description && draftItem.description.trim()) {
         itemToCreate.description = draftItem.description.trim();
+      }
+
+      if (draftItem.bar_code_no && draftItem.bar_code_no.trim()) {
+        itemToCreate.bar_code_no = draftItem.bar_code_no.trim();
       }
 
       if ((Number(draftItem.unit_price) || 0) > 0) {
@@ -2268,6 +2381,7 @@ const Items = () => {
         }}
         item={selectedItem}
         onSave={handleItemSave}
+        onDelete={handleItemDelete}
         canCreate={canCreate(PAGE_NAME)}
         canEdit={canEdit(PAGE_NAME)}
         canDelete={canDelete(PAGE_NAME)}
@@ -2856,6 +2970,22 @@ const styles = StyleSheet.create({
     ...FONTS.body5,
     color: COLORS.error,
     fontWeight: '600',
+  },
+  squareDeleteItemButton: {
+    alignSelf: 'stretch',
+    borderWidth: 1,
+    borderColor: COLORS.error,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  squareDeleteItemButtonText: {
+    ...FONTS.body4,
+    color: COLORS.error,
+    fontWeight: '700',
   },
   squareOutlineField: {
     borderWidth: 1,
@@ -3636,10 +3766,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
     flex: 1,
   },
-  itemStockMeta: {
+  itemBarcodeMeta: {
     ...FONTS.body5,
     fontSize: 12,
     marginTop: 4,
+  },
+  itemStockMeta: {
+    ...FONTS.body5,
+    fontSize: 12,
+    marginTop: 2,
   },
   stockFilterContainer: {
     flexDirection: 'row',

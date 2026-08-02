@@ -8,6 +8,7 @@ import {
   Image,
 } from 'react-native';
 import {COLORS, FONTS, icons} from '../../constants';
+import {useTheme} from '../../context/ThemeContext';
 
 export type ItemJournalLine = {
   id: number;
@@ -41,17 +42,22 @@ type Props = {
   line: ItemJournalLine;
   onPress: () => void;
   onPost: () => void;
+  onRemove?: () => void;
   canOpenLine: boolean;
   canPost: boolean;
+  canRemove?: boolean;
 };
 
 const ItemJournalListItem: React.FC<Props> = ({
   line,
   onPress,
   onPost,
+  onRemove,
   canOpenLine,
   canPost,
+  canRemove = false,
 }) => {
+  const {colors} = useTheme();
   const isOpen = line.status === 'Open';
   const initials =
     line.item_name
@@ -96,6 +102,14 @@ const ItemJournalListItem: React.FC<Props> = ({
       });
     }
 
+    if (canRemove && isOpen && onRemove) {
+      options.push({
+        text: 'Remove',
+        style: 'destructive',
+        onPress: onRemove,
+      });
+    }
+
     options.push({text: 'Cancel', style: 'cancel'});
 
     if (options.length === 1) {
@@ -109,34 +123,42 @@ const ItemJournalListItem: React.FC<Props> = ({
   return (
     <TouchableOpacity
       activeOpacity={canOpenLine && isOpen ? 0.8 : 1}
-      style={styles.container}
+      style={[styles.container, {borderBottomColor: colors.border}]}
       onPress={canOpenLine && isOpen ? onPress : undefined}>
-      <View style={styles.avatar}>
+      <View style={[styles.avatar, {backgroundColor: colors.backButtonBg}]}>
         <Text style={styles.avatarText}>{initials}</Text>
       </View>
 
       <View style={styles.content}>
-        <Text style={styles.itemName} numberOfLines={1}>
+        <Text
+          style={[styles.itemName, {color: colors.textPrimary}]}
+          numberOfLines={1}>
           {line.item_name}
         </Text>
-        <Text style={styles.secondaryText} numberOfLines={1}>
+        <Text
+          style={[styles.secondaryText, {color: colors.textSecondary}]}
+          numberOfLines={1}>
           {secondaryLine}
         </Text>
         <Text
           style={[
             styles.metaText,
-            isOpen ? styles.metaTextOpen : styles.metaTextMuted,
+            isOpen ? styles.metaTextOpen : {color: colors.textSecondary},
           ]}>
           {qtyText} · {line.status}
         </Text>
       </View>
 
-      {(canOpenLine || canPost) && (
+      {(canOpenLine || canPost || (canRemove && isOpen)) && (
         <TouchableOpacity
           onPress={handleOpenActions}
-          style={styles.actionButton}
+          style={[styles.actionButton, {backgroundColor: colors.backButtonBg}]}
           hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
-          <Image source={icons.menu} style={styles.actionIcon} resizeMode="contain" />
+          <Image
+            source={icons.menu}
+            style={[styles.actionIcon, {tintColor: colors.textPrimary}]}
+            resizeMode="contain"
+          />
         </TouchableOpacity>
       )}
     </TouchableOpacity>
@@ -152,13 +174,11 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray1,
   },
   avatar: {
     width: 48,
     height: 48,
     borderRadius: 10,
-    backgroundColor: COLORS.transparentPrimary,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 14,
@@ -173,14 +193,12 @@ const styles = StyleSheet.create({
   },
   itemName: {
     ...FONTS.body2,
-    color: COLORS.black,
     fontWeight: '700',
     fontSize: 15,
     marginBottom: 4,
   },
   secondaryText: {
     ...FONTS.body4,
-    color: COLORS.gray2,
     fontSize: 13,
   },
   metaText: {
@@ -192,20 +210,15 @@ const styles = StyleSheet.create({
   metaTextOpen: {
     color: COLORS.primary2,
   },
-  metaTextMuted: {
-    color: COLORS.gray2,
-  },
   actionButton: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: COLORS.transparentPrimary,
     alignItems: 'center',
     justifyContent: 'center',
   },
   actionIcon: {
     width: 16,
     height: 16,
-    tintColor: COLORS.primary3,
   },
 });

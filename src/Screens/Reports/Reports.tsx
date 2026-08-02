@@ -1,4 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   ActivityIndicator,
   Image,
@@ -24,6 +25,7 @@ import {
 import {savePdfBufferAndShare} from '../../utils/reportPdfDownload';
 import {BranchFilterSelect} from '../../Components/BranchFilterSelect';
 import {useAppContext} from '../../context/Store';
+import {useScreenTopInset} from '../../hooks/useScreenTopInset';
 
 type DateFilter = 'today' | 'last7days' | 'last30days';
 
@@ -202,6 +204,7 @@ const REPORT_SECTIONS = [
 
 const Reports = () => {
   const {canRead} = usePermissions();
+  const topInset = useScreenTopInset();
   const app = useAppContext();
   const [activeFilter, setActiveFilter] = useState<DateFilter>('today');
   const [sales, setSales] = useState<SalesInvoice[]>([]);
@@ -331,9 +334,9 @@ const Reports = () => {
 
   const formatCurrency = useCallback((amount?: number) => {
     if (typeof amount !== 'number') {
-      return 'UGX 0';
+      return formatCurrencyCompact(0);
     }
-    return `UGX ${Math.round(amount).toLocaleString()}`;
+    return formatCurrencyCompact(amount);
   }, []);
 
   const handleReportPress = (reportId: ReportId) => {
@@ -1256,7 +1259,9 @@ const Reports = () => {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={[styles.content, {paddingTop: topInset}]}>
       <Text style={styles.heading}>Reports</Text>
       <Text style={styles.subHeading}>
         Track your business performance with comprehensive analytics and insights.

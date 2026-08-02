@@ -6,6 +6,7 @@ import {icons, FONTS, SIZES} from '../../constants';
 import {useTheme} from '../../context/ThemeContext';
 import {QuickIconPressable} from '../../Components/QuickIconPressable';
 import {safeGoBack} from '../../hooks/NavigationService';
+import {useScreenTopInset} from '../../hooks/useScreenTopInset';
 
 type Props = {
   title: string;
@@ -15,12 +16,13 @@ type Props = {
 export default function RestaurantScreenLayout({title, children}: Props) {
   const {colors} = useTheme();
   const navigation = useNavigation<any>();
+  const topInset = useScreenTopInset();
 
   return (
     <SafeAreaView
       style={[styles.safe, {backgroundColor: colors.background}]}
-      edges={['top', 'left', 'right']}>
-      <View style={styles.header}>
+      edges={['left', 'right', 'bottom']}>
+      <View style={[styles.header, {paddingTop: topInset}]}>
         <QuickIconPressable
           onPress={() => safeGoBack(navigation, 'Home')}
           style={[styles.back, {backgroundColor: colors.backButtonBg}]}

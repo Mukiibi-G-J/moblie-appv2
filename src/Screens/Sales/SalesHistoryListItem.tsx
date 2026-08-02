@@ -1,4 +1,5 @@
 import React, {useMemo} from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   View,
   Text,
@@ -22,6 +23,9 @@ export type SalesHistoryListItemData = {
   /** List API: Paid / Not Paid Yet / Fully Paid when method name is absent */
   payment_status?: string;
   status?: 'Draft' | 'Open' | 'Posted' | 'Cancelled' | string;
+  reversed?: boolean;
+  reversed_by_user?: string | null;
+  reversed_date?: string | null;
 };
 
 export function salesHistoryPaymentLabel(item: {
@@ -77,11 +81,13 @@ const SalesHistoryListItem: React.FC<Props> = ({
   const formatAmount = (raw: unknown) => {
     const n = Number(raw);
     const amount = Number.isFinite(n) ? n : 0;
-    return `UGX ${amount.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
+    return formatCurrencyCompact(amount);
   };
 
   const isPosted =
-    String(item.status || '').toLowerCase() === 'posted' && onPrintPress;
+    String(item.status || '').toLowerCase() === 'posted' &&
+    !item.reversed &&
+    onPrintPress;
 
   const formatDate = (dateString?: string) => {
     if (!dateString) {
@@ -112,18 +118,22 @@ const SalesHistoryListItem: React.FC<Props> = ({
             />
           </View>
           <View style={styles.textCol}>
-            <Text style={[styles.title, t.title]} numberOfLines={1}>
+            <Text style={[styles.title, t.title, item.reversed && styles.reversedText]} numberOfLines={1}>
               {item.customer_name?.trim() || 'Walk-in customer'}
             </Text>
-            <Text style={[styles.subtitle, t.subtitle]} numberOfLines={1}>
+            <Text style={[styles.subtitle, t.subtitle, item.reversed && styles.reversedText]} numberOfLines={1}>
               Invoice #{item.invoice_no || '—'}
             </Text>
           </View>
         </View>
         <View style={styles.rightCol}>
-          {item.status ? (
-            <SalesInvoiceStatusBadge status={item.status} />
-          ) : null}
+          <View style={styles.badgeRow}>
+            {item.reversed ? (
+              <SalesInvoiceStatusBadge status="Reversed" />
+            ) : item.status ? (
+              <SalesInvoiceStatusBadge status={item.status} />
+            ) : null}
+          </View>
           <View style={styles.amountRow}>
             {isPosted ? (
               <TouchableOpacity
@@ -138,7 +148,7 @@ const SalesHistoryListItem: React.FC<Props> = ({
                 />
               </TouchableOpacity>
             ) : null}
-            <Text style={[styles.amount, t.amount]}>
+            <Text style={[styles.amount, t.amount, item.reversed && styles.reversedText]}>
               {formatAmount(item.total_amount)}
             </Text>
           </View>
@@ -214,6 +224,12 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     justifyContent: 'flex-start',
   },
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    gap: 6,
+  },
   amountRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -235,6 +251,11 @@ const styles = StyleSheet.create({
   amount: {
     ...FONTS.body3,
     fontWeight: '700',
+  },
+  reversedText: {
+    color: '#B42318',
+    textDecorationLine: 'line-through',
+    opacity: 0.85,
   },
   metaRow: {
     flexDirection: 'row',

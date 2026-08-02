@@ -14,13 +14,17 @@ import SignIn from './src/Screens/Authentication/SignIn';
 import { AppProvider, useAppContext, useAuth } from './src/context/Store';
 import { TenantProvider } from './src/context/TenantContext';
 import { NetworkProvider } from './src/context/NetworkContext';
+import { OfflineProvider } from './src/context/OfflineContext';
 import MainLayout from './src/Screens/MainLayout';
 import Cart from './src/Screens/Cart/Cart';
 import { CartProvider } from './src/context/CartStore';
 import { SearchModeProvider } from './src/context/SearchModeStore';
 import { navigationRef } from './src/hooks/NavigationService';
 import Settings from './src/Screens/Settings/Settings';
+import ProfileScreen from './src/Screens/Profile/ProfileScreen';
+import SyncQueue from './src/Screens/Sync/SyncQueue';
 import BusinessDetails from './src/Screens/BusinessDetails/BusinessDetails';
+import AvailableModulesScreen from './src/Screens/Help/AvailableModulesScreen';
 import Expenses from './src/Screens/Expenses/Expenses';
 import ExpenseHistory from './src/Screens/Expenses/ExpenseHistory';
 import MyWallet from './src/Screens/MyWallet/MyWallet';
@@ -66,6 +70,8 @@ import BankAccounts from './src/Screens/BankAccounts/BankAccounts';
 import BankAccountLedger from './src/Screens/BankAccounts/BankAccountLedger';
 import Financials from './src/Screens/Financials/Financials';
 import UserManagement from './src/Screens/UserManagement/UserManagement';
+import Users from './src/Screens/UserManagement/Users';
+import UserSetupList from './src/Screens/UserManagement/UserSetupList';
 import { ProtectedScreen } from './src/Components/ProtectedScreen';
 import { PAGE_NAMES } from './src/constants/pageNames';
 import RestaurantHub from './src/Screens/Restaurant/RestaurantHub';
@@ -86,6 +92,7 @@ import { COLORS } from './src/constants';
 import { AppUpdateGate } from './src/Components/AppUpdateGate';
 import RestaurantPinRouteGate from './src/Components/RestaurantPinRouteGate';
 import BranchSelectModal from './src/Components/BranchSelectModal';
+import NotificationBootstrap from './src/Components/NotificationBootstrap';
 
 const Stack = createStackNavigator();
 
@@ -184,6 +191,11 @@ const RouteUserManagement = protectRoute(
   UserManagement,
   PAGE_NAMES.USER_MANAGEMENT,
 );
+const RouteUsers = protectRoute(Users, PAGE_NAMES.USER_MANAGEMENT);
+const RouteUserSetupList = protectRoute(UserSetupList, [
+  PAGE_NAMES.USER_SETUP,
+  PAGE_NAMES.USER_MANAGEMENT,
+]);
 const RouteRestaurantPOS = protectRoute(
   RestaurantPOS,
   PAGE_NAMES.RESTAURANT_POS,
@@ -243,6 +255,7 @@ const AppNavigator = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [initialRoute, setInitialRoute] = useState('OnBoarding');
   const isFirstRunRef = useRef(true);
+  const bootstrapCompleteRef = useRef(false);
 
   const guestInitialRouteName = useMemo(() => {
     if (GUEST_STACK_ROUTES.has(initialRoute)) {
@@ -252,9 +265,16 @@ const AppNavigator = () => {
   }, [initialRoute]);
 
   useEffect(() => {
+    if (!sessionHydrated) {
+      return;
+    }
+
     const initializeApp = async () => {
+      const isColdStart = !bootstrapCompleteRef.current;
       try {
-        setIsLoading(true);
+        if (isColdStart) {
+          setIsLoading(true);
+        }
         const onboardingComplete = await AsyncStorage.getItem(
           '@onboarding_complete',
         );
@@ -292,12 +312,15 @@ const AppNavigator = () => {
             }
           }
         }
-        const delay = isFirstRunRef.current ? 2000 : 400;
-        isFirstRunRef.current = false;
-        await new Promise(resolve => setTimeout(resolve, delay));
+        if (isColdStart) {
+          const delay = isFirstRunRef.current ? 2000 : 400;
+          isFirstRunRef.current = false;
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
       } catch (error) {
         console.error('Error during app initialization:', error);
       } finally {
+        bootstrapCompleteRef.current = true;
         setIsLoading(false);
       }
     };
@@ -435,8 +458,23 @@ const AppNavigator = () => {
               options={{ headerShown: false }}
             />
             <Stack.Screen
+              name="Profile"
+              component={ProfileScreen}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="SyncQueue"
+              component={SyncQueue}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
               name="BusinessDetails"
               component={BusinessDetails}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="AvailableModules"
+              component={AvailableModulesScreen}
               options={{ headerShown: false }}
             />
             <Stack.Screen
@@ -585,6 +623,16 @@ const AppNavigator = () => {
               options={{ headerShown: false }}
             />
             <Stack.Screen
+              name="Users"
+              component={RouteUsers}
+              options={{headerShown: false}}
+            />
+            <Stack.Screen
+              name="UserSetupList"
+              component={RouteUserSetupList}
+              options={{headerShown: false}}
+            />
+            <Stack.Screen
               name="RestaurantHub"
               component={RestaurantHub}
               options={{headerShown: false}}
@@ -677,17 +725,20 @@ function App() {
     <SafeAreaProvider>
       <AppProvider>
         <NetworkProvider>
-          <TenantProvider>
-            <CartProvider>
-              <SearchModeProvider>
-                <ThemeProvider>
-                  <AppUpdateGate>
-                    <ThemedNavigation />
-                  </AppUpdateGate>
-                </ThemeProvider>
-              </SearchModeProvider>
-            </CartProvider>
-          </TenantProvider>
+          <OfflineProvider>
+            <TenantProvider>
+              <CartProvider>
+                <SearchModeProvider>
+                  <ThemeProvider>
+                    <AppUpdateGate>
+                      <ThemedNavigation />
+                      <NotificationBootstrap />
+                    </AppUpdateGate>
+                  </ThemeProvider>
+                </SearchModeProvider>
+              </CartProvider>
+            </TenantProvider>
+          </OfflineProvider>
         </NetworkProvider>
       </AppProvider>
     </SafeAreaProvider>

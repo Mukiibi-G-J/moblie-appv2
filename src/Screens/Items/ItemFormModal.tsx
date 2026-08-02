@@ -1,4 +1,5 @@
 import React, {useState, useEffect, useCallback, useMemo} from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   View,
   Text,
@@ -43,6 +44,7 @@ interface ItemFormModalProps {
 interface ItemFormValues {
   item_name: string;
   description: string;
+  bar_code_no: string;
   unit_price: number; // Store as number
   category_id: number | null;
 }
@@ -109,6 +111,7 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
   const [formData, setFormData] = useState<ItemFormValues>({
     item_name: '',
     description: '',
+    bar_code_no: '',
     unit_price: 0,
     category_id: null,
   });
@@ -178,6 +181,7 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
       setFormData({
         item_name: item.item_name || '',
         description: item.description || '',
+        bar_code_no: item.bar_code_no || '',
         unit_price: item.unit_price || 0,
         category_id: mappedCategoryId,
       });
@@ -186,6 +190,7 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
       setFormData({
         item_name: '',
         description: '',
+        bar_code_no: '',
         unit_price: 0,
         category_id: null,
       });
@@ -295,6 +300,10 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
       // Only include optional fields if they have values
       if (formData.description && formData.description.trim()) {
         itemData.description = formData.description.trim();
+      }
+
+      if (formData.bar_code_no && formData.bar_code_no.trim()) {
+        itemData.bar_code_no = formData.bar_code_no.trim();
       }
 
       if (formData.unit_price && formData.unit_price > 0) {
@@ -435,6 +444,23 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
                 )}
               </View>
 
+              {/* Barcode */}
+              <View style={styles.fieldContainer}>
+                <Text style={[styles.label, formTheme.label]}>Barcode</Text>
+                <TextInput
+                  style={[styles.input, formTheme.input]}
+                  value={formData.bar_code_no}
+                  onChangeText={text =>
+                    setFormData({...formData, bar_code_no: text})
+                  }
+                  placeholder="Scan or enter barcode"
+                  placeholderTextColor={colors.placeholder}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                  maxLength={100}
+                />
+              </View>
+
               {/* Description */}
               <View style={styles.fieldContainer}>
                 <Text style={[styles.label, formTheme.label]}>Description</Text>
@@ -490,9 +516,9 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
 
               {/* Price */}
               <View style={styles.fieldContainer}>
-                <Text style={[styles.label, formTheme.label]}>Price (UGX)</Text>
+                <Text style={[styles.label, formTheme.label]}>{formatCurrencyLabel('Price')}</Text>
                 <View style={[styles.priceInputContainer, formTheme.priceInputContainer]}>
-                  <Text style={styles.pricePrefix}>UGX</Text>
+                  <Text style={styles.pricePrefix}>{getLocalCurrencyCode()}</Text>
                   <TextInput
                     style={[
                       styles.priceInput,

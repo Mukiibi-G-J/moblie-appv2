@@ -5,12 +5,13 @@ import {
     ActivityIndicator,
     StyleSheet,
     TouchableOpacity,
-    SafeAreaView,
 } from "react-native";
+import {SafeAreaView} from "react-native-safe-area-context";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useNavigation } from "@react-navigation/native";
 import Toast from "react-native-toast-message";
-import { useTheme } from "../../context/ThemeContext";
+import {useTheme} from "../../context/ThemeContext";
+import {useScreenTopInset} from "../../hooks/useScreenTopInset";
 import { FONTS } from "../../constants";
 import { authOnboarding } from "../../design-system/authOnboardingTokens";
 import { seedLoginCredentialsAfterSignup } from "../../utils/loginCredentials";
@@ -27,6 +28,7 @@ const CTA_BRAND = "#0b5cff";
 
 const CompanyProvisioningScreen = () => {
     const { colors } = useTheme();
+    const topInset = useScreenTopInset();
     const navigation = useNavigation<Nav>();
     const [statusMessage, setStatusMessage] = useState("Checking company setup…");
     const ranRef = useRef(false);
@@ -37,7 +39,7 @@ const CompanyProvisioningScreen = () => {
             await seedLoginCredentialsAfterSignup(companyName, email);
             Toast.show({
                 text1: "Company created",
-                text2: "Sign in with your email and password.",
+                text2: "Sign in with your email and password to verify your account.",
                 type: "success",
             });
             navigation.replace("SignIn");
@@ -131,8 +133,10 @@ const CompanyProvisioningScreen = () => {
     };
 
     return (
-        <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
-            <View style={styles.center}>
+        <SafeAreaView
+            style={[styles.safe, { backgroundColor: colors.background }]}
+            edges={["left", "right", "bottom"]}>
+            <View style={[styles.center, { paddingTop: topInset }]}>
                 <ActivityIndicator size="large" color={CTA_BRAND} />
                 <Text
                     style={[

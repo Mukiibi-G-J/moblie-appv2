@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   View,
   Text,
@@ -22,7 +23,6 @@ import { Camera, CameraType } from 'react-native-camera-kit';
 import {GestureHandlerRootView} from 'react-native-gesture-handler';
 import {
   createSales,
-  searchItems,
   fetchDraftSales,
   getSalesInvoice,
   updateSalesInvoice,
@@ -33,6 +33,14 @@ import {
   PaymentMethod,
   fetchAllItemLedgerEntries,
 } from '../../services/app.services';
+import {searchItems as catalogSearchItems} from '../../services/itemCatalogService';
+import {useOfflineOptional} from '../../context/OfflineContext';
+import {PosConnectivityBadge} from '../../Components/PosConnectivityBadge';
+import {
+  getCartTrackingMode,
+  getPosConnectivityMode,
+  OFFLINE_LOT_PICKER_MESSAGE,
+} from '../../utils/posConnectivity';
 import Toast from 'react-native-toast-message';
 import ReactNativeModal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -53,11 +61,12 @@ import {
   Header,
   QuickIconPressable,
 } from '../../Components';
+import TodayMySalesBar from '../../Components/TodayMySalesBar';
 import { useAppContext } from '../../context/Store';
 import { usePermissions } from '../../hooks/usePermissions';
 import { PAGE_NAMES } from '../../constants/pageNames';
 import { useCart } from '../../context/CartStore';
-import { useIsFocused } from '@react-navigation/native';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import { handlePrint } from '../../Components/HandlePrint';
 import { SalesPostData, CartItem } from '../../@types/types.dto';
 import {
@@ -230,6 +239,27 @@ const Cart = ({
       draftDate: { color: colors.textSecondary },
       loadingTxt: { color: colors.textSecondary },
       saleActDismiss: { color: colors.textSecondary },
+      draftsAccessBtn: {
+        backgroundColor: colors.card,
+        borderColor: colors.border,
+      },
+      draftsAccessIcon: { tintColor: colors.textPrimary },
+      saleDateRow: {
+        backgroundColor: colors.inputBackground,
+        borderColor: colors.border,
+      },
+      saleDateLabel: { color: colors.textSecondary },
+      saleDateValue: { color: colors.textPrimary },
+      draftsHubSheet: { backgroundColor: colors.surface },
+      draftsHubHdr: { borderBottomColor: colors.border },
+      draftsHubTitle: { color: colors.textPrimary },
+      draftsHubSubtitle: { color: colors.textSecondary },
+      draftsHubSaveBtn: {
+        backgroundColor: isDark ? 'rgba(2, 134, 255, 0.18)' : COLORS.transparentPrimary2,
+        borderColor: COLORS.primary2,
+      },
+      draftsHubSaveText: { color: COLORS.primary2 },
+      draftsHubEmpty: { color: colors.textSecondary },
     }),
     [colors, isDark],
   );
@@ -239,10 +269,14 @@ const Cart = ({
   const appContext = useAppContext();
   const { cartItems } = state;
   const auth = appContext?.auth;
-  const { canRead, canCreate, canEdit, canDelete } = usePermissions();
+  const { canRead, canCreate, canEdit, canDelete, hasAnyPageAccess } =
+    usePermissions();
   const SALES_PAGE = PAGE_NAMES.SALES;
   const canViewSales = canRead(SALES_PAGE);
+  const canOpenSalesHistory = hasAnyPageAccess(PAGE_NAMES.SALES_HISTORY);
+  const [todayMySalesRefreshKey, setTodayMySalesRefreshKey] = useState(0);
   const canInsertSale = canCreate(SALES_PAGE);
+  const showTodayMySales = canViewSales || canInsertSale;
   const canModifySale = canEdit(SALES_PAGE);
   const canRemoveSale = canDelete(SALES_PAGE);
   const canMutateCart = canInsertSale || canModifySale;
@@ -253,6 +287,9 @@ const Cart = ({
   const [globalSellingDate, setGlobalSellingDate] = useState(new Date());
   const [showGlobalDatePicker, setShowGlobalDatePicker] = useState(false);
   const { state: searchModeState } = useSearchMode();
+  const offlineCtx = useOfflineOptional();
+  const isPosOnline =
+    offlineCtx?.isOnline ?? getPosConnectivityMode() === 'online';
 
   // Drafts state
   const [drafts, setDrafts] = useState < any[] > ([]);
@@ -340,6 +377,14 @@ const Cart = ({
     }
   }, [isFocused]);
 
+  useFocusEffect(
+    useCallback(() => {
+      if (showTodayMySales) {
+        setTodayMySalesRefreshKey(k => k + 1);
+      }
+    }, [showTodayMySales]),
+  );
+
   cartItemsRef.current = cartItems;
 
   useEffect(() => {
@@ -370,11 +415,10 @@ const Cart = ({
     }
   }, [isFocused]);
 
-  useEffect(() => {
-    if (drafts.length === 0 && draftsModalVisible) {
-      setDraftsModalVisible(false);
-    }
-  }, [drafts.length, draftsModalVisible]);
+  const openDraftsHub = useCallback(() => {
+    setDraftsModalVisible(true);
+    setSaleActionsVisible(false);
+  }, []);
 
   useEffect(() => {
     if (showSalesModal && !canInsertSale) {
@@ -523,7 +567,7 @@ const Cart = ({
         });
         return;
       }
-      const results = await searchItems(itemCode);
+      const results = await catalogSearchItems(itemCode);
 
       if (results.length === 1) {
         addToCart(results[0]);
@@ -830,16 +874,18 @@ const Cart = ({
       return;
     }
   
-    const trackingValidation = validateCartTracking(cartItems);
-    if (!trackingValidation.ok) {
-      Toast.show({
-        type: 'error',
-        text1: 'Tracking required',
-        text2: trackingValidation.message,
-        visibilityTime: 4500,
-        position: 'top',
-      });
-      return;
+    if (getCartTrackingMode(isPosOnline) === 'strict') {
+      const trackingValidation = validateCartTracking(cartItems);
+      if (!trackingValidation.ok) {
+        Toast.show({
+          type: 'error',
+          text1: 'Tracking required',
+          text2: trackingValidation.message,
+          visibilityTime: 4500,
+          position: 'top',
+        });
+        return;
+      }
     }
   
     // Show sales completion modal
@@ -847,6 +893,17 @@ const Cart = ({
   };
   
   const openTrackingModal = async (item: CartItem) => {
+    if (!isPosOnline) {
+      Toast.show({
+        type: 'info',
+        text1: 'Offline',
+        text2: OFFLINE_LOT_PICKER_MESSAGE,
+        visibilityTime: 4500,
+        position: 'top',
+      });
+      return;
+    }
+
     setTrackingModalItem(item);
     setTrackingModalVisible(true);
   
@@ -924,6 +981,7 @@ const Cart = ({
   
     // Refresh drafts after successful sale
     loadDrafts();
+    setTodayMySalesRefreshKey(k => k + 1);
   
     // Tab Make Sale lives inside MainLayout (isTabMode). Navigating to stack "Cart"
     // mounts a second, full-screen Cart — wrong screen. Stay on the current tab.
@@ -1107,6 +1165,7 @@ const Cart = ({
   
       // Refresh drafts list
       await loadDrafts();
+      setDraftsModalVisible(false);
     } catch (error: any) {
       console.error('Failed to save draft:', error);
       Toast.show({
@@ -1154,7 +1213,7 @@ const Cart = ({
   
           try {
             // Search for the item to get current inventory
-            const searchResults = await searchItems(itemNo);
+            const searchResults = await catalogSearchItems(itemNo);
             itemDetails = searchResults.find(
               (item: CartItem) =>
                 item.no === itemNo ||
@@ -1277,6 +1336,45 @@ const Cart = ({
     }
   };
   
+  const renderSellingDatePicker = () =>
+    showGlobalDatePicker ? (
+      <DateTimePicker
+        value={globalSellingDate}
+        mode="date"
+        display="default"
+        onChange={(_event, selectedDate) => {
+          const currentDate = selectedDate || globalSellingDate;
+          setShowGlobalDatePicker(Platform.OS === 'ios');
+          setGlobalSellingDate(currentDate);
+        }}
+        themeVariant={resolvedScheme === 'dark' ? 'dark' : 'light'}
+      />
+    ) : null;
+
+  const renderDraftsAccessButton = () => {
+    if (!canUseDrafts) {
+      return null;
+    }
+    return (
+      <QuickIconPressable
+        onPress={openDraftsHub}
+        style={[styles.draftsAccessButton, ct.draftsAccessBtn]}
+        hitSlop={ICON_BUTTON_HIT_SLOP}
+        accessibilityLabel={`Drafts, ${drafts.length} of 3 saved`}>
+        <Image
+          source={icons.coupon}
+          style={[styles.draftsAccessIcon, ct.draftsAccessIcon]}
+          resizeMode="contain"
+        />
+        {drafts.length > 0 ? (
+          <View style={styles.draftsAccessBadge}>
+            <Text style={styles.draftsAccessBadgeText}>{drafts.length}</Text>
+          </View>
+        ) : null}
+      </QuickIconPressable>
+    );
+  };
+
   function renderFooter() {
     const subQuantity = cartItems.reduce(
       (a: number, c: { quantity: number }) => a + (Number(c.quantity) || 0),
@@ -1290,63 +1388,6 @@ const Cart = ({
     const total = subTotal;
     return (
       <View>
-        {!isTabMode ? (
-          <View style={[styles.footerTopCombined, ct.footerTop]}>
-            <View style={styles.footerDateBlock}>
-              <Text style={[styles.dateLabel, ct.dateLbl]}>Selling date</Text>
-              <TouchableOpacity
-                style={[styles.globalDatePickerButton, ct.globalDateBtn]}
-                disabled={cartItems.length > 0 && !canModifySale}
-                onPress={() => setShowGlobalDatePicker(true)}>
-                <Image source={icons.calender} style={styles.calendarIcon} />
-                <Text style={[styles.datePickerText, ct.datePickTxt]} numberOfLines={1}>
-                  {globalSellingDate.toLocaleDateString('en-US', {
-                    year: 'numeric',
-                    month: 'short',
-                    day: 'numeric',
-                  })}
-                </Text>
-              </TouchableOpacity>
-            </View>
-            {cartItems.length > 0 &&
-              (currentDraftId ? canModifySale : canInsertSale) && (
-              <TouchableOpacity
-                style={[
-                  styles.saveDraftButtonInline,
-                  isSavingDraft && styles.saveDraftButtonDisabled,
-                  currentDraftId && styles.saveDraftButtonUpdating,
-                ]}
-                onPress={handleSaveDraft}
-                disabled={
-                  isSavingDraft || (!currentDraftId && drafts.length >= 3)
-                }>
-                {isSavingDraft ? (
-                  <ActivityIndicator size="small" color={COLORS.white} />
-                ) : (
-                  <Text style={styles.saveDraftButtonText} numberOfLines={1}>
-                    {currentDraftId ? 'Update Draft' : 'Save Draft'}
-                  </Text>
-                )}
-              </TouchableOpacity>
-            )}
-          </View>
-        ) : null}
-  
-        {/* Date Picker Modal */}
-        {showGlobalDatePicker && !isTabMode && (
-          <DateTimePicker
-            value={globalSellingDate}
-            mode="date"
-            display="default"
-            onChange={(event, selectedDate) => {
-              const currentDate = selectedDate || globalSellingDate;
-              setShowGlobalDatePicker(Platform.OS === 'ios');
-              setGlobalSellingDate(currentDate);
-            }}
-            themeVariant={resolvedScheme === 'dark' ? 'dark' : 'light'}
-          />
-        )}
-  
         <FooterTotal
           subTotal={subTotal}
           totalQuantity={subQuantity}
@@ -1565,6 +1606,25 @@ const Cart = ({
               <View style={styles.currentSaleHeaderIconButton} />
             )}
           </View>
+
+          <TouchableOpacity
+            style={[styles.saleDateRow, ct.saleDateRow]}
+            disabled={!canModifySale}
+            onPress={() => setShowGlobalDatePicker(true)}
+            activeOpacity={0.78}>
+            <Image source={icons.calender} style={styles.saleDateRowIcon} />
+            <Text style={[styles.saleDateRowLabel, ct.saleDateLabel]}>
+              Selling date
+            </Text>
+            <Text style={[styles.saleDateRowValue, ct.saleDateValue]}>
+              {globalSellingDate.toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+              })}
+            </Text>
+            <Image source={icons.down_arrow} style={styles.saleDateRowChevron} />
+          </TouchableOpacity>
   
           <TouchableOpacity
             style={[styles.customerRow, ct.customerRow]}
@@ -1622,13 +1682,10 @@ const Cart = ({
 
                       <View style={styles.squareCartRight}>
                         <Text style={[styles.squareCartAmount, ct.squareCartAmt]}>
-                          UGX {(
+                          {formatCurrencyCompact(
                             (Number(item.unit_price) || 0) *
-                            (Number(item.quantity) || 1)
-                          ).toLocaleString('en-US', {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}
+                              (Number(item.quantity) || 1),
+                          )}
                         </Text>
                       </View>
                     </View>
@@ -1698,6 +1755,50 @@ const Cart = ({
               <View style={styles.saleActionsInlineSheetWrap} pointerEvents="box-none">
                 <View style={[styles.saleActionsSheet, ct.saleActionsSheet]}>
                   <View style={styles.saleActionsHandle} />
+                  {canUseDrafts ? (
+                    <TouchableOpacity
+                      style={styles.saleActionsMenuRow}
+                      activeOpacity={0.85}
+                      onPress={openDraftsHub}>
+                      <Text style={styles.saleActionsMenuRowText}>
+                        {drafts.length > 0
+                          ? `Open drafts (${drafts.length}/3)`
+                          : 'Open drafts'}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  {cartItems.length > 0 &&
+                  (currentDraftId ? canModifySale : canInsertSale) ? (
+                    <TouchableOpacity
+                      style={[
+                        styles.saleActionsMenuRow,
+                        styles.saleActionsMenuRowPrimary,
+                        (isSavingDraft ||
+                          (!currentDraftId && drafts.length >= 3)) &&
+                          styles.saleActionsMenuRowDisabled,
+                      ]}
+                      disabled={
+                        isSavingDraft ||
+                        (!currentDraftId && drafts.length >= 3)
+                      }
+                      activeOpacity={0.85}
+                      onPress={async () => {
+                        await handleSaveDraft();
+                        setSaleActionsVisible(false);
+                      }}>
+                      {isSavingDraft ? (
+                        <ActivityIndicator size="small" color={COLORS.primary2} />
+                      ) : (
+                        <Text
+                          style={[
+                            styles.saleActionsMenuRowText,
+                            styles.saleActionsMenuRowTextPrimary,
+                          ]}>
+                          {currentDraftId ? 'Update draft' : 'Save as draft'}
+                        </Text>
+                      )}
+                    </TouchableOpacity>
+                  ) : null}
                   <TouchableOpacity
                     style={[
                       styles.saleActionsPrimaryButton,
@@ -1707,6 +1808,8 @@ const Cart = ({
                     activeOpacity={0.85}
                     onPress={async () => {
                       await dispatch({ type: 'CLEAR_CART' });
+                      setCurrentDraftId(null);
+                      setCurrentDraftSystemId(null);
                       setSaleActionsVisible(false);
                     }}>
                     <Text
@@ -1753,7 +1856,7 @@ const Cart = ({
   
                     <Text style={styles.cartEditorTitle} numberOfLines={1}>
                       {editingCartItem
-                        ? `${editingCartItem.item_name} UGX ${formatMoney(
+                        ? `${editingCartItem.item_name} ${formatCurrencyCompact(
                           editingCartItem.unit_price,
                         )}`
                         : 'Edit item'}
@@ -2053,7 +2156,7 @@ const Cart = ({
                         : posItemStockLabel(item)}
                     </Text>
                     <Text style={styles.modalPriceText}>
-                      UGX {formatMoney(item.unit_price)}
+                      {formatCurrencyCompact(item.unit_price)}
                     </Text>
                   </View>
                 </View>
@@ -2082,34 +2185,102 @@ const Cart = ({
   );
   
   const closeDraftsModal = () => setDraftsModalVisible(false);
+
+  const canSaveCurrentDraft =
+    cartItems.length > 0 && (currentDraftId ? canModifySale : canInsertSale);
   
-  const renderDraftsModal = () => (
+  const renderDraftsHub = () => (
     <ReactNativeModal
-      isVisible={draftsModalVisible && drafts.length > 0}
+      isVisible={draftsModalVisible}
       animationIn="slideInUp"
       animationOut="slideOutDown"
       onBackdropPress={closeDraftsModal}
-      style={styles.modal}
+      style={styles.draftsHubModal}
       avoidKeyboard={true}
-      backdropOpacity={0.3}
+      backdropOpacity={0.35}
       useNativeDriver={true}
       onBackButtonPress={() => {
         closeDraftsModal();
         return true;
       }}>
-      <View style={[styles.modalView, ct.modalSheet]}>
-        <View style={[styles.modalHeader, ct.modalHdr]}>
-          <Text style={[styles.modalTitle, ct.modalTitle]}>Recent drafts</Text>
-          <QuickIconPressable onPress={closeDraftsModal} style={styles.closeButton} accessibilityLabel="Close">
+      <View style={[styles.draftsHubSheet, ct.draftsHubSheet]}>
+        <View style={[styles.draftsHubHeader, ct.draftsHubHdr]}>
+          <View style={styles.draftsHubHeaderText}>
+            <Text style={[styles.draftsHubTitle, ct.draftsHubTitle]}>
+              Saved drafts
+            </Text>
+            <Text style={[styles.draftsHubSubtitle, ct.draftsHubSubtitle]}>
+              {drafts.length}/3 slots used · tap a draft to resume
+            </Text>
+          </View>
+          <QuickIconPressable
+            onPress={closeDraftsModal}
+            style={styles.closeButton}
+            accessibilityLabel="Close drafts">
             <Image source={icons.cross} style={[styles.closeIcon, ct.closeIc]} />
           </QuickIconPressable>
         </View>
+
+        {canSaveCurrentDraft ? (
+          <TouchableOpacity
+            style={[
+              styles.draftsHubSaveButton,
+              ct.draftsHubSaveBtn,
+              (isSavingDraft || (!currentDraftId && drafts.length >= 3)) &&
+                styles.draftsHubSaveButtonDisabled,
+            ]}
+            disabled={isSavingDraft || (!currentDraftId && drafts.length >= 3)}
+            onPress={handleSaveDraft}
+            activeOpacity={0.85}>
+            {isSavingDraft ? (
+              <ActivityIndicator size="small" color={COLORS.primary2} />
+            ) : (
+              <Text style={[styles.draftsHubSaveButtonText, ct.draftsHubSaveText]}>
+                {currentDraftId ? 'Update current draft' : 'Save current sale as draft'}
+              </Text>
+            )}
+          </TouchableOpacity>
+        ) : null}
+
+        <TouchableOpacity
+          style={[styles.draftsHubDateRow, ct.saleDateRow]}
+          disabled={!canModifySale}
+          onPress={() => setShowGlobalDatePicker(true)}
+          activeOpacity={0.78}>
+          <Image source={icons.calender} style={styles.saleDateRowIcon} />
+          <Text style={[styles.saleDateRowLabel, ct.saleDateLabel]}>
+            Selling date
+          </Text>
+          <Text style={[styles.saleDateRowValue, ct.saleDateValue]}>
+            {globalSellingDate.toLocaleDateString('en-US', {
+              year: 'numeric',
+              month: 'short',
+              day: 'numeric',
+            })}
+          </Text>
+        </TouchableOpacity>
+
         <ScrollView
-          style={{ flex: 1 }}
+          style={styles.draftsHubList}
           contentContainerStyle={styles.draftsModalList}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}>
-          {drafts.map((draft: any) => (
+          {loadingDrafts ? (
+            <View style={styles.draftsHubEmptyState}>
+              <ActivityIndicator size="small" color={COLORS.primary2} />
+              <Text style={[styles.draftsHubEmptyText, ct.draftsHubEmpty]}>
+                Loading drafts…
+              </Text>
+            </View>
+          ) : drafts.length === 0 ? (
+            <View style={styles.draftsHubEmptyState}>
+              <Text style={[styles.draftsHubEmptyText, ct.draftsHubEmpty]}>
+                No saved drafts yet. Add items to the cart, then save a draft to
+                pick up later.
+              </Text>
+            </View>
+          ) : (
+            drafts.map((draft: any) => (
             <View
               key={draft.id}
               style={[styles.draftCard, styles.draftCardInModal, ct.draftCard]}>
@@ -2152,11 +2323,12 @@ const Cart = ({
                   {new Date(draft.created_at).toLocaleDateString()}
                 </Text>
                 <Text style={styles.draftAmount}>
-                  UGX {draft.total_amount?.toLocaleString() || '0'}
+                  {formatCurrencyCompact(draft.total_amount || 0)}
                 </Text>
               </TouchableOpacity>
             </View>
-          ))}
+            ))
+          )}
         </ScrollView>
       </View>
     </ReactNativeModal>
@@ -2176,18 +2348,46 @@ const Cart = ({
               showBack={!isTabMode}
               onBackPress={() => safeGoBack(navigation, 'Home')}
               rightComponent={
-                <CartQuantityButton
-                  quantity={cartItems.reduce(
-                    (a: number, c: any) => a + (Number(c.quantity) || 0),
-                    0,
-                  )}
-                  onPress={() => { }}
-                />
+                <View style={styles.headerActionsRow}>
+                  {canUseDrafts ? renderDraftsAccessButton() : null}
+                  <CartQuantityButton
+                    quantity={cartItems.reduce(
+                      (a: number, c: any) => a + (Number(c.quantity) || 0),
+                      0,
+                    )}
+                    onPress={() => {}}
+                  />
+                </View>
               }
               containerStyle={{
                 zIndex: -1,
               }}
             />
+          ) : null}
+
+          {isTabMode ? (
+            <PosConnectivityBadge
+              onPress={() => navigation.navigate('SyncQueue' as never)}
+            />
+          ) : null}
+
+          {showTodayMySales || (canUseDrafts && isTabMode) ? (
+            <View style={styles.posToolbarRow}>
+              <View style={styles.posToolbarMain}>
+                {showTodayMySales ? (
+                  <TodayMySalesBar
+                    userId={Number(auth?.user_id) || null}
+                    refreshKey={todayMySalesRefreshKey}
+                    onOpenHistory={
+                      canOpenSalesHistory
+                        ? () => navigation.navigate('SalesHistory' as never)
+                        : undefined
+                    }
+                  />
+                ) : null}
+              </View>
+              {isTabMode ? renderDraftsAccessButton() : null}
+            </View>
           ) : null}
   
           {Platform.OS === 'android' && searchModeState.barcodeScannerEnabled && (
@@ -2280,28 +2480,6 @@ const Cart = ({
             />
           </View>
   
-          {drafts.length > 0 && !isTabMode && canUseDrafts && (
-            <View style={styles.salesBrowserMetaRow}>
-              <TouchableOpacity
-                style={[styles.draftsOpenButton, ct.draftsBtn]}
-                onPress={() => setDraftsModalVisible(true)}
-                activeOpacity={0.7}>
-                <Text
-                  style={styles.draftsOpenButtonText}
-                  numberOfLines={1}>
-                  Drafts ({drafts.length}/3)
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
-  
-          {loadingDrafts && (
-            <View style={[styles.draftsLoadingContainer, ct.draftsLoad]}>
-              <ActivityIndicator size="small" color={COLORS.primary2} />
-              <Text style={[styles.draftsLoadingText, ct.draftsLoadTxt]}>Loading drafts...</Text>
-            </View>
-          )}
-  
           {loadingDraftIntoCart && (
             <View style={[styles.draftsLoadingContainer, ct.draftsLoad]}>
               <ActivityIndicator size="small" color={COLORS.primary2} />
@@ -2325,7 +2503,8 @@ const Cart = ({
           )}
   
           <ModalPopup />
-          {renderDraftsModal()}
+          {renderSellingDatePicker()}
+          {renderDraftsHub()}
   
           <SalesCompletionModal
             isVisible={showSalesModal && canInsertSale}
@@ -2677,6 +2856,171 @@ const styles = StyleSheet.create({
     color: COLORS.darkGray,
     textDecorationLine: 'underline',
     fontWeight: '600',
+  },
+  saleActionsMenuRow: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.lightGray2,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  saleActionsMenuRowPrimary: {
+    borderColor: COLORS.primary2,
+    backgroundColor: COLORS.transparentPrimary2,
+  },
+  saleActionsMenuRowDisabled: {
+    opacity: 0.5,
+  },
+  saleActionsMenuRowText: {
+    ...FONTS.body3,
+    fontWeight: '600',
+    color: COLORS.darkGray,
+  },
+  saleActionsMenuRowTextPrimary: {
+    color: COLORS.primary2,
+  },
+  posToolbarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingRight: SIZES.padding,
+    gap: 8,
+    minHeight: 40,
+  },
+  posToolbarMain: {
+    flex: 1,
+    minWidth: 0,
+  },
+  headerActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  draftsAccessButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  draftsAccessIcon: {
+    width: 20,
+    height: 20,
+  },
+  draftsAccessBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    minWidth: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: COLORS.primary2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  draftsAccessBadgeText: {
+    color: COLORS.white,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  saleDateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 18,
+    marginBottom: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    gap: 8,
+  },
+  saleDateRowIcon: {
+    width: 16,
+    height: 16,
+    tintColor: COLORS.primary2,
+  },
+  saleDateRowLabel: {
+    ...FONTS.body4,
+    flex: 1,
+  },
+  saleDateRowValue: {
+    ...FONTS.body4,
+    fontWeight: '600',
+  },
+  saleDateRowChevron: {
+    width: 14,
+    height: 14,
+    tintColor: COLORS.primary2,
+    transform: [{rotate: '-90deg'}],
+  },
+  draftsHubModal: {
+    justifyContent: 'flex-end',
+    margin: 0,
+  },
+  draftsHubSheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '78%',
+    paddingBottom: Platform.OS === 'ios' ? 24 : 16,
+  },
+  draftsHubHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  draftsHubHeaderText: {
+    flex: 1,
+    paddingRight: 12,
+  },
+  draftsHubTitle: {
+    ...FONTS.h3,
+    fontWeight: '700',
+  },
+  draftsHubSubtitle: {
+    ...FONTS.body4,
+    marginTop: 4,
+  },
+  draftsHubSaveButton: {
+    marginHorizontal: 20,
+    marginTop: 14,
+    marginBottom: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  draftsHubSaveButtonDisabled: {
+    opacity: 0.55,
+  },
+  draftsHubSaveButtonText: {
+    ...FONTS.body3,
+    fontWeight: '700',
+  },
+  draftsHubDateRow: {
+    marginHorizontal: 20,
+    marginBottom: 8,
+  },
+  draftsHubList: {
+    flexGrow: 0,
+  },
+  draftsHubEmptyState: {
+    paddingVertical: 28,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    gap: 10,
+  },
+  draftsHubEmptyText: {
+    ...FONTS.body4,
+    textAlign: 'center',
+    lineHeight: 20,
   },
   squareCartListContent: {
     flexGrow: 1,

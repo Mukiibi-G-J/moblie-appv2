@@ -13,6 +13,7 @@ import {
 } from '../config/api.config';
 import {forceLogout} from '../utils/authEvents';
 import {isSubscriptionExpiredError} from '../utils/subscriptionExpired';
+import {assertApiNotSimulatedOffline} from '../utils/simulatedOfflineGate';
 
 interface ApiConfig {
   baseURL: string;
@@ -144,6 +145,7 @@ export function createAnonymousAxiosInstance(tenant?: string) {
   const instance = axios.create({baseURL});
   instance.interceptors.request.use(
     async config => {
+      assertApiNotSimulatedOffline(config);
       if (!isPublicSchemaPath(config.url)) {
         await maybeInjectBranchHeaders(config);
       }
@@ -189,6 +191,7 @@ const createAxiosInstance = (tenant?: string) => {
   // Add request interceptor
   instance.interceptors.request.use(
     async config => {
+      assertApiNotSimulatedOffline(config);
       const accessToken = await AsyncStorage.getItem('accessToken');
       if (accessToken) {
         config.headers['Authorization'] = `Bearer ${accessToken}`;
@@ -442,6 +445,7 @@ class ApiService {
     // Request Interceptor
     this.axiosInstance.interceptors.request.use(
       async (config: InternalAxiosRequestConfig) => {
+        assertApiNotSimulatedOffline(config);
         const token = await this.getAuthToken();
         if (token && config.headers) {
           config.headers.Authorization = `Bearer ${token}`;

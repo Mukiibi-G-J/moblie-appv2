@@ -14,6 +14,7 @@ import {
   Image,
 } from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
+import {useScreenTopInset} from '../../hooks/useScreenTopInset';
 import {Picker} from '@react-native-picker/picker';
 import {QuickIconPressable} from '../../Components';
 import {
@@ -69,6 +70,7 @@ const PrepaymentFormModal: React.FC<Props> = ({
   const isEdit = !!prepayment;
   const {colors} = useTheme();
   const insets = useSafeAreaInsets();
+  const topInset = useScreenTopInset();
   const canSave = (isEdit && canEdit) || (!isEdit && canCreate);
 
   const themeStyles = useMemo(
@@ -344,10 +346,7 @@ const PrepaymentFormModal: React.FC<Props> = ({
             style={[
               styles.pageHeader,
               {
-                paddingTop: Math.max(
-                  insets.top,
-                  Platform.OS === 'ios' ? 12 : 16,
-                ),
+                paddingTop: topInset,
               },
             ]}>
             <QuickIconPressable

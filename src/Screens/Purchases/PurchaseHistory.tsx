@@ -1,4 +1,5 @@
 import React, {useEffect, useMemo, useState, useCallback} from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   ActivityIndicator,
   Alert,
@@ -417,7 +418,7 @@ const PurchaseHistory = () => {
           Total amount
         </Text>
         <Text style={[styles.summaryValuePrimary, t.summaryValuePrimary]}>
-          UGX {Math.round(totalAmount).toLocaleString()}
+          {formatCurrencyCompact(totalAmount)}
         </Text>
         <Text style={[styles.summarySubtext, t.summarySubtext]}>
           {totalCount || purchases.length} invoice(s) · this page
@@ -428,7 +429,7 @@ const PurchaseHistory = () => {
           Avg. purchase
         </Text>
         <Text style={[styles.summaryValueSecondary, t.summaryValueSecondary]}>
-          UGX {Math.round(averagePurchase).toLocaleString()}
+          {formatCurrencyCompact(averagePurchase)}
         </Text>
         <Text style={[styles.summarySubtext, t.summarySubtext]}>
           Per invoice (visible rows)
@@ -684,7 +685,7 @@ const PurchaseHistory = () => {
                     Total:
                   </Text>
                   <Text style={styles.totalAmount}>
-                    UGX {(selectedItem.total_amount || 0).toLocaleString()}
+                    {formatCurrencyCompact(selectedItem.total_amount || 0)}
                   </Text>
                 </View>
               </View>
@@ -718,12 +719,12 @@ const PurchaseHistory = () => {
                           Qty: {line.quantity} {line.unit_of_measure || 'PCS'}
                         </Text>
                         <Text style={[styles.lineItemDetail, {color: colors.textSecondary}]}>
-                          Cost: UGX{' '}
+                          Cost: {getLocalCurrencyCode()}{' '}
                           {parseFloat(line.unit_cost || '0').toLocaleString()}
                         </Text>
                       </View>
                       <Text style={styles.lineItemTotal}>
-                        Total: UGX{' '}
+                        Total: {getLocalCurrencyCode()}{' '}
                         {parseFloat(line.total_amount || '0').toLocaleString()}
                       </Text>
                     </View>

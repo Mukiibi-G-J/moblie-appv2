@@ -31,15 +31,17 @@ import { useCompanyInfo } from '../../hooks/useCompanyInfo';
 import { useTheme } from '../../context/ThemeContext';
 import { navigate } from '../../hooks/NavigationService';
 import {
-  fetchKPIMetrics,
+  fetchHomeSnapshot,
+  mapHomeSnapshotToKPI,
   fetchMyUserSetup,
   fetchRecentTransactions,
   fetchLowStockItems,
   fetchDraftSales,
   fetchOutstandingReceivables,
-  fetchTopSellingItems,
   KPIMetrics,
 } from '../../services/app.services';
+import TodayMySalesBar from '../../Components/TodayMySalesBar';
+import {formatCurrency} from '../../utils/currency';
 
 interface SalesInvoice {
   id: number;
@@ -181,6 +183,15 @@ export default function Home() {
     (hasAnyPageAccess(PAGE_NAMES.PAYMENTS) ||
       hasAnyPageAccess(PAGE_NAMES.CUSTOMER_MANAGEMENT));
 
+  /** Cashiers / sales staff without dashboard — web POS shows today totals instead. */
+  const canViewMySalesToday =
+    isModuleVisible('sales') &&
+    (hasAnyPageAccess(PAGE_NAMES.SALES) ||
+      hasAnyPageAccess(PAGE_NAMES.SALES_HISTORY)) &&
+    !canViewSalesDashboard;
+
+  const [mySalesRefreshKey, setMySalesRefreshKey] = useState(0);
+
   const t = useMemo(
     () => ({
       root: { backgroundColor: colors.background },
@@ -253,20 +264,27 @@ export default function Home() {
     };
   }, []);
 
-  // Fetch KPI Metrics
-  const loadKPIMetrics = async () => {
+  const loadHomeSnapshot = useCallback(async () => {
     if (!canViewSalesDashboard) return;
 
     setKpiLoading(true);
+    setTopItemsLoading(true);
     try {
-      const metrics = await fetchKPIMetrics();
-      setKpiMetrics(metrics);
+      const snapshot = await fetchHomeSnapshot(5);
+      if (snapshot) {
+        setKpiMetrics(mapHomeSnapshotToKPI(snapshot));
+        setTopSellingItems(snapshot.top_selling_items ?? []);
+      } else {
+        setKpiMetrics(null);
+        setTopSellingItems([]);
+      }
     } catch (error) {
-      console.error('Error loading KPI metrics:', error);
+      console.error('Error loading home snapshot:', error);
     } finally {
       setKpiLoading(false);
+      setTopItemsLoading(false);
     }
-  };
+  }, [canViewSalesDashboard]);
 
   const loadRecentTransactions = useCallback(async () => {
     if (!canViewTransactions) return;
@@ -330,30 +348,14 @@ export default function Home() {
     }
   };
 
-  // Fetch Top Selling Items
-  const loadTopSellingItems = async () => {
-    if (!canViewSalesDashboard) return;
-
-    setTopItemsLoading(true);
-    try {
-      const items = await fetchTopSellingItems(5);
-      setTopSellingItems(items);
-    } catch (error) {
-      console.error('Error loading top selling items:', error);
-    } finally {
-      setTopItemsLoading(false);
-    }
-  };
-
   // Load all data on mount
   useEffect(() => {
     if (!isAuthLoading) {
-      loadKPIMetrics();
+      loadHomeSnapshot();
       loadRecentTransactions();
       loadLowStockItems();
       loadDraftSales();
       loadOutstandingReceivables();
-      loadTopSellingItems();
     }
   }, [
     isAuthLoading,
@@ -365,20 +367,21 @@ export default function Home() {
     restrictSalesToSelf,
     auth.user_id,
     loadRecentTransactions,
+    loadHomeSnapshot,
   ]);
 
   // Pull to refresh handler
   const onRefresh = React.useCallback(async () => {
     setRefreshing(true);
+    setMySalesRefreshKey(k => k + 1);
     try {
       // Load all data in parallel
       await Promise.all([
-        loadKPIMetrics(),
+        loadHomeSnapshot(),
         loadRecentTransactions(),
         loadLowStockItems(),
         loadDraftSales(),
         loadOutstandingReceivables(),
-        loadTopSellingItems(),
       ]);
     } catch (error) {
       console.error('Error refreshing data:', error);
@@ -392,6 +395,7 @@ export default function Home() {
     canViewDrafts,
     canViewReceivables,
     loadRecentTransactions,
+    loadHomeSnapshot,
   ]);
 
   const openMoreTab = () => {
@@ -458,26 +462,6 @@ export default function Home() {
       ) : null}
     </View>
   );
-
-  const formatCurrency = (amount: number | string | null | undefined) => {
-    const parsed =
-      typeof amount === 'string' ? Number.parseFloat(amount) : Number(amount);
-    const roundedAmount = Number.isFinite(parsed) ? Math.round(parsed) : 0;
-
-    if (typeof Intl !== 'undefined' && typeof Intl.NumberFormat === 'function') {
-      return new Intl.NumberFormat('en-UG', {
-        style: 'currency',
-        currency: 'UGX',
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0,
-      }).format(roundedAmount);
-    }
-
-    // Fallback for runtimes without Intl support (e.g. some JSC builds).
-    return `UGX ${roundedAmount
-      .toString()
-      .replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
-  };
 
   const renderSnapshotTintWell = (
     icon: number,
@@ -810,6 +794,31 @@ export default function Home() {
     );
   };
 
+  const renderMySalesToday = () => {
+    if (!canViewMySalesToday) {
+      return null;
+    }
+    const uid = Number.parseInt(String(auth.user_id || ''), 10);
+    if (!Number.isFinite(uid)) {
+      return null;
+    }
+    const canOpenHistory = hasAnyPageAccess(PAGE_NAMES.SALES_HISTORY);
+    return (
+      <View style={styles.mySalesSection}>
+        <TodayMySalesBar
+          variant="card"
+          userId={uid}
+          refreshKey={mySalesRefreshKey}
+          onOpenHistory={
+            canOpenHistory
+              ? () => navigation.navigate('SalesHistory' as never)
+              : undefined
+          }
+        />
+      </View>
+    );
+  };
+
   // Render Recent Transactions
   const renderRecentTransactions = () => {
     if (!canViewTransactions) return null;
@@ -927,6 +936,7 @@ export default function Home() {
           <Options />
         </View>
         {renderQuickStats()}
+        {renderMySalesToday()}
         {renderDraftSales()}
         {renderTopSellingItems()}
         {renderRecentTransactions()}
@@ -985,6 +995,10 @@ const styles = StyleSheet.create({
   quickActionsSection: {
     paddingHorizontal: SIZES.padding,
     paddingTop: 0,
+  },
+  mySalesSection: {
+    paddingHorizontal: SIZES.padding,
+    paddingTop: 16,
   },
   kpiSectionTitle: {
     fontSize: 17,

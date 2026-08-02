@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useMemo} from 'react';
 import {
   View,
   Text,
@@ -15,12 +15,14 @@ import {
 import {Picker} from '@react-native-picker/picker';
 import {COLORS, FONTS} from '../../constants';
 import icons from '../../constants/icons';
+import {useTheme} from '../../context/ThemeContext';
 import {
   Vendor,
   PaymentMethod,
   VendorFormValues,
 } from '../../@types/vendor';
 import {QuickIconPressable} from '../../Components';
+import {useScreenTopInset} from '../../hooks/useScreenTopInset';
 import {VendorServices} from '../../services/VendorServices';
 import Toast from 'react-native-toast-message';
 
@@ -48,6 +50,51 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
 }) => {
   const isEditMode = !!vendor;
   const isGeneralVendor = isProtectedGeneralVendor(vendor);
+  const {colors, isDark} = useTheme();
+  const topInset = useScreenTopInset();
+
+  const themed = useMemo(
+    () => ({
+      pageRoot: {backgroundColor: colors.background},
+      pageTitle: {color: colors.textPrimary},
+      previewSection: {
+        backgroundColor: colors.card,
+        borderColor: colors.border,
+      },
+      previewName: {color: colors.textPrimary},
+      previewSubtext: {color: colors.textSecondary},
+      sectionTitle: {color: colors.textPrimary},
+      sectionDivider: {backgroundColor: colors.border},
+      label: {color: colors.textSecondary},
+      input: {
+        color: colors.textPrimary,
+        backgroundColor: colors.inputBackground,
+        borderColor: colors.border,
+      },
+      disabledInput: {
+        backgroundColor: colors.screenMuted,
+        color: colors.textSecondary,
+      },
+      blockedRow: {
+        backgroundColor: colors.inputBackground,
+        borderColor: colors.border,
+      },
+      blockedTitle: {color: colors.textPrimary},
+      blockedSubtext: {color: colors.textSecondary},
+      pickerContainer: {
+        backgroundColor: colors.inputBackground,
+        borderColor: colors.border,
+      },
+      picker: {
+        color: colors.textPrimary,
+        backgroundColor: colors.inputBackground,
+      },
+      loadingText: {color: colors.textSecondary},
+      headerIconButton: {backgroundColor: colors.backButtonBg},
+      headerIcon: {tintColor: colors.textPrimary},
+    }),
+    [colors],
+  );
 
   const [formData, setFormData] = useState<VendorFormValues>({
     name: '',
@@ -239,16 +286,16 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
       animationType="slide"
       transparent={false}
       onRequestClose={onClose}>
-      <View style={styles.pageRoot}>
-        <View style={styles.pageHeader}>
+      <View style={[styles.pageRoot, themed.pageRoot]}>
+        <View style={[styles.pageHeader, {paddingTop: topInset}]}>
           <QuickIconPressable
             onPress={onClose}
-            style={styles.headerIconButton}
+            style={[styles.headerIconButton, themed.headerIconButton]}
             hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
             accessibilityLabel="Close">
             <Image
               source={icons.cross}
-              style={styles.headerIcon}
+              style={[styles.headerIcon, themed.headerIcon]}
               resizeMode="contain"
             />
           </QuickIconPressable>
@@ -273,32 +320,34 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}>
-          <Text style={styles.pageTitle}>
+          <Text style={[styles.pageTitle, themed.pageTitle]}>
             {isEditMode ? 'Edit supplier' : 'Add supplier'}
           </Text>
 
-          <View style={styles.previewSection}>
+          <View style={[styles.previewSection, themed.previewSection]}>
             <View style={styles.previewAvatar}>
               <Text style={styles.previewInitials}>{previewInitials}</Text>
             </View>
             <View style={styles.previewMeta}>
-              <Text style={styles.previewName} numberOfLines={1}>
+              <Text
+                style={[styles.previewName, themed.previewName]}
+                numberOfLines={1}>
                 {previewName}
               </Text>
-              <Text style={styles.previewSubtext}>
+              <Text style={[styles.previewSubtext, themed.previewSubtext]}>
                 {formData.phone?.trim() || formData.email?.trim() || 'Supplier contact'}
               </Text>
             </View>
           </View>
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Details</Text>
+            <Text style={[styles.sectionTitle, themed.sectionTitle]}>Details</Text>
 
             {isEditMode && vendor?.no ? (
               <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Supplier number</Text>
+                <Text style={[styles.label, themed.label]}>Supplier number</Text>
                 <TextInput
-                  style={[styles.input, styles.disabledInput]}
+                  style={[styles.input, themed.input, themed.disabledInput]}
                   value={vendor.no}
                   editable={false}
                 />
@@ -306,26 +355,26 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
             ) : null}
 
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Supplier name</Text>
+              <Text style={[styles.label, themed.label]}>Supplier name</Text>
               <TextInput
-                style={[styles.input, errors.name && styles.inputError]}
+                style={[styles.input, themed.input, errors.name && styles.inputError]}
                 value={formData.name}
                 onChangeText={text => setFormData({...formData, name: text})}
                 placeholder="Supplier name"
-                placeholderTextColor={COLORS.gray2}
+                placeholderTextColor={colors.placeholder}
                 editable={!isGeneralVendor}
               />
               {errors.name ? <Text style={styles.errorText}>{errors.name}</Text> : null}
             </View>
 
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Phone number</Text>
+              <Text style={[styles.label, themed.label]}>Phone number</Text>
               <TextInput
-                style={[styles.input, errors.phone && styles.inputError]}
+                style={[styles.input, themed.input, errors.phone && styles.inputError]}
                 value={formData.phone}
                 onChangeText={text => setFormData({...formData, phone: text})}
                 placeholder="+256700000000"
-                placeholderTextColor={COLORS.gray2}
+                placeholderTextColor={colors.placeholder}
                 keyboardType="phone-pad"
                 editable={!isGeneralVendor}
               />
@@ -333,13 +382,13 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
             </View>
 
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Email</Text>
+              <Text style={[styles.label, themed.label]}>Email</Text>
               <TextInput
-                style={[styles.input, errors.email && styles.inputError]}
+                style={[styles.input, themed.input, errors.email && styles.inputError]}
                 value={formData.email}
                 onChangeText={text => setFormData({...formData, email: text})}
                 placeholder="supplier@example.com"
-                placeholderTextColor={COLORS.gray2}
+                placeholderTextColor={colors.placeholder}
                 keyboardType="email-address"
                 autoCapitalize="none"
                 editable={!isGeneralVendor}
@@ -348,13 +397,13 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
             </View>
 
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Website</Text>
+              <Text style={[styles.label, themed.label]}>Website</Text>
               <TextInput
-                style={[styles.input, errors.website && styles.inputError]}
+                style={[styles.input, themed.input, errors.website && styles.inputError]}
                 value={formData.website}
                 onChangeText={text => setFormData({...formData, website: text})}
                 placeholder="https://supplier.com"
-                placeholderTextColor={COLORS.gray2}
+                placeholderTextColor={colors.placeholder}
                 keyboardType="url"
                 autoCapitalize="none"
                 editable={!isGeneralVendor}
@@ -365,7 +414,11 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
             </View>
 
             <TouchableOpacity
-              style={[styles.blockedRow, isGeneralVendor && styles.disabledInput]}
+              style={[
+                styles.blockedRow,
+                themed.blockedRow,
+                isGeneralVendor && themed.disabledInput,
+              ]}
               activeOpacity={0.8}
               disabled={isGeneralVendor}
               onPress={() =>
@@ -379,27 +432,27 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
                 {formData.blocked ? <Text style={styles.blockedToggleTick}>✓</Text> : null}
               </View>
               <View style={styles.blockedTextWrap}>
-                <Text style={styles.blockedTitle}>Blocked</Text>
-                <Text style={styles.blockedSubtext}>
+                <Text style={[styles.blockedTitle, themed.blockedTitle]}>Blocked</Text>
+                <Text style={[styles.blockedSubtext, themed.blockedSubtext]}>
                   Prevent this supplier from being used in future transactions.
                 </Text>
               </View>
             </TouchableOpacity>
           </View>
 
-          <View style={styles.sectionDivider} />
+          <View style={[styles.sectionDivider, themed.sectionDivider]} />
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Address</Text>
+            <Text style={[styles.sectionTitle, themed.sectionTitle]}>Address</Text>
 
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Street address</Text>
+              <Text style={[styles.label, themed.label]}>Street address</Text>
               <TextInput
-                style={[styles.input, styles.textArea]}
+                style={[styles.input, styles.textArea, themed.input]}
                 value={formData.address}
                 onChangeText={text => setFormData({...formData, address: text})}
                 placeholder="Street address"
-                placeholderTextColor={COLORS.gray2}
+                placeholderTextColor={colors.placeholder}
                 multiline
                 numberOfLines={3}
                 editable={!isGeneralVendor}
@@ -407,33 +460,35 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
             </View>
 
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>City</Text>
+              <Text style={[styles.label, themed.label]}>City</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, themed.input]}
                 value={formData.city}
                 onChangeText={text => setFormData({...formData, city: text})}
                 placeholder="City"
-                placeholderTextColor={COLORS.gray2}
+                placeholderTextColor={colors.placeholder}
                 editable={!isGeneralVendor}
               />
             </View>
           </View>
 
-          <View style={styles.sectionDivider} />
+          <View style={[styles.sectionDivider, themed.sectionDivider]} />
 
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Payment</Text>
+            <Text style={[styles.sectionTitle, themed.sectionTitle]}>Payment</Text>
 
             <View style={styles.fieldGroup}>
-              <Text style={styles.label}>Payment method</Text>
+              <Text style={[styles.label, themed.label]}>Payment method</Text>
               {paymentMethods.length === 0 ? (
                 <View style={styles.loadingRow}>
                   <ActivityIndicator size="small" color={COLORS.primary2} />
-                  <Text style={styles.loadingText}>Loading payment methods...</Text>
+                  <Text style={[styles.loadingText, themed.loadingText]}>
+                    Loading payment methods...
+                  </Text>
                 </View>
               ) : (
                 <>
-                  <View style={styles.pickerContainer}>
+                  <View style={[styles.pickerContainer, themed.pickerContainer]}>
                     <Picker
                       selectedValue={formData.payment_method || 0}
                       onValueChange={value => {
@@ -443,7 +498,9 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
                           setFormData({...formData, payment_method: value});
                         }
                       }}
-                      style={styles.picker}
+                      style={[styles.picker, themed.picker]}
+                      dropdownIconColor={colors.textPrimary}
+                      itemStyle={isDark ? {color: colors.textPrimary} : undefined}
                       enabled={!isGeneralVendor}>
                       <Picker.Item label="Select payment method" value={0} />
                       {paymentMethods.map(method => (
@@ -456,7 +513,7 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
                     </Picker>
                   </View>
                   {formData.payment_method ? (
-                    <Text style={styles.selectedValueText}>
+                    <Text style={[styles.selectedValueText, {color: COLORS.primary2}]}>
                       {paymentMethods.find(m => m.id === formData.payment_method)
                         ?.description ||
                         paymentMethods.find(m => m.id === formData.payment_method)?.code ||
@@ -476,28 +533,24 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
 const styles = StyleSheet.create({
   pageRoot: {
     flex: 1,
-    backgroundColor: COLORS.white,
   },
   pageHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'ios' ? 12 : 16,
     paddingBottom: 8,
   },
   headerIconButton: {
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: COLORS.transparentPrimary,
     justifyContent: 'center',
     alignItems: 'center',
   },
   headerIcon: {
     width: 16,
     height: 16,
-    tintColor: COLORS.primary3,
   },
   headerSaveButton: {
     minWidth: 108,
@@ -528,7 +581,6 @@ const styles = StyleSheet.create({
   pageTitle: {
     fontSize: 24,
     fontWeight: '700',
-    color: COLORS.black,
     marginTop: 22,
     marginBottom: 24,
   },
@@ -537,9 +589,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 18,
     borderRadius: 18,
-    backgroundColor: COLORS.transparentPrimary,
     borderWidth: 1,
-    borderColor: COLORS.transparentPrimary2,
     marginBottom: 28,
   },
   previewAvatar: {
@@ -562,12 +612,10 @@ const styles = StyleSheet.create({
   previewName: {
     fontSize: 18,
     fontWeight: '700',
-    color: COLORS.primary3,
     marginBottom: 4,
   },
   previewSubtext: {
     ...FONTS.body4,
-    color: COLORS.secondary2,
   },
   section: {
     marginBottom: 26,
@@ -575,13 +623,10 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: COLORS.primary3,
     marginBottom: 14,
   },
   sectionDivider: {
-    height: 8,
-    borderRadius: 999,
-    backgroundColor: COLORS.transparentPrimary,
+    height: StyleSheet.hairlineWidth,
     marginTop: 6,
     marginBottom: 26,
   },
@@ -590,30 +635,23 @@ const styles = StyleSheet.create({
   },
   label: {
     ...FONTS.body4,
-    color: COLORS.black,
     marginBottom: 8,
     fontWeight: '600',
   },
   input: {
     minHeight: 58,
     borderWidth: 1,
-    borderColor: COLORS.transparentPrimary2,
     borderRadius: 14,
     paddingHorizontal: 18,
     paddingVertical: 16,
     ...FONTS.body3,
-    color: COLORS.black,
-    backgroundColor: COLORS.white,
   },
   textArea: {
     minHeight: 88,
     textAlignVertical: 'top',
     paddingTop: 16,
   },
-  disabledInput: {
-    backgroundColor: COLORS.lightGray2,
-    color: COLORS.gray2,
-  },
+  disabledInput: {},
   inputError: {
     borderColor: COLORS.error,
   },
@@ -628,8 +666,6 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: COLORS.transparentPrimary2,
-    backgroundColor: COLORS.white,
   },
   blockedToggle: {
     width: 26,
@@ -654,13 +690,11 @@ const styles = StyleSheet.create({
   },
   blockedTitle: {
     ...FONTS.body3,
-    color: COLORS.black,
     fontWeight: '600',
     marginBottom: 2,
   },
   blockedSubtext: {
     ...FONTS.body4,
-    color: COLORS.gray2,
   },
   loadingRow: {
     flexDirection: 'row',
@@ -669,24 +703,18 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     ...FONTS.body4,
-    color: COLORS.gray2,
     marginLeft: 8,
   },
   pickerContainer: {
     borderWidth: 1,
-    borderColor: COLORS.transparentPrimary2,
     borderRadius: 14,
-    backgroundColor: COLORS.white,
     overflow: 'hidden',
   },
   picker: {
     width: '100%',
-    backgroundColor: COLORS.white,
-    color: COLORS.black,
   },
   selectedValueText: {
     ...FONTS.body4,
-    color: COLORS.primary2,
     marginTop: 8,
   },
   buttonDisabled: {

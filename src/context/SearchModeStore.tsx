@@ -13,6 +13,7 @@ import {
   MobileSettingsPatchPayload,
 } from '../services/mobileSettings.service';
 import {isSubscriptionExpiredError} from '../utils/subscriptionExpired';
+import {useAppContext, useAuth} from './Store';
 
 interface SearchModeState {
   searchMode: SearchMode;
@@ -87,6 +88,10 @@ const searchModeReducer = (
 export const SearchModeProvider: React.FC<{children: React.ReactNode}> = ({
   children,
 }) => {
+  const {accessToken} = useAuth();
+  const {sessionHydrated} = useAppContext();
+  const isAuthenticated = sessionHydrated && Boolean(accessToken);
+
   const [state, dispatch] = useReducer(searchModeReducer, initialState);
   const lastUpdatedAtRef = useRef<string | undefined>(undefined);
   const lastSyncedRef = useRef<{
@@ -98,7 +103,24 @@ export const SearchModeProvider: React.FC<{children: React.ReactNode}> = ({
   const subscriptionBlockedRef = useRef(false);
 
   useEffect(() => {
+    if (!sessionHydrated) {
+      return;
+    }
+
+    if (!accessToken) {
+      subscriptionBlockedRef.current = false;
+      lastUpdatedAtRef.current = undefined;
+      lastSyncedRef.current = {
+        searchMode: initialState.searchMode,
+        barcodeScannerEnabled: initialState.barcodeScannerEnabled,
+        barcodeBeepEnabled: initialState.barcodeBeepEnabled,
+      };
+      dispatch({type: 'SET_LOADING', payload: false});
+      return;
+    }
+
     const loadSettingsFromBackend = async () => {
+      dispatch({type: 'SET_LOADING', payload: true});
       try {
         const settings = await fetchMobileSettings();
         subscriptionBlockedRef.current = false;
@@ -122,10 +144,10 @@ export const SearchModeProvider: React.FC<{children: React.ReactNode}> = ({
     };
 
     loadSettingsFromBackend();
-  }, []);
+  }, [sessionHydrated, accessToken]);
 
   useEffect(() => {
-    if (state.isLoading || subscriptionBlockedRef.current) {
+    if (!isAuthenticated || state.isLoading || subscriptionBlockedRef.current) {
       return;
     }
 
@@ -211,17 +233,30 @@ export const SearchModeProvider: React.FC<{children: React.ReactNode}> = ({
     state.barcodeScannerEnabled,
     state.barcodeBeepEnabled,
     state.isLoading,
+    isAuthenticated,
   ]);
 
   useEffect(() => {
-    if (!state.isLoading && !lastSyncedRef.current) {
-      lastSyncedRef.current = {
-        searchMode: state.searchMode,
-        barcodeScannerEnabled: state.barcodeScannerEnabled,
-        barcodeBeepEnabled: state.barcodeBeepEnabled,
-      };
+    if (
+      !isAuthenticated ||
+      state.isLoading ||
+      lastSyncedRef.current
+    ) {
+      return;
     }
-  }, [state.isLoading, state.searchMode, state.barcodeScannerEnabled, state.barcodeBeepEnabled]);
+
+    lastSyncedRef.current = {
+      searchMode: state.searchMode,
+      barcodeScannerEnabled: state.barcodeScannerEnabled,
+      barcodeBeepEnabled: state.barcodeBeepEnabled,
+    };
+  }, [
+    isAuthenticated,
+    state.isLoading,
+    state.searchMode,
+    state.barcodeScannerEnabled,
+    state.barcodeBeepEnabled,
+  ]);
 
   return (
     <SearchModeContext.Provider value={{state, dispatch}}>

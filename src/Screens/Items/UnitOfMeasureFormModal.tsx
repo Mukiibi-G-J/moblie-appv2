@@ -17,6 +17,7 @@ import {COLORS, FONTS} from '../../constants';
 import icons from '../../constants/icons';
 import {QuickIconPressable} from '../../Components';
 import {useTheme} from '../../context/ThemeContext';
+import {useScreenTopInset} from '../../hooks/useScreenTopInset';
 import {
   createUnitOfMeasure,
   UnitOfMeasure,
@@ -60,6 +61,7 @@ const UnitOfMeasureFormModal: React.FC<UnitOfMeasureFormModalProps> = ({
 }) => {
   const isEditMode = !!unit;
   const {colors} = useTheme();
+  const topInset = useScreenTopInset();
   const [code, setCode] = useState('');
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
@@ -143,7 +145,7 @@ const UnitOfMeasureFormModal: React.FC<UnitOfMeasureFormModalProps> = ({
       <KeyboardAvoidingView
         style={[styles.flex, theme.root]}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <View style={styles.header}>
+        <View style={[styles.header, {paddingTop: topInset}]}>
           <QuickIconPressable
             onPress={onClose}
             style={styles.headerIconButton}
@@ -222,7 +224,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'ios' ? 12 : 16,
     paddingBottom: 12,
   },
   headerIconButton: {

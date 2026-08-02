@@ -36,6 +36,11 @@ import {
   resolveEffectiveBranchCode,
   type BranchListRow,
 } from '../../services/branchProfile.service';
+import {
+  cacheAvatarUrl,
+  fetchUserProfile,
+} from '../../services/profile.service';
+import { resolveProfileAvatarSrc } from '../../utils/profileAvatar';
 
 type MenuRow = {
   key: string;
@@ -48,6 +53,7 @@ type MenuRow = {
 type MenuSection = {
   key: string;
   title: string;
+  icon: any;
   rows: MenuRow[];
 };
 
@@ -64,7 +70,7 @@ const MoreMenu: React.FC = () => {
   const insets = useSafeAreaInsets();
   const { auth } = useAuth();
   const app = useAppContext() as AppContextType;
-  const { logout } = app;
+  const { logout, patchAuth } = app;
   const { setSelectedTab } = useTabContext();
   const { isModuleVisible, hasAnyPageAccess } = usePermissions();
   const { storeLabel } = useCompanyInfo();
@@ -82,6 +88,7 @@ const MoreMenu: React.FC = () => {
   const [switchModalVisible, setSwitchModalVisible] = useState(false);
   const [switchSelectedId, setSwitchSelectedId] = useState<number | null>(null);
   const [switchConfirming, setSwitchConfirming] = useState(false);
+  const [openSectionKey, setOpenSectionKey] = useState<string | null>(null);
   const loadBranchContext = useCallback(async () => {
     if (!auth.user_id) {
       setProfileBranchCode(null);
@@ -108,13 +115,41 @@ const MoreMenu: React.FC = () => {
     }
   }, [auth.user_id]);
 
+  const refreshProfileAvatar = useCallback(async () => {
+    if (!auth.user_id) {
+      return;
+    }
+    try {
+      const profile = await fetchUserProfile();
+      await cacheAvatarUrl(profile.avatar_url);
+      patchAuth({
+        avatar_url: profile.avatar_url ?? undefined,
+        full_name: profile.full_name,
+        email: profile.email,
+        phone: profile.phone_number,
+      });
+    } catch {
+      // Keep cached avatar from auth / AsyncStorage.
+    }
+  }, [auth.user_id, patchAuth]);
+
   useFocusEffect(
     useCallback(() => {
       loadBranchContext();
-    }, [loadBranchContext]),
+      void refreshProfileAvatar();
+    }, [loadBranchContext, refreshProfileAvatar]),
   );
 
   const firstName = auth.full_name?.trim()?.split(/\s+/)[0];
+  const profileAvatarSrc = useMemo(
+    () =>
+      resolveProfileAvatarSrc(
+        auth.avatar_url,
+        auth.email || auth.username,
+        96,
+      ),
+    [auth.avatar_url, auth.email, auth.username],
+  );
 
   const effectiveBranchCode = useMemo(() => {
     // Prefer the explicit working branch chosen via branchSession (active_branch).
@@ -273,8 +308,12 @@ const MoreMenu: React.FC = () => {
 
     Alert.alert(
       'Help & Support',
-      'Choose support channel:',
+      'Choose an option:',
       [
+        {
+          text: 'All modules & plan',
+          onPress: () => navigate('AvailableModules', undefined),
+        },
         {
           text: `Call ${SUPPORT_NUMBERS[0]}`,
           onPress: () => {
@@ -310,6 +349,7 @@ const MoreMenu: React.FC = () => {
       {
         key: 'sales',
         title: 'Sales & reports',
+        icon: icons.reports,
         rows: [
           {
             key: 'salesHistory',
@@ -334,6 +374,7 @@ const MoreMenu: React.FC = () => {
       {
         key: 'inventory',
         title: 'Inventory',
+        icon: icons.product,
         rows: [
           {
             key: 'items',
@@ -366,6 +407,7 @@ const MoreMenu: React.FC = () => {
       {
         key: 'people',
         title: 'Customers & suppliers',
+        icon: icons.profile,
         rows: [
           {
             key: 'customers',
@@ -399,6 +441,7 @@ const MoreMenu: React.FC = () => {
       {
         key: 'expenses',
         title: 'Expenses',
+        icon: icons.coupon,
         rows: [
           {
             key: 'expenses',
@@ -414,6 +457,7 @@ const MoreMenu: React.FC = () => {
       {
         key: 'payments',
         title: 'Payments & banking',
+        icon: icons.wallet,
         rows: [
           {
             key: 'bankAccounts',
@@ -465,6 +509,7 @@ const MoreMenu: React.FC = () => {
       {
         key: 'restaurant',
         title: 'Restaurant',
+        icon: icons.tray,
         rows: [
           {
             key: 'restaurant',
@@ -482,6 +527,7 @@ const MoreMenu: React.FC = () => {
       {
         key: 'company',
         title: 'Company',
+        icon: icons.company,
         rows: [
           {
             key: 'companyBilling',
@@ -503,14 +549,36 @@ const MoreMenu: React.FC = () => {
       },
       {
         key: 'app',
-        title: 'App',
+        title: 'App & account',
+        icon: icons.setting,
         rows: [
+          {
+            key: 'myProfile',
+            label: 'My profile',
+            icon: icons.profile,
+            visible: true,
+            onPress: () => navigate('Profile', undefined),
+          },
+          {
+            key: 'syncQueue',
+            label: 'Sync queue',
+            icon: icons.notification,
+            visible: true,
+            onPress: () => navigate('SyncQueue', undefined),
+          },
           {
             key: 'settings',
             label: 'Settings',
             icon: icons.setting,
             visible: true,
             onPress: () => navigate('Settings', undefined),
+          },
+          {
+            key: 'availableModules',
+            label: 'All modules & plan',
+            icon: icons.coupon,
+            visible: true,
+            onPress: () => navigate('AvailableModules', undefined),
           },
           {
             key: 'support',
@@ -541,6 +609,50 @@ const MoreMenu: React.FC = () => {
       }))
       .filter(section => section.rows.length > 0);
   }, [isModuleVisible, hasAnyPageAccess, logout, handleSupportPress]);
+
+  const openSection = useMemo(
+    () => menuSections.find(section => section.key === openSectionKey) ?? null,
+    [menuSections, openSectionKey],
+  );
+
+  const handleCategoryPress = useCallback((section: MenuSection) => {
+    if (section.rows.length === 1) {
+      section.rows[0]?.onPress();
+      return;
+    }
+    setOpenSectionKey(section.key);
+  }, []);
+
+  const renderMenuRows = (rows: MenuRow[]) =>
+    rows.map((row, index) => (
+      <View key={row.key}>
+        <Pressable
+          {...quickPressProps}
+          style={({pressed}) => [styles.row, pressed && styles.rowPressed]}
+          onPress={row.onPress}
+          android_ripple={
+            Platform.OS === 'android' ? {color: 'rgba(0,0,0,0.1)'} : undefined
+          }>
+          <Image
+            source={row.icon as any}
+            style={[styles.rowIcon, {tintColor: colors.textSecondary}]}
+          />
+          <Text style={[styles.rowLabel, {color: colors.textPrimary}]}>
+            {row.label}
+          </Text>
+          <Image
+            source={icons.down_arrow as any}
+            style={[
+              styles.rowChevron,
+              {tintColor: colors.textTertiary, transform: [{rotate: '-90deg'}]},
+            ]}
+          />
+        </Pressable>
+        {index < rows.length - 1 ? (
+          <View style={[styles.divider, {backgroundColor: colors.border}]} />
+        ) : null}
+      </View>
+    ));
 
   return (
     <ScrollView
@@ -603,9 +715,41 @@ const MoreMenu: React.FC = () => {
       </View>
 
       <View style={styles.hero}>
-        <Text style={[styles.welcomeTitle, { color: colors.textPrimary }]}>
-          Welcome back{firstName ? `, ${firstName}` : ''}
-        </Text>
+        <Pressable
+          {...quickPressProps}
+          onPress={() => navigate('Profile', undefined)}
+          android_ripple={
+            Platform.OS === 'android'
+              ? { color: 'rgba(0,0,0,0.08)' }
+              : undefined
+          }
+          style={({ pressed }) => [
+            styles.profileHeroRow,
+            { opacity: pressed ? 0.88 : 1 },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel="My profile"
+          accessibilityHint="Opens profile and photo settings">
+          <Image
+            source={{ uri: profileAvatarSrc }}
+            style={[styles.profileHeroAvatar, { borderColor: colors.border }]}
+          />
+          <View style={styles.profileHeroTextCol}>
+            <Text style={[styles.welcomeTitle, { color: colors.textPrimary }]}>
+              Welcome back{firstName ? `, ${firstName}` : ''}
+            </Text>
+            <Text style={[styles.profileHeroHint, { color: colors.textSecondary }]}>
+              Tap to edit profile & photo
+            </Text>
+          </View>
+          <Image
+            source={icons.down_arrow as any}
+            style={[
+              styles.companyInfoChevron,
+              { tintColor: colors.textTertiary, transform: [{ rotate: '-90deg' }] },
+            ]}
+          />
+        </Pressable>
         <Text style={[styles.companySectionLabel, { color: colors.textSecondary }]}>
           Company
         </Text>
@@ -952,11 +1096,30 @@ const MoreMenu: React.FC = () => {
       </Modal>
 
       <View style={styles.menuSections}>
-        {menuSections.map(section => (
-          <View key={section.key} style={styles.sectionBlock}>
-            <Text
-              style={[styles.sectionTitle, {color: colors.textSecondary}]}>
-              {section.title}
+        {openSection ? (
+          <View style={styles.sectionBlock}>
+            <Pressable
+              {...quickPressProps}
+              onPress={() => setOpenSectionKey(null)}
+              style={({pressed}) => [
+                styles.backRow,
+                {opacity: pressed ? ICON_BUTTON_ACTIVE_OPACITY : 1},
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Back to categories">
+              <Image
+                source={icons.down_arrow as any}
+                style={[
+                  styles.backChevron,
+                  {tintColor: colors.textSecondary, transform: [{rotate: '90deg'}]},
+                ]}
+              />
+              <Text style={[styles.backLabel, {color: colors.textSecondary}]}>
+                All categories
+              </Text>
+            </Pressable>
+            <Text style={[styles.sectionTitle, {color: colors.textSecondary}]}>
+              {openSection.title}
             </Text>
             <View
               style={[
@@ -966,45 +1129,92 @@ const MoreMenu: React.FC = () => {
                   borderColor: colors.border,
                 },
               ]}>
-              {section.rows.map((row, index) => (
-                <View key={row.key}>
-                  <Pressable
-                    {...quickPressProps}
-                    style={({pressed}) => [
-                      styles.row,
-                      pressed && styles.rowPressed,
-                    ]}
-                    onPress={row.onPress}
-                    android_ripple={
-                      Platform.OS === 'android'
-                        ? {color: 'rgba(0,0,0,0.1)'}
-                        : undefined
-                    }>
-                    <Image
-                      source={row.icon as any}
-                      style={[
-                        styles.rowIcon,
-                        {tintColor: colors.textSecondary},
-                      ]}
-                    />
-                    <Text
-                      style={[styles.rowLabel, {color: colors.textPrimary}]}>
-                      {row.label}
-                    </Text>
-                  </Pressable>
-                  {index < section.rows.length - 1 ? (
-                    <View
-                      style={[
-                        styles.divider,
-                        {backgroundColor: colors.border},
-                      ]}
-                    />
-                  ) : null}
-                </View>
-              ))}
+              {renderMenuRows(openSection.rows)}
             </View>
           </View>
-        ))}
+        ) : (
+          <View style={styles.sectionBlock}>
+            <Text style={[styles.sectionTitle, {color: colors.textSecondary}]}>
+              Modules
+            </Text>
+            <View
+              style={[
+                styles.sectionCard,
+                {
+                  backgroundColor: colors.card,
+                  borderColor: colors.border,
+                },
+              ]}>
+              {menuSections.map((section, index) => {
+                const itemCount = section.rows.length;
+                const subtitle =
+                  itemCount === 1
+                    ? section.rows[0]?.label
+                    : `${itemCount} options`;
+
+                return (
+                  <View key={section.key}>
+                    <Pressable
+                      {...quickPressProps}
+                      style={({pressed}) => [
+                        styles.row,
+                        pressed && styles.rowPressed,
+                      ]}
+                      onPress={() => handleCategoryPress(section)}
+                      android_ripple={
+                        Platform.OS === 'android'
+                          ? {color: 'rgba(0,0,0,0.1)'}
+                          : undefined
+                      }>
+                      <Image
+                        source={section.icon as any}
+                        style={[
+                          styles.rowIcon,
+                          {tintColor: colors.textSecondary},
+                        ]}
+                      />
+                      <View style={styles.categoryTextCol}>
+                        <Text
+                          style={[
+                            styles.rowLabel,
+                            {color: colors.textPrimary},
+                          ]}>
+                          {section.title}
+                        </Text>
+                        <Text
+                          numberOfLines={1}
+                          style={[
+                            styles.categorySubtitle,
+                            {color: colors.textSecondary},
+                          ]}>
+                          {subtitle}
+                        </Text>
+                      </View>
+                      <Image
+                        source={icons.down_arrow as any}
+                        style={[
+                          styles.rowChevron,
+                          {
+                            tintColor: colors.textTertiary,
+                            transform: [{rotate: '-90deg'}],
+                          },
+                        ]}
+                      />
+                    </Pressable>
+                    {index < menuSections.length - 1 ? (
+                      <View
+                        style={[
+                          styles.divider,
+                          {backgroundColor: colors.border},
+                        ]}
+                      />
+                    ) : null}
+                  </View>
+                );
+              })}
+            </View>
+          </View>
+        )}
       </View>
     </ScrollView>
   );
@@ -1038,6 +1248,27 @@ const styles = StyleSheet.create({
   hero: {
     paddingHorizontal: SIZES.padding,
     marginBottom: 20,
+  },
+  profileHeroRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  profileHeroAvatar: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    borderWidth: StyleSheet.hairlineWidth,
+    backgroundColor: COLORS.lightGray2,
+  },
+  profileHeroTextCol: {
+    flex: 1,
+    marginLeft: 12,
+    marginRight: 8,
+  },
+  profileHeroHint: {
+    ...FONTS.body5,
+    marginTop: 2,
   },
   welcomeTitle: {
     ...FONTS.h2,
@@ -1176,6 +1407,37 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     letterSpacing: -0.2,
+    flex: 1,
+  },
+  categoryTextCol: {
+    flex: 1,
+    minWidth: 0,
+  },
+  categorySubtitle: {
+    ...FONTS.body5,
+    marginTop: 2,
+  },
+  rowChevron: {
+    width: 16,
+    height: 16,
+    resizeMode: 'contain',
+    marginLeft: 8,
+  },
+  backRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+    paddingHorizontal: 2,
+  },
+  backChevron: {
+    width: 16,
+    height: 16,
+    resizeMode: 'contain',
+    marginRight: 6,
+  },
+  backLabel: {
+    ...FONTS.body4,
+    fontWeight: '600',
   },
   modalBackdrop: {
     flex: 1,

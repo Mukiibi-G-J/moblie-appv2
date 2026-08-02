@@ -17,6 +17,7 @@ import {
 import {COLORS} from '../../constants/theme';
 import {QuickIconPressable} from '../../Components';
 import {useTheme} from '../../context/ThemeContext';
+import {useScreenTopInset} from '../../hooks/useScreenTopInset';
 import icons from '../../constants/icons';
 import {
   ItemCategory,
@@ -59,6 +60,7 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
   const [parentSearchQuery, setParentSearchQuery] = useState('');
 
   const {colors} = useTheme();
+  const topInset = useScreenTopInset();
   const catTheme = useMemo(
     () => ({
       pageRoot: {backgroundColor: colors.background},
@@ -274,7 +276,7 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={[styles.pageRoot, catTheme.pageRoot]}>
         <View style={[styles.page, catTheme.page]}>
-          <View style={styles.pageHeader}>
+          <View style={[styles.pageHeader, {paddingTop: topInset}]}>
             <QuickIconPressable
               onPress={onClose}
               style={styles.headerIconButton}
@@ -548,7 +550,6 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: Platform.OS === 'ios' ? 12 : 16,
     paddingBottom: 8,
   },
   headerIconButton: {

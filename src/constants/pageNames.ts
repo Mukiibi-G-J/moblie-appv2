@@ -73,6 +73,7 @@ export const PAGE_NAMES = {
   // USER MANAGEMENT MODULE PAGES (10801-10899)
   // ============================================
   USER_MANAGEMENT: 'User Management',
+  USER_SETUP: 'User Setup',
   USER_GROUP_MANAGEMENT: 'User Group Management',
   PERMISSION_SET_MANAGEMENT: 'Permission Set Management',
   USER_ROLES_MANAGEMENT: 'User Roles Management',

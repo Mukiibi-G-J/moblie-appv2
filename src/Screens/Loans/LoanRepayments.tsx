@@ -1,4 +1,5 @@
 import React, {useEffect, useRef, useState, useCallback} from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   View,
   Text,
@@ -28,7 +29,7 @@ import LoanRepaymentFormModal from './LoanRepaymentFormModal';
 const STATUS_FILTERS: (RepaymentStatus | 'All')[] = ['Open', 'Posted', 'Cancelled', 'All'];
 
 const formatAmount = (amount?: number) =>
-  `UGX ${(amount || 0).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
+  formatCurrencyCompact(amount);
 
 const LoanRepayments: React.FC = () => {
   const {canRead, canCreate, canEdit, canDelete} = usePermissions();

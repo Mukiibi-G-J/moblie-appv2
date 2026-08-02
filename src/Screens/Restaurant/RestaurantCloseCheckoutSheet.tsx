@@ -1,4 +1,5 @@
 import React, {useEffect, useState} from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   View,
   Text,
@@ -121,7 +122,7 @@ export default function RestaurantCloseCheckoutSheet(props: Props) {
             <View style={[styles.summary, {borderColor: chrome.border}]}>
               <Text style={[styles.summaryNo, {color: chrome.text}]}>{orderNo}</Text>
               <Text style={[styles.summaryMeta, {color: chrome.muted}]}>
-                {itemCount} item(s) · UGX billing (posted to Sales)
+                {itemCount} item(s) · {getLocalCurrencyCode()} billing (posted to Sales)
               </Text>
               <Text style={[styles.summaryTotal, {color: chrome.text}]}>
                 Total:{' '}

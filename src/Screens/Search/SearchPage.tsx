@@ -1,4 +1,5 @@
 import React, {useState, useRef, useEffect} from 'react';
+import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   View,
   Text,
@@ -167,7 +168,7 @@ const SearchPage = () => {
         <View style={styles.itemInfo}>
           <Text style={styles.stockText}>Stock: {item.inventory}</Text>
           <Text style={styles.priceText}>
-            UGX {item.unit_price?.toLocaleString()}
+            {formatCurrencyCompact(item.unit_price)}
           </Text>
         </View>
       </View>

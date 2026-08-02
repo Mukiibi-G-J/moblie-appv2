@@ -1844,11 +1844,8 @@ class BluetoothPrinterService {
    * Format currency
    */
   private formatCurrency(amount: number | string | undefined | null): string {
-    const numericAmount = Number(amount);
-    const safeAmount = Number.isFinite(numericAmount) ? numericAmount : 0;
-    return `UGX ${safeAmount.toLocaleString('en-US', {
-      maximumFractionDigits: 0,
-    })}`;
+    const {formatCurrencyCompact} = require('../utils/currency');
+    return formatCurrencyCompact(amount);
   }
 
   /**

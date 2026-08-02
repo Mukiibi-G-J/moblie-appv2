@@ -8,6 +8,8 @@ import {
   Image,
 } from 'react-native';
 import {COLORS, FONTS, icons} from '../../constants';
+import {formatCurrencyCompact} from '../../utils/currency';
+import {useTheme} from '../../context/ThemeContext';
 import {Vendor} from '../../@types/vendor';
 
 const isProtectedGeneralVendor = (vendor: Vendor) =>
@@ -26,6 +28,7 @@ const SupplierListItem: React.FC<SupplierListItemProps> = ({
   onDelete,
   onBalancePress,
 }) => {
+  const {colors} = useTheme();
   const isGeneralVendor = isProtectedGeneralVendor(vendor);
   const initials =
     vendor.name
@@ -38,9 +41,7 @@ const SupplierListItem: React.FC<SupplierListItemProps> = ({
       .toUpperCase() || 'SU';
   const numericBalance = parseFloat(vendor.balance || '0') || 0;
   const hasBalance = Math.abs(numericBalance) > 0;
-  const formattedBalance = `UGX ${numericBalance
-    .toFixed(0)
-    .replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
+  const formattedBalance = formatCurrencyCompact(numericBalance);
   const secondaryLine =
     vendor.phone || vendor.email || vendor.no || vendor.city || 'No contact info';
 
@@ -83,17 +84,21 @@ const SupplierListItem: React.FC<SupplierListItemProps> = ({
   return (
     <TouchableOpacity
       activeOpacity={onEdit && !isGeneralVendor ? 0.8 : 1}
-      style={styles.container}
+      style={[styles.container, {borderBottomColor: colors.border}]}
       onPress={onEdit && !isGeneralVendor ? () => onEdit(vendor) : undefined}>
-      <View style={styles.avatar}>
+      <View style={[styles.avatar, {backgroundColor: colors.backButtonBg}]}>
         <Text style={styles.avatarText}>{initials}</Text>
       </View>
 
       <View style={styles.content}>
-        <Text style={styles.vendorName} numberOfLines={1}>
+        <Text
+          style={[styles.vendorName, {color: colors.textPrimary}]}
+          numberOfLines={1}>
           {vendor.name}
         </Text>
-        <Text style={styles.secondaryText} numberOfLines={1}>
+        <Text
+          style={[styles.secondaryText, {color: colors.textSecondary}]}
+          numberOfLines={1}>
           {secondaryLine}
         </Text>
         <TouchableOpacity
@@ -104,7 +109,9 @@ const SupplierListItem: React.FC<SupplierListItemProps> = ({
           <Text
             style={[
               styles.balanceText,
-              hasBalance ? styles.balanceTextInteractive : styles.balanceTextMuted,
+              hasBalance
+                ? styles.balanceTextInteractive
+                : {color: colors.textSecondary},
             ]}>
             Balance: {formattedBalance}
           </Text>
@@ -119,9 +126,13 @@ const SupplierListItem: React.FC<SupplierListItemProps> = ({
       {(onEdit || onDelete) && (
         <TouchableOpacity
           onPress={handleOpenActions}
-          style={styles.actionButton}
+          style={[styles.actionButton, {backgroundColor: colors.backButtonBg}]}
           hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
-          <Image source={icons.menu} style={styles.actionIcon} resizeMode="contain" />
+          <Image
+            source={icons.menu}
+            style={[styles.actionIcon, {tintColor: colors.textPrimary}]}
+            resizeMode="contain"
+          />
         </TouchableOpacity>
       )}
     </TouchableOpacity>
@@ -135,13 +146,11 @@ const styles = StyleSheet.create({
     marginHorizontal: 20,
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray1,
   },
   avatar: {
     width: 48,
     height: 48,
     borderRadius: 10,
-    backgroundColor: COLORS.transparentPrimary,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 14,
@@ -156,14 +165,12 @@ const styles = StyleSheet.create({
   },
   vendorName: {
     ...FONTS.body2,
-    color: COLORS.black,
     fontWeight: '700',
     fontSize: 15,
     marginBottom: 4,
   },
   secondaryText: {
     ...FONTS.body4,
-    color: COLORS.gray2,
     fontSize: 13,
   },
   balanceLinkWrap: {
@@ -178,9 +185,6 @@ const styles = StyleSheet.create({
     color: COLORS.primary2,
     textDecorationLine: 'underline',
     fontWeight: '600',
-  },
-  balanceTextMuted: {
-    color: COLORS.gray2,
   },
   blockedBadge: {
     backgroundColor: COLORS.error + '15',
@@ -200,16 +204,13 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: COLORS.transparentPrimary,
     alignItems: 'center',
     justifyContent: 'center',
   },
   actionIcon: {
     width: 16,
     height: 16,
-    tintColor: COLORS.primary3,
   },
 });
 
 export default SupplierListItem;
-
