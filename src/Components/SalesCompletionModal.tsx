@@ -1,4 +1,5 @@
-import React, {useState, useEffect, useMemo} from 'react';
+import React, {useState, useEffect, useMemo, useRef} from 'react';
+import {pickDefaultCashPaymentMethod} from '../utils/paymentMethodDefaults';
 import {
   View,
   Text,
@@ -7,7 +8,6 @@ import {
   TextInput,
   ScrollView,
   ActivityIndicator,
-  Alert,
   Image,
   Dimensions,
   KeyboardAvoidingView,
@@ -15,7 +15,6 @@ import {
 } from 'react-native';
 import ReactNativeModal from 'react-native-modal';
 import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
-import Toast from 'react-native-toast-message';
 import {
   COLORS,
   FONTS,
@@ -23,30 +22,35 @@ import {
   icons,
   ICON_BUTTON_HIT_SLOP,
 } from '../constants';
+import {
+  showUserError,
+  showUserInfo,
+  showUserSuccess,
+} from '../utils/userFeedback';
 import {QuickIconPressable} from './QuickIconPressable';
 import {CartItem, SalesInvoiceData} from '../@types/types.dto';
 import {validateCartTracking} from '../utils/salesTracking';
 import {formatCurrencyCompact} from '../utils/currency';
 import {
-  fetchPaymentMethods,
   createSalesInvoice,
   postSalesInvoice,
   getCompanyInfo,
+  getSalesInvoice,
+  getSalesApiErrorMessage,
+  isAlreadyPostedSalesError,
   Customer,
   PaymentMethod,
 } from '../services/app.services';
-import {getLocalPaymentMethods} from '../services/localData';
 import {completeOfflineSale} from '../services/offline/OfflineSaleService';
 import {loadReceiptBusinessInfo} from '../services/companyInfoCache';
 import {useOfflineOptional} from '../context/OfflineContext';
 import {getEffectiveIsOnline} from '../utils/posConnectivity';
 import {getCartTrackingMode} from '../utils/posConnectivity';
+import {usePosPaymentMethodsQuery} from '../hooks/useSaleCustomersQuery';
 import PrintService, {CompanyInfo} from '../services/PrintService';
 import {useTheme} from '../context/ThemeContext';
 
-const WINDOW_HEIGHT = Dimensions.get('window').height;
-/** Tender step needs a real height; otherwise flex children collapse to a thin strip at the bottom. */
-const TENDER_MODAL_MIN_HEIGHT = Math.round(WINDOW_HEIGHT * 0.52);
+const SHEET_MAX_HEIGHT = Math.round(Dimensions.get('window').height * 0.92);
 
 interface SalesCompletionModalProps {
   isVisible: boolean;
@@ -84,12 +88,28 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
       totalRow: {borderTopColor: colors.border},
       totalLabel: {color: colors.textPrimary},
       content: {backgroundColor: colors.surface},
-      paymentRow: {borderBottomColor: colors.border},
-      paymentRowSel: {
-        backgroundColor: isDark ? 'rgba(2, 134, 255, 0.12)' : COLORS.transparentPrimary2,
+      dropdown: {
+        borderColor: colors.border,
+        backgroundColor: colors.inputBackground,
       },
-      paymentRowText: {color: colors.textPrimary},
-      paymentChevron: {tintColor: colors.iconMuted},
+      dropdownOpen: {
+        borderColor: COLORS.primary,
+      },
+      dropdownText: {color: colors.textPrimary},
+      dropdownPlaceholder: {color: colors.textSecondary},
+      dropdownMenu: {
+        borderColor: colors.border,
+        backgroundColor: colors.surface,
+      },
+      dropdownOption: {borderBottomColor: colors.border},
+      dropdownOptionSel: {
+        backgroundColor: isDark
+          ? 'rgba(2, 134, 255, 0.14)'
+          : COLORS.transparentPrimary2,
+      },
+      dropdownOptionText: {color: colors.textPrimary},
+      dropdownOptionTextSel: {color: COLORS.primary},
+      dropdownChevron: {tintColor: colors.iconMuted},
       noPayText: {color: colors.textSecondary},
       customerCard: {
         borderColor: colors.border,
@@ -109,9 +129,6 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
       checkoutCloseGlyph: {color: colors.textPrimary},
       heroTotal: {color: colors.textPrimary},
       heroSub: {color: colors.textSecondary},
-      tenderHdr: {borderBottomColor: colors.border},
-      tenderBack: {backgroundColor: colors.screenMuted},
-      tenderTitle: {color: colors.textPrimary},
       tenderLabel: {color: colors.textSecondary},
       tenderShell: {
         backgroundColor: colors.inputBackground,
@@ -119,10 +136,17 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
       },
       tenderInput: {color: colors.textPrimary},
       tenderChange: {
-        backgroundColor: isDark ? 'rgba(2,134,255,0.1)' : COLORS.transparentPrimary,
+        backgroundColor: isDark
+          ? 'rgba(2,134,255,0.1)'
+          : COLORS.transparentPrimary,
         borderColor: colors.border,
       },
       changeLabel: {color: colors.textSecondary},
+      exactBtn: {
+        borderColor: colors.border,
+        backgroundColor: colors.screenMuted,
+      },
+      exactBtnText: {color: colors.textPrimary},
     }),
     [colors, isDark],
   );
@@ -144,55 +168,59 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
   const [amountReceivedDisplay, setAmountReceivedDisplay] = useState('');
   const [printReceipt, setPrintReceipt] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [paymentDropdownOpen, setPaymentDropdownOpen] = useState(false);
 
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
-  const [loadingPaymentMethods, setLoadingPaymentMethods] = useState(false);
-  /** Main checkout vs cash / amount entry (tender) screen */
-  const [screenMode, setScreenMode] = useState<'main' | 'tender'>('main');
+  const {
+    data: paymentMethods = [],
+    isLoading: loadingPaymentMethods,
+    refetch: refetchPaymentMethods,
+    isError: paymentMethodsError,
+  } = usePosPaymentMethodsQuery(isVisible, isPosOnline);
 
   const formatTotalDisplay = () => formatCurrencyCompact(total);
+  const needsAmountReceived = Boolean(paymentMethod?.requires_amount_received);
+
+  const didAutoSelectPaymentRef = useRef(false);
 
   useEffect(() => {
     if (isVisible) {
-      setScreenMode('main');
       setSelectedCustomer(initialSelectedCustomer || fallbackGeneralCustomer);
-      fetchPaymentMethodsData();
-    }
-  }, [isVisible, initialSelectedCustomer]);
-
-  useEffect(() => {
-    if (screenMode === 'tender' && paymentMethod?.requires_amount_received) {
+      setPaymentMethod(null);
       setAmountReceived('');
       setAmountReceivedDisplay('');
+      setPaymentDropdownOpen(false);
+      didAutoSelectPaymentRef.current = false;
+      refetchPaymentMethods();
     }
-  }, [screenMode, paymentMethod?.requires_amount_received, paymentMethod?.id]);
+  }, [isVisible, initialSelectedCustomer, refetchPaymentMethods]);
 
-  const fetchPaymentMethodsData = async () => {
-    setLoadingPaymentMethods(true);
-    try {
-      if (!isPosOnline) {
-        const local = await getLocalPaymentMethods();
-        setPaymentMethods(local);
-        return;
-      }
-      const paymentMethodsData = await fetchPaymentMethods();
-      setPaymentMethods(paymentMethodsData);
-    } catch (error) {
-      console.error('❌ Failed to fetch payment methods:', error);
-      const local = await getLocalPaymentMethods();
-      if (local.length) {
-        setPaymentMethods(local);
-      } else {
-        Toast.show({
-          type: 'error',
-          text1: 'Error',
-          text2: 'Failed to load payment methods',
-        });
-      }
-    } finally {
-      setLoadingPaymentMethods(false);
+  useEffect(() => {
+    if (!isVisible || !paymentMethodsError || paymentMethods.length > 0) {
+      return;
     }
-  };
+    showUserError(
+      'Payment methods unavailable',
+      'Failed to load payment methods. Check your connection and try again.',
+    );
+  }, [isVisible, paymentMethodsError, paymentMethods.length]);
+
+  /** Default payment type to Cash CST when the completion sheet opens. */
+  useEffect(() => {
+    if (!isVisible || didAutoSelectPaymentRef.current || paymentMethods.length === 0) {
+      return;
+    }
+    const cash = pickDefaultCashPaymentMethod(paymentMethods);
+    if (!cash) {
+      return;
+    }
+    didAutoSelectPaymentRef.current = true;
+    setPaymentMethod(cash);
+    if (cash.requires_amount_received) {
+      const exact = String(total);
+      setAmountReceived(exact);
+      setAmountReceivedDisplay(total.toLocaleString());
+    }
+  }, [isVisible, paymentMethods, total]);
 
   const calculateChange = (): number => {
     const received = parseFloat(amountReceived) || 0;
@@ -333,11 +361,15 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
               ? 'Saved — sync failed'
               : 'Saved — pending sync';
 
-        Toast.show({
-          type: offlineResult.syncStatus === 'failed' ? 'error' : 'success',
-          text1: statusLabel,
-          text2: `Receipt ${offlineResult.receiptNo}`,
-        });
+        if (offlineResult.syncStatus === 'failed') {
+          showUserError(
+            statusLabel,
+            offlineResult.syncError ||
+              `Receipt ${offlineResult.receiptNo} was saved locally but sync failed.`,
+          );
+        } else {
+          showUserSuccess(statusLabel, `Receipt ${offlineResult.receiptNo}`);
+        }
 
         onSuccess({
           id: offlineResult.localId,
@@ -348,9 +380,10 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
         });
         handleClose();
       } catch (error: unknown) {
-        setErrorMessage(
-          error instanceof Error ? error.message : 'Offline sale failed',
-        );
+        const msg =
+          error instanceof Error ? error.message : 'Offline sale failed';
+        setErrorMessage(msg);
+        showUserError('Offline sale failed', msg);
       } finally {
         setIsProcessing(false);
       }
@@ -391,6 +424,15 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
           // This should be "ITM-000359" format
           const itemNo = item.no || item.system_id;
           const itemTotal = (item.unit_price * item.quantity).toString();
+          // Cart unit_price is already the UOM sell price (price list). Match web: send as-is.
+
+          const requiresSerial = Boolean(item.tracking_code?.require_serial_no);
+          const lotNo = requiresSerial
+            ? ''
+            : (item.selectedTrackingCode || '').trim();
+          const serialNos = Array.isArray(item.selectedSerialNos)
+            ? item.selectedSerialNos.filter(s => String(s || '').trim())
+            : [];
 
           return {
             id: index + 1,
@@ -401,7 +443,8 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
             unit_price: item.unit_price.toString(),
             total_amount: itemTotal,
             unit_of_measure: item.unit_of_measure || 'PCS',
-            tracking_code: (item.selectedTrackingCode || '').trim(),
+            tracking_code: lotNo,
+            serial_nos: serialNos,
             description: '',
           };
         }),
@@ -421,31 +464,75 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
       );
       console.log('=== END DEBUG ===');
 
-      // Create sales invoice and post it automatically
+      // Create Open invoice, then post explicitly (post failures must be shown).
       const response = await createSalesInvoice(salesInvoiceData);
       console.log('🔍 DEBUG: createSalesInvoice response:', response.data);
 
       if (response.data && response.data.id) {
+        const invoiceId = response.data.id as number;
+        const invoiceNo =
+          response.data.invoice_no || response.data.customer_invoice_no || invoiceId;
+
         let postedSuccessfully = false;
         try {
           console.log('🔍 DEBUG: About to call postSalesInvoice...');
-          await postSalesInvoice(response.data.id);
+          const postResponse = await postSalesInvoice(invoiceId);
+          const postedStatus =
+            postResponse?.data?.status ||
+            postResponse?.data?.invoice?.status ||
+            postResponse?.data?.sale?.status;
+
+          if (postedStatus && postedStatus !== 'Posted') {
+            throw Object.assign(
+              new Error(
+                `Invoice ${invoiceNo} is still ${postedStatus} after posting.`,
+              ),
+              {
+                response: {
+                  data: {error: `Invoice is still ${postedStatus}`},
+                },
+              },
+            );
+          }
+
+          // Confirm status when response omits it — catches false "success" responses.
+          if (postedStatus !== 'Posted') {
+            const confirm = await getSalesInvoice(invoiceId);
+            // getSalesInvoice returns the invoice payload (not AxiosResponse).
+            const confirmedStatus = confirm?.status;
+            if (confirmedStatus !== 'Posted') {
+              throw Object.assign(
+                new Error(
+                  `Invoice ${invoiceNo} was not posted (status: ${confirmedStatus || 'unknown'}).`,
+                ),
+                {
+                  response: {
+                    data: {
+                      error: `Posting failed — invoice status is ${confirmedStatus || 'unknown'}`,
+                      detail: `Invoice ${invoiceNo} is still ${confirmedStatus || 'unposted'}. It will not appear in Sales History until posted.`,
+                    },
+                  },
+                },
+              );
+            }
+          }
+
           postedSuccessfully = true;
           console.log('✅ Sale posted successfully!');
         } catch (postError: any) {
-          console.error('Failed to post invoice:', postError);
-          const apiErr = postError?.response?.data?.error;
-          const msg =
-            typeof apiErr === 'string'
-              ? apiErr
-              : postError?.message || 'Failed to post invoice.';
-          setErrorMessage(msg);
-          Toast.show({
-            type: 'error',
-            text1: 'Could not post sale',
-            text2: msg.length > 140 ? `${msg.slice(0, 137)}...` : msg,
-            visibilityTime: 5000,
-          });
+          if (isAlreadyPostedSalesError(postError)) {
+            postedSuccessfully = true;
+            console.log('✅ Sale already posted — treating as success');
+          } else {
+            console.error('Failed to post invoice:', postError);
+            const msg = getSalesApiErrorMessage(
+              postError,
+              'Failed to post invoice.',
+            );
+            const fullMsg = `Sale saved as Open (${invoiceNo}) but posting failed:\n\n${msg}\n\nThis sale will not appear in Recent Transactions until it is posted. Open Unposted Sales to retry.`;
+            setErrorMessage(fullMsg);
+            showUserError('Could not post sale', fullMsg);
+          }
         }
 
         if (!postedSuccessfully) {
@@ -463,12 +550,10 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
 
             if (!isPrinterAvailable) {
               console.log('ℹ️ No printer available');
-              Toast.show({
-                type: 'info',
-                text1: 'No Printer Found',
-                text2:
-                  'Pair the built-in printer in Android Bluetooth settings, open Printer configuration, then try again.',
-              });
+              showUserInfo(
+                'No printer found',
+                'Pair the printer in Android Bluetooth settings, open Printer configuration, then try again.',
+              );
             } else {
               console.log('🖨️ Printer available, starting receipt printing...');
 
@@ -516,19 +601,16 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
 
               if (printResult) {
                 console.log('✅ Receipt printed successfully');
-                Toast.show({
-                  type: 'success',
-                  text1: 'Receipt Printed',
-                  text2: 'Receipt has been sent to printer',
-                });
+                showUserSuccess(
+                  'Receipt printed',
+                  'Receipt has been sent to printer',
+                );
               } else {
                 console.log('❌ Receipt printing failed');
-                Toast.show({
-                  type: 'info',
-                  text1: 'Print Failed',
-                  text2:
-                    'Receipt could not be printed. Check Bluetooth printer in Settings.',
-                });
+                showUserInfo(
+                  'Print failed',
+                  'Receipt could not be printed. Check Bluetooth printer in Settings.',
+                );
               }
             }
           }
@@ -536,26 +618,28 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
           console.error('❌ Error printing receipt:', printError);
           // Don't fail the sale if printing fails
           if (printReceipt) {
-            Toast.show({
-              type: 'error',
-              text1: 'Print Error',
-              text2: 'Failed to print receipt. Sale completed successfully.',
-            });
+            showUserInfo(
+              'Print error',
+              'Failed to print receipt. The sale was still completed successfully.',
+            );
           }
         }
 
-        Toast.show({
-          type: 'success',
-          text1: 'Sale Completed',
-          text2: `Sales invoice created and posted successfully! Invoice No: ${
+        showUserSuccess(
+          'Sale completed',
+          `Invoice ${
             response.data.invoice_no || response.data.id
-          }`,
-        });
+          } created and posted.`,
+        );
 
         onSuccess(response.data);
         handleClose();
       } else {
         setErrorMessage('Failed to complete sale. No invoice ID received.');
+        showUserError(
+          'Sale failed',
+          'Failed to complete sale. No invoice ID received.',
+        );
       }
     } catch (error: any) {
       console.error('=== SALE COMPLETION ERROR ===');
@@ -564,7 +648,12 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
       console.error('Error status:', error?.response?.status);
       console.error('Error message:', error?.message);
       console.error('=== END ERROR ===');
-      setErrorMessage(error?.message || 'An unexpected error occurred.');
+      const msg = getSalesApiErrorMessage(
+        error,
+        'An unexpected error occurred while completing the sale.',
+      );
+      setErrorMessage(msg);
+      showUserError('Sale failed', msg);
     } finally {
       setIsProcessing(false);
     }
@@ -572,34 +661,50 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
 
   const handleClose = () => {
     if (!isProcessing) {
-      setScreenMode('main');
       setSelectedCustomer(initialSelectedCustomer || fallbackGeneralCustomer);
       setPaymentMethod(null);
       setAmountReceived('');
       setAmountReceivedDisplay('');
+      setPaymentDropdownOpen(false);
       setPrintReceipt(true);
       setErrorMessage(null);
       onClose();
     }
   };
 
-  const handlePaymentMethodRowPress = (method: PaymentMethod) => {
+  const applyExactAmount = () => {
+    const exact = String(total);
+    setAmountReceived(exact);
+    setAmountReceivedDisplay(total.toLocaleString());
+    setErrorMessage(null);
+  };
+
+  const handlePaymentMethodSelect = (method: PaymentMethod) => {
     if (isProcessing) {
       return;
     }
     setPaymentMethod(method);
+    setPaymentDropdownOpen(false);
     setErrorMessage(null);
-    if (method.requires_amount_received) {
-      setScreenMode('tender');
-    }
+    setAmountReceived('');
+    setAmountReceivedDisplay('');
   };
 
   const change = calculateChange();
 
-  /** Cash/tender step: require full payment before enabling Complete Sale */
+  /** Cash methods: require full payment before enabling Complete Sale */
   const tenderAmountOk =
-    !paymentMethod?.requires_amount_received ||
+    !needsAmountReceived ||
     (amountReceived !== '' && parseFloat(amountReceived) >= total);
+
+  const canCompleteSale =
+    Boolean(paymentMethod) && tenderAmountOk && !isProcessing;
+
+  /** Leave room for close row + action footer inside the sheet */
+  const scrollMaxHeight = Math.max(
+    220,
+    SHEET_MAX_HEIGHT - insets.bottom - 130,
+  );
 
   return (
     <ReactNativeModal
@@ -616,11 +721,11 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
         style={[
           styles.modalView,
           st.modalView,
-          screenMode === 'tender' && {minHeight: TENDER_MODAL_MIN_HEIGHT},
-          // Modal + Android: automatic bottom safe area is often wrong; use explicit inset
-          {paddingBottom: insets.bottom},
+          {
+            maxHeight: SHEET_MAX_HEIGHT,
+            paddingBottom: insets.bottom,
+          },
         ]}>
-        {/* Error Message - Fixed position below header */}
         {errorMessage && (
           <View style={styles.errorContainerFixed}>
             <Text style={styles.errorText}>{errorMessage}</Text>
@@ -634,35 +739,162 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
           </View>
         )}
 
-        {screenMode === 'tender' && paymentMethod ? (
-          <KeyboardAvoidingView
-            style={styles.tenderKeyboardView}
-            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}>
-            <View style={styles.tenderScreen}>
-              <View style={styles.tenderTopBlock}>
-                <View style={[styles.tenderHeader, st.tenderHdr]}>
-                  <QuickIconPressable
-                    style={[styles.tenderBackButton, st.tenderBack]}
-                    onPress={() => setScreenMode('main')}
-                    disabled={isProcessing}
-                    hitSlop={ICON_BUTTON_HIT_SLOP}
-                    accessibilityLabel="Back">
-                    <Image source={icons.back} style={styles.tenderBackIcon} />
-                  </QuickIconPressable>
-                  <Text
-                    style={[styles.tenderHeaderTitle, st.tenderTitle]}
-                    numberOfLines={2}
-                    ellipsizeMode="tail">
-                    {formatTotalDisplay()} · {paymentMethod.description}
-                  </Text>
-                </View>
+        <KeyboardAvoidingView
+          style={[
+            styles.mainKeyboardView,
+            {maxHeight: SHEET_MAX_HEIGHT - insets.bottom},
+          ]}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}>
+          <View style={styles.checkoutHeader}>
+            <QuickIconPressable
+              style={[styles.checkoutCloseCircle, st.checkoutClose]}
+              onPress={handleClose}
+              disabled={isProcessing}
+              hitSlop={ICON_BUTTON_HIT_SLOP}
+              accessibilityLabel="Close">
+              <Text style={[styles.checkoutCloseGlyph, st.checkoutCloseGlyph]}>
+                ✕
+              </Text>
+            </QuickIconPressable>
+          </View>
 
-                <Text style={[styles.tenderFieldLabel, st.tenderLabel]}>Amount received</Text>
+          <ScrollView
+            style={[styles.contentScroll, {maxHeight: scrollMaxHeight}]}
+            contentContainerStyle={[styles.content, st.content]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            bounces={false}>
+            <View style={styles.heroTotalWrap}>
+              <Text
+                style={[styles.heroTotalText, st.heroTotal]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.28}>
+                {formatTotalDisplay()}
+              </Text>
+              <Text style={[styles.heroSubtitle, st.heroSub]}>
+                Select payment & enter amount
+              </Text>
+            </View>
+
+            {/* Payment type dropdown */}
+            <View style={styles.paymentPickerSection}>
+              <Text style={[styles.sectionTitle, st.sectionTitle]}>
+                Payment Type
+              </Text>
+              {loadingPaymentMethods ? (
+                <ActivityIndicator size="small" color={COLORS.primary} />
+              ) : paymentMethods.length === 0 ? (
+                <Text style={[styles.noPaymentMethodsText, st.noPayText]}>
+                  No payment methods available.
+                </Text>
+              ) : (
+                <View style={styles.dropdownWrap}>
+                  <TouchableOpacity
+                    style={[
+                      styles.dropdownTrigger,
+                      st.dropdown,
+                      paymentDropdownOpen && styles.dropdownTriggerOpen,
+                      paymentDropdownOpen && st.dropdownOpen,
+                    ]}
+                    onPress={() =>
+                      !isProcessing &&
+                      setPaymentDropdownOpen(open => !open)
+                    }
+                    disabled={isProcessing}
+                    activeOpacity={0.75}
+                    accessibilityRole="button"
+                    accessibilityState={{expanded: paymentDropdownOpen}}>
+                    <Text
+                      style={[
+                        styles.dropdownTriggerText,
+                        paymentMethod
+                          ? st.dropdownText
+                          : st.dropdownPlaceholder,
+                      ]}
+                      numberOfLines={1}>
+                      {paymentMethod?.description || 'Select payment type'}
+                    </Text>
+                    <Image
+                      source={icons.down_arrow}
+                      style={[
+                        styles.dropdownChevron,
+                        st.dropdownChevron,
+                        paymentDropdownOpen && styles.dropdownChevronOpen,
+                      ]}
+                    />
+                  </TouchableOpacity>
+
+                  {paymentDropdownOpen ? (
+                    <View style={[styles.dropdownMenu, st.dropdownMenu]}>
+                      {paymentMethods.map((method, index) => {
+                        const selected = paymentMethod?.id === method.id;
+                        const isLast = index === paymentMethods.length - 1;
+                        return (
+                          <TouchableOpacity
+                            key={method.id}
+                            style={[
+                              styles.dropdownOption,
+                              st.dropdownOption,
+                              isLast && styles.dropdownOptionLast,
+                              selected && styles.dropdownOptionSelected,
+                              selected && st.dropdownOptionSel,
+                            ]}
+                            onPress={() => handlePaymentMethodSelect(method)}
+                            disabled={isProcessing}
+                            activeOpacity={0.7}>
+                            <Text
+                              style={[
+                                styles.dropdownOptionText,
+                                st.dropdownOptionText,
+                                selected && styles.dropdownOptionTextSelected,
+                                selected && st.dropdownOptionTextSel,
+                              ]}
+                              numberOfLines={2}>
+                              {method.description}
+                            </Text>
+                            {selected ? (
+                              <Text style={styles.dropdownCheck}>✓</Text>
+                            ) : null}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  ) : null}
+                </View>
+              )}
+            </View>
+
+            {/* Amount received — on the face when cash / tender methods */}
+            {needsAmountReceived ? (
+              <View style={styles.amountFaceSection}>
+                <View style={styles.amountFaceHeader}>
+                  <Text
+                    style={[
+                      styles.sectionTitle,
+                      st.sectionTitle,
+                      styles.amountFaceTitle,
+                    ]}>
+                    Amount Received
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.exactAmountBtn, st.exactBtn]}
+                    onPress={applyExactAmount}
+                    disabled={isProcessing}
+                    activeOpacity={0.75}>
+                    <Text style={[styles.exactAmountBtnText, st.exactBtnText]}>
+                      Exact
+                    </Text>
+                  </TouchableOpacity>
+                </View>
                 <View style={[styles.tenderInputShell, st.tenderShell]}>
+                  <Text style={[styles.amountCurrencyPrefix, st.tenderLabel]}>
+                    UGX
+                  </Text>
                   <TextInput
                     style={[styles.tenderInput, st.tenderInput]}
-                    placeholder="0.00"
+                    placeholder="0"
                     placeholderTextColor={colors.placeholder}
                     value={amountReceivedDisplay}
                     onChangeText={handleAmountReceivedChange}
@@ -672,161 +904,112 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
                 </View>
                 {amountReceived ? (
                   <View style={[styles.tenderChangeCard, st.tenderChange]}>
-                    <Text style={[styles.changeLabel, st.changeLabel]}>Change</Text>
-                    <Text style={styles.changeValue}>{formatCurrencyCompact(change)}</Text>
+                    <Text style={[styles.changeLabel, st.changeLabel]}>
+                      Change
+                    </Text>
+                    <Text style={styles.changeValueFace}>
+                      {formatCurrencyCompact(change)}
+                    </Text>
                   </View>
-                ) : null}
-              </View>
-
-              <TouchableOpacity
-                style={[
-                  styles.tenderPrimaryButton,
-                  (isProcessing || !tenderAmountOk) && styles.disabledButton,
-                ]}
-                onPress={handleCompleteSale}
-                disabled={isProcessing || !tenderAmountOk}
-                activeOpacity={0.85}>
-                {isProcessing ? (
-                  <ActivityIndicator color={COLORS.white} size="small" />
                 ) : (
-                  <Text style={styles.tenderPrimaryButtonText}>
-                    Complete Sale
+                  <Text style={[styles.amountHint, st.heroSub]}>
+                    Enter what the customer paid
                   </Text>
                 )}
+              </View>
+            ) : null}
+
+            {/* Sale Summary */}
+            <View style={styles.section}>
+              <Text style={[styles.sectionTitle, st.sectionTitle]}>
+                Sale Summary
+              </Text>
+              <View style={styles.summaryRow}>
+                <Text style={[styles.summaryLabel, st.summaryLabel]}>
+                  Items:
+                </Text>
+                <Text style={[styles.summaryValue, st.summaryValue]}>
+                  {cartItems.length}
+                </Text>
+              </View>
+              <View style={styles.summaryRow}>
+                <Text style={[styles.summaryLabel, st.summaryLabel]}>
+                  Subtotal:
+                </Text>
+                <Text style={[styles.summaryValue, st.summaryValue]}>
+                  {formatCurrencyCompact(total)}
+                </Text>
+              </View>
+              <View style={[styles.summaryRow, styles.totalRow, st.totalRow]}>
+                <Text style={[styles.totalLabel, st.totalLabel]}>Total:</Text>
+                <Text style={styles.totalValue}>
+                  {formatCurrencyCompact(total)}
+                </Text>
+              </View>
+            </View>
+
+            {/* Selected Customer */}
+            <View style={styles.section}>
+              <Text style={[styles.sectionTitle, st.sectionTitle]}>
+                Customer
+              </Text>
+              <View style={[styles.selectedCustomerCard, st.customerCard]}>
+                <Text style={[styles.selectedCustomerName, st.customerName]}>
+                  {selectedCustomer?.name || 'General'}
+                </Text>
+                <Text style={[styles.selectedCustomerCode, st.customerCode]}>
+                  {selectedCustomer?.no || 'GEN'}
+                </Text>
+              </View>
+            </View>
+
+            {/* Receipt Printing */}
+            <View style={[styles.section, styles.lastSection]}>
+              <TouchableOpacity
+                style={styles.checkboxRow}
+                onPress={() => setPrintReceipt(!printReceipt)}
+                disabled={isProcessing}>
+                <View
+                  style={[
+                    styles.checkbox,
+                    st.checkbox,
+                    printReceipt && styles.checkedBox,
+                  ]}>
+                  {printReceipt && <Text style={styles.checkmark}>✓</Text>}
+                </View>
+                <Text style={[styles.checkboxLabel, st.checkboxLabel]}>
+                  Print Receipt
+                </Text>
               </TouchableOpacity>
             </View>
-          </KeyboardAvoidingView>
-        ) : (
-          <>
-            <View style={styles.checkoutHeader}>
-              <QuickIconPressable
-                style={[styles.checkoutCloseCircle, st.checkoutClose]}
-                onPress={handleClose}
-                disabled={isProcessing}
-                hitSlop={ICON_BUTTON_HIT_SLOP}
-                accessibilityLabel="Close">
-                <Text style={[styles.checkoutCloseGlyph, st.checkoutCloseGlyph]}>✕</Text>
-              </QuickIconPressable>
-            </View>
+          </ScrollView>
 
-            <ScrollView style={[styles.content, st.content]} showsVerticalScrollIndicator={false}>
-              <View style={styles.heroTotalWrap}>
-                <Text
-                  style={[styles.heroTotalText, st.heroTotal]}
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.28}>
-                  {formatTotalDisplay()}
-                </Text>
-                <Text style={[styles.heroSubtitle, st.heroSub]}>Select Payment Type Below</Text>
-              </View>
-
-              <View style={styles.paymentPickerSection}>
-                {loadingPaymentMethods ? (
-                  <ActivityIndicator size="small" color={COLORS.primary} />
-                ) : paymentMethods.length === 0 ? (
-                  <Text style={[styles.noPaymentMethodsText, st.noPayText]}>
-                    No payment methods available.
-                  </Text>
-                ) : (
-                  paymentMethods.map((method, index) => (
-                    <TouchableOpacity
-                      key={method.id}
-                      style={[
-                        styles.paymentPickerRow,
-                        st.paymentRow,
-                        index === paymentMethods.length - 1 &&
-                          styles.paymentPickerRowLast,
-                        paymentMethod?.id === method.id &&
-                          styles.paymentPickerRowSelected,
-                        paymentMethod?.id === method.id && st.paymentRowSel,
-                      ]}
-                      onPress={() => handlePaymentMethodRowPress(method)}
-                      disabled={isProcessing}
-                      activeOpacity={0.65}>
-                      <Text style={[styles.paymentPickerRowText, st.paymentRowText]}>
-                        {method.description}
-                      </Text>
-                      <Image
-                        source={icons.down_arrow}
-                        style={[styles.paymentPickerChevron, st.paymentChevron]}
-                      />
-                    </TouchableOpacity>
-                  ))
-                )}
-              </View>
-
-              {/* Sale Summary */}
-              <View style={styles.section}>
-            <Text style={[styles.sectionTitle, st.sectionTitle]}>Sale Summary</Text>
-            <View style={styles.summaryRow}>
-              <Text style={[styles.summaryLabel, st.summaryLabel]}>Items:</Text>
-              <Text style={[styles.summaryValue, st.summaryValue]}>{cartItems.length}</Text>
-            </View>
-            <View style={styles.summaryRow}>
-              <Text style={[styles.summaryLabel, st.summaryLabel]}>Subtotal:</Text>
-              <Text style={[styles.summaryValue, st.summaryValue]}>{formatCurrencyCompact(total)}</Text>
-            </View>
-            {/* Tax and discount rows removed */}
-            <View style={[styles.summaryRow, styles.totalRow, st.totalRow]}>
-              <Text style={[styles.totalLabel, st.totalLabel]}>Total:</Text>
-              <Text style={styles.totalValue}>{formatCurrencyCompact(total)}</Text>
-            </View>
-              </View>
-
-              {/* Selected Customer */}
-              <View style={styles.section}>
-            <Text style={[styles.sectionTitle, st.sectionTitle]}>Customer</Text>
-            <View style={[styles.selectedCustomerCard, st.customerCard]}>
-              <Text style={[styles.selectedCustomerName, st.customerName]}>
-                {selectedCustomer?.name || 'General'}
-              </Text>
-              <Text style={[styles.selectedCustomerCode, st.customerCode]}>
-                {selectedCustomer?.no || 'GEN'}
-              </Text>
-            </View>
-              </View>
-
-              {/* Receipt Printing */}
-              <View style={styles.section}>
+          <View style={[styles.footer, st.footer]}>
             <TouchableOpacity
-              style={styles.checkboxRow}
-              onPress={() => setPrintReceipt(!printReceipt)}
+              style={[styles.button, styles.cancelButton, st.cancelBtn]}
+              onPress={handleClose}
               disabled={isProcessing}>
-              <View
-                style={[styles.checkbox, st.checkbox, printReceipt && styles.checkedBox]}>
-                {printReceipt && <Text style={styles.checkmark}>✓</Text>}
-              </View>
-              <Text style={[styles.checkboxLabel, st.checkboxLabel]}>Print Receipt</Text>
+              <Text style={[styles.cancelButtonText, st.cancelBtnText]}>
+                Cancel
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.button,
+                styles.completeButton,
+                !canCompleteSale && styles.disabledButton,
+              ]}
+              onPress={handleCompleteSale}
+              disabled={!canCompleteSale}
+              activeOpacity={0.85}>
+              {isProcessing ? (
+                <ActivityIndicator color={COLORS.white} size="small" />
+              ) : (
+                <Text style={styles.completeButtonText}>Complete Sale</Text>
+              )}
             </TouchableOpacity>
           </View>
-        </ScrollView>
-
-        {/* Action Buttons */}
-        <View style={[styles.footer, st.footer]}>
-          <TouchableOpacity
-            style={[styles.button, styles.cancelButton, st.cancelBtn]}
-            onPress={handleClose}
-            disabled={isProcessing}>
-            <Text style={[styles.cancelButtonText, st.cancelBtnText]}>Cancel</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.button,
-              styles.completeButton,
-              (isProcessing || !paymentMethod) && styles.disabledButton,
-            ]}
-            onPress={handleCompleteSale}
-            disabled={isProcessing || !paymentMethod}>
-            {isProcessing ? (
-              <ActivityIndicator color={COLORS.white} size="small" />
-            ) : (
-              <Text style={styles.completeButtonText}>Complete Sale</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-          </>
-        )}
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </ReactNativeModal>
   );
@@ -842,7 +1025,9 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: '92%',
+    maxHeight: SHEET_MAX_HEIGHT,
+    width: '100%',
+    overflow: 'hidden',
   },
   header: {
     flexDirection: 'row',
@@ -864,6 +1049,15 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: SIZES.padding,
+    paddingBottom: 8,
+  },
+  contentScroll: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minHeight: 0,
+  },
+  lastSection: {
+    marginBottom: 4,
   },
   section: {
     marginBottom: SIZES.radius * 2,
@@ -996,14 +1190,19 @@ const styles = StyleSheet.create({
   },
   footer: {
     flexDirection: 'row',
+    flexGrow: 0,
+    flexShrink: 0,
     padding: SIZES.padding,
+    paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: COLORS.lightGray2,
     gap: SIZES.radius,
+    backgroundColor: COLORS.white,
   },
   button: {
     flex: 1,
-    paddingVertical: SIZES.radius,
+    minHeight: 48,
+    paddingVertical: 14,
     borderRadius: SIZES.radius,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1088,13 +1287,20 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
+  mainKeyboardView: {
+    width: '100%',
+    flexGrow: 0,
+    flexShrink: 1,
+  },
   checkoutHeader: {
     flexDirection: 'row',
     justifyContent: 'flex-start',
     alignItems: 'center',
+    flexGrow: 0,
+    flexShrink: 0,
     paddingHorizontal: SIZES.padding,
     paddingTop: 8,
-    paddingBottom: 12,
+    paddingBottom: 4,
   },
   checkoutCloseCircle: {
     width: 36,
@@ -1114,7 +1320,7 @@ const styles = StyleSheet.create({
   heroTotalWrap: {
     paddingVertical: 4,
     paddingHorizontal: 8,
-    marginBottom: 4,
+    marginBottom: 8,
   },
   heroTotalText: {
     fontSize: 44,
@@ -1126,136 +1332,160 @@ const styles = StyleSheet.create({
     ...FONTS.body4,
     color: COLORS.gray,
     textAlign: 'center',
-    marginTop: 14,
+    marginTop: 10,
     fontWeight: '500',
   },
   paymentPickerSection: {
-    marginBottom: SIZES.radius * 2,
+    marginBottom: SIZES.radius * 1.5,
   },
-  paymentPickerRow: {
+  dropdownWrap: {
+    zIndex: 20,
+  },
+  dropdownTrigger: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 16,
-    paddingHorizontal: 6,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: COLORS.lightGray2,
+    minHeight: 52,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: SIZES.radius,
+    borderWidth: 1.5,
+    borderColor: COLORS.lightGray2,
+    backgroundColor: COLORS.white,
   },
-  paymentPickerRowLast: {
-    borderBottomWidth: 0,
+  dropdownTriggerOpen: {
+    borderColor: COLORS.primary,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
   },
-  paymentPickerRowSelected: {
-    backgroundColor: COLORS.transparentPrimary2,
-  },
-  paymentPickerRowText: {
+  dropdownTriggerText: {
     ...FONTS.body3,
-    color: COLORS.darkGray,
-    fontWeight: '500',
-    fontSize: 17,
+    fontSize: 16,
+    fontWeight: '600',
     flex: 1,
     paddingRight: 12,
   },
-  paymentPickerChevron: {
+  dropdownChevron: {
     width: 14,
     height: 14,
     tintColor: COLORS.gray,
-    transform: [{rotate: '-90deg'}],
   },
-  tenderKeyboardView: {
-    flex: 1,
-    width: '100%',
+  dropdownChevronOpen: {
+    transform: [{rotate: '180deg'}],
   },
-  tenderScreen: {
-    flex: 1,
-    width: '100%',
-    paddingHorizontal: SIZES.padding,
-    paddingBottom: SIZES.padding,
-    justifyContent: 'space-between',
+  dropdownMenu: {
+    borderWidth: 1.5,
+    borderTopWidth: 0,
+    borderColor: COLORS.primary,
+    borderBottomLeftRadius: SIZES.radius,
+    borderBottomRightRadius: SIZES.radius,
+    backgroundColor: COLORS.white,
+    overflow: 'hidden',
   },
-  tenderTopBlock: {
-    flexShrink: 0,
-  },
-  tenderHeader: {
+  dropdownOption: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 20,
-    paddingBottom: 16,
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+    paddingHorizontal: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: COLORS.lightGray1,
+    borderBottomColor: COLORS.lightGray2,
   },
-  tenderBackButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+  dropdownOptionLast: {
+    borderBottomWidth: 0,
+  },
+  dropdownOptionSelected: {
+    backgroundColor: COLORS.transparentPrimary2,
+  },
+  dropdownOptionText: {
+    ...FONTS.body3,
+    fontSize: 16,
+    fontWeight: '500',
+    color: COLORS.darkGray,
+    flex: 1,
+    paddingRight: 10,
+  },
+  dropdownOptionTextSelected: {
+    color: COLORS.primary,
+    fontWeight: '700',
+  },
+  dropdownCheck: {
+    color: COLORS.primary,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  amountFaceSection: {
+    marginBottom: SIZES.radius * 2,
+  },
+  amountFaceHeader: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 10,
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  amountFaceTitle: {
+    marginBottom: 0,
+  },
+  exactAmountBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: COLORS.lightGray2,
     backgroundColor: COLORS.lightGray2,
   },
-  tenderBackIcon: {
-    width: 22,
-    height: 22,
-    tintColor: COLORS.primary2,
+  exactAmountBtnText: {
+    ...FONTS.body5,
+    fontWeight: '700',
+    color: COLORS.darkGray,
   },
-  tenderHeaderTitle: {
-    ...FONTS.body3,
-    color: COLORS.black,
-    fontWeight: '600',
-    flex: 1,
+  amountCurrencyPrefix: {
+    ...FONTS.body4,
+    fontWeight: '700',
+    color: COLORS.gray,
+    marginRight: 8,
   },
-  tenderFieldLabel: {
+  amountHint: {
     ...FONTS.body5,
     color: COLORS.gray,
-    marginBottom: 8,
-    fontWeight: '600',
-    letterSpacing: 0.2,
+    marginTop: 8,
+  },
+  changeValueFace: {
+    ...FONTS.h4,
+    color: COLORS.primary,
+    fontWeight: '700',
   },
   tenderInputShell: {
+    flexDirection: 'row',
+    alignItems: 'center',
     backgroundColor: COLORS.lightGray2,
     borderRadius: SIZES.radius,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: COLORS.lightGray1,
     paddingHorizontal: 16,
     paddingVertical: 4,
+    minHeight: 64,
   },
   tenderInput: {
+    flex: 1,
     paddingVertical: 14,
     ...FONTS.h2,
-    fontSize: 28,
-    lineHeight: 34,
+    fontSize: 30,
+    lineHeight: 36,
     color: COLORS.black,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   tenderChangeCard: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 16,
+    marginTop: 12,
     paddingVertical: 14,
     paddingHorizontal: 16,
     backgroundColor: COLORS.transparentPrimary,
     borderRadius: SIZES.radius,
     borderWidth: 1,
     borderColor: COLORS.transparentPrimary2,
-  },
-  tenderPrimaryButton: {
-    backgroundColor: COLORS.primary,
-    paddingVertical: 18,
-    borderRadius: SIZES.radius,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-    shadowColor: COLORS.primary,
-    shadowOffset: {width: 0, height: 4},
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  tenderPrimaryButtonText: {
-    color: COLORS.white,
-    fontSize: 17,
-    fontWeight: '700',
-    letterSpacing: 0.3,
   },
 });
 

@@ -122,6 +122,7 @@ export interface SalesInvoiceData {
     total_amount: string;
     unit_of_measure: string;
     tracking_code: string;
+    serial_nos?: string[];
     description: string;
   }>;
 }
@@ -175,12 +176,23 @@ export interface CartItem {
   item_id?: number;
   system_id: string;
   item_name: string;
+  /**
+   * Display / sell unit price (already adjusted for the selected UOM).
+   * Cart totals use this × quantity. API payloads convert back to base.
+   */
   unit_price: number;
+  /**
+   * Base catalog unit price (qty_per_unit = 1). Used to recalculate when UOM changes.
+   */
+  original_price?: number;
   quantity: number;
   inventory: number;
   /** Item type from API (e.g. Inventory) — used to decide if lot tracking is enforced */
   type?: string;
   unit_of_measure?: string;
+  unit_of_measure_description?: string;
+  /** How many base units one sell UOM represents (e.g. carton of 12). */
+  quantity_per_unit?: number;
   no?: string; // Add the item number field
   item_images?: {
     id: number;
@@ -193,7 +205,10 @@ export interface CartItem {
   }[];
   date_sold: string;
   tracking_code?: TrackingCodeRequirement | null;
+  /** Selected lot number (lot-tracked items). */
   selectedTrackingCode?: string | null;
+  /** Selected serial numbers (serial-tracked items; length should match qty). */
+  selectedSerialNos?: string[];
   trackingDetails?: SelectedTrackingDetails;
   bar_code_no?: string;
 }

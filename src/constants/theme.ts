@@ -118,79 +118,79 @@ export const SIZES: Sizes = {
 };
 
 export const FONTS: Fonts = {
-  // Display & Headings
+  // Display & Headings — Outfit (matches webV2 next/font Outfit)
   largeTitle: {
-    fontFamily: 'Inter-Bold',
+    fontFamily: 'Outfit-Bold',
     fontSize: SIZES.largeTitle,
     letterSpacing: -0.5,
   },
   h1: {
-    fontFamily: 'Inter-Bold',
+    fontFamily: 'Outfit-Bold',
     fontSize: SIZES.h1,
     lineHeight: 36,
     letterSpacing: -0.3,
   },
   h2: {
-    fontFamily: 'Inter-SemiBold',
+    fontFamily: 'Outfit-SemiBold',
     fontSize: SIZES.h2,
     lineHeight: 30,
     letterSpacing: -0.2,
   },
   h3: {
-    fontFamily: 'Inter-SemiBold',
+    fontFamily: 'Outfit-SemiBold',
     fontSize: SIZES.h3,
     lineHeight: 22,
     letterSpacing: -0.1,
   },
   h4: {
-    fontFamily: 'Inter-Medium',
+    fontFamily: 'Outfit-Medium',
     fontSize: SIZES.h4,
     lineHeight: 22,
   },
   h5: {
-    fontFamily: 'Inter-Medium',
+    fontFamily: 'Outfit-Medium',
     fontSize: SIZES.h5,
     lineHeight: 22,
   },
 
   // Body Text
   body1: {
-    fontFamily: 'Inter-Regular',
+    fontFamily: 'Outfit-Regular',
     fontSize: SIZES.body1,
     lineHeight: 36,
     letterSpacing: 0.2,
   },
   body2: {
-    fontFamily: 'Inter-Regular',
+    fontFamily: 'Outfit-Regular',
     fontSize: SIZES.body2,
     lineHeight: 30,
     letterSpacing: 0.2,
   },
   body3: {
-    fontFamily: 'Inter-Regular',
+    fontFamily: 'Outfit-Regular',
     fontSize: SIZES.body3,
     lineHeight: 22,
     letterSpacing: 0.1,
   },
   body4: {
-    fontFamily: 'Inter-Regular',
+    fontFamily: 'Outfit-Regular',
     fontSize: SIZES.body4,
     lineHeight: 22,
   },
   body5: {
-    fontFamily: 'Inter-Regular',
+    fontFamily: 'Outfit-Regular',
     fontSize: SIZES.body5,
     lineHeight: 22,
   },
 
   // Special Styles
   button: {
-    fontFamily: 'Inter-SemiBold',
+    fontFamily: 'Outfit-SemiBold',
     fontSize: SIZES.body3,
     letterSpacing: 0.5,
   },
   caption: {
-    fontFamily: 'Inter-Regular',
+    fontFamily: 'Outfit-Regular',
     fontSize: SIZES.body5,
     letterSpacing: 0.2,
   },

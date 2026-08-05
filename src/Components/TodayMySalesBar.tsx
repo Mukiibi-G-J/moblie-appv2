@@ -18,6 +18,11 @@ type TodayMySalesBarProps = {
   userId: number | null | undefined;
   /** When true, stacks label above actions (home section). */
   variant?: 'inline' | 'card';
+  /**
+   * Compact toolbar controls (no outer padding) — matches web POS sales strip.
+   * Parent owns horizontal spacing.
+   */
+  compact?: boolean;
   onOpenHistory?: () => void;
   refreshKey?: number;
 };
@@ -28,6 +33,7 @@ const formatUgx = (amount: number) =>
 const TodayMySalesBar: React.FC<TodayMySalesBarProps> = ({
   userId,
   variant = 'inline',
+  compact = false,
   onOpenHistory,
   refreshKey = 0,
 }) => {
@@ -129,9 +135,13 @@ const TodayMySalesBar: React.FC<TodayMySalesBarProps> = ({
   }
 
   return (
-    <View style={styles.inlineRoot}>
+    <View style={[styles.inlineRoot, compact && styles.inlineRootCompact]}>
       <TouchableOpacity
-        style={[styles.toggleButton, themed.toggleBtn]}
+        style={[
+          styles.toggleButton,
+          compact && styles.toggleButtonCompact,
+          themed.toggleBtn,
+        ]}
         onPress={() => setShowAmount(prev => !prev)}
         activeOpacity={0.8}>
         <Text style={[styles.toggleButtonText, themed.toggleText]}>
@@ -139,7 +149,11 @@ const TodayMySalesBar: React.FC<TodayMySalesBarProps> = ({
         </Text>
       </TouchableOpacity>
       <TouchableOpacity
-        style={[styles.amountButton, themed.amountWrap]}
+        style={[
+          styles.amountButton,
+          compact && styles.amountButtonCompact,
+          themed.amountWrap,
+        ]}
         onPress={onOpenHistory}
         disabled={!onOpenHistory}
         activeOpacity={onOpenHistory ? 0.8 : 1}>
@@ -167,6 +181,11 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingHorizontal: SIZES.padding,
     paddingBottom: 8,
+  },
+  inlineRootCompact: {
+    paddingHorizontal: 0,
+    paddingBottom: 0,
+    flexShrink: 1,
   },
   cardRoot: {
     borderRadius: 12,
@@ -198,6 +217,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
+  toggleButtonCompact: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
   toggleButtonText: {
     ...FONTS.body4,
     fontWeight: '600',
@@ -209,6 +232,12 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     minHeight: 36,
     justifyContent: 'center',
+  },
+  amountButtonCompact: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    minHeight: 32,
+    flexShrink: 1,
   },
   amountButtonText: {
     ...FONTS.body4,

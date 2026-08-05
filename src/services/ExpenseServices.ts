@@ -15,17 +15,44 @@ export const ExpenseServices = {
     params?: ExpenseListParams,
   ): Promise<PaginatedExpenseResponse> {
     try {
-      const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-      const axiosInstance = createAxiosInstance(tenant);
-
-      const response = await axiosInstance.get('/api/expenses/', {
-        params,
-      });
-
-      if (response?.data?.results && Array.isArray(response.data.results)) {
-        return response.data;
+      const status = params?.status;
+      // Reversed / All span scopes that page-data list pages don't cover.
+      if (status && status !== 'Open' && status !== 'Posted') {
+        const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+        const axiosInstance = createAxiosInstance(tenant);
+        const response = await axiosInstance.get('/api/expenses/', {params});
+        if (response?.data?.results && Array.isArray(response.data.results)) {
+          return response.data;
+        }
+        return {count: 0, next: null, previous: null, results: []};
       }
-      return {count: 0, next: null, previous: null, results: []};
+
+      const {fetchPageDataPaginated, PAGE_IDS} = await import(
+        './pageDataService'
+      );
+      const {mapPageDataExpense} = await import('./pageDataMappers');
+      const pageId =
+        status === 'Posted'
+          ? PAGE_IDS.PaymentHistoryList
+          : PAGE_IDS.ExpenseList;
+      const filters: Record<string, string | number> = {};
+      if (params?.start_date) {
+        filters.posting_date_from = String(params.start_date);
+      }
+      if (params?.end_date) {
+        filters.posting_date_to = String(params.end_date);
+      }
+      if (params?.expense_type) {
+        filters.expense_type = params.expense_type as number;
+      }
+      return await fetchPageDataPaginated({
+        pageId,
+        page: params?.page ?? 1,
+        pageSize: params?.page_size ?? 50,
+        search: params?.search,
+        filters,
+        mapRow: mapPageDataExpense,
+      });
     } catch (error) {
       console.error('Error fetching expenses:', error);
       throw error;
@@ -145,20 +172,12 @@ export const ExpenseServices = {
   // Get payment methods
   async getPaymentMethods(): Promise<PaymentMethod[]> {
     try {
-      const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-      const axiosInstance = createAxiosInstance(tenant);
-
-      const response = await axiosInstance.get(
-        '/api/expenses/payment_methods/',
-      );
-      // Handle both direct array and paginated response
-      if (response?.data && Array.isArray(response.data)) {
-        return response.data;
-      }
-      if (response?.data?.results && Array.isArray(response.data.results)) {
-        return response.data.results;
-      }
-      return [];
+      const {fetchPageDataAll, PAGE_IDS} = await import('./pageDataService');
+      const {mapPageDataPaymentMethod} = await import('./pageDataMappers');
+      return await fetchPageDataAll({
+        pageId: PAGE_IDS.PaymentMethodList,
+        mapRow: mapPageDataPaymentMethod as any,
+      });
     } catch (error) {
       console.error('Error fetching payment methods:', error);
       throw error;

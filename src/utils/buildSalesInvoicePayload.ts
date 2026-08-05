@@ -14,9 +14,17 @@ export interface CartLineForPayload {
   tracking_code?: string;
   selectedTrackingCode?: string;
   selectedLotNo?: string;
+  selectedSerialNos?: string[];
 }
 
 export function cartItemToLine(item: CartItem): CartLineForPayload {
+  const requiresSerial = Boolean(item.tracking_code?.require_serial_no);
+  const lot =
+    !requiresSerial && item.tracking_code?.require_lot_no
+      ? item.selectedTrackingCode
+      : requiresSerial
+        ? ''
+        : item.selectedTrackingCode;
   return {
     id: String(item.item_id ?? item.system_id ?? item.no ?? ''),
     no: item.no || item.system_id,
@@ -26,10 +34,12 @@ export function cartItemToLine(item: CartItem): CartLineForPayload {
     price: item.unit_price,
     unit_price: item.unit_price,
     unit_of_measure: item.unit_of_measure,
+    quantity_per_unit: item.quantity_per_unit || 1,
     line_discount_amount: 0,
-    tracking_code: item.selectedTrackingCode,
-    selectedTrackingCode: item.selectedTrackingCode,
-    selectedLotNo: item.selectedTrackingCode,
+    tracking_code: lot || '',
+    selectedTrackingCode: lot || '',
+    selectedLotNo: lot || '',
+    selectedSerialNos: item.selectedSerialNos,
   };
 }
 
@@ -62,11 +72,8 @@ export function buildSalesInvoicePayload(options: {
     invoice_discount_amount: '0',
     invoice_discount_percentage: '0',
     lines: options.lines.map((item, index) => {
+      // Cart unit_price is the UOM sell price (price list resolve). Match web: send as-is.
       const unitPrice = item.unit_price ?? item.price ?? 0;
-      const qpu =
-        item.quantity_per_unit && item.quantity_per_unit > 0
-          ? item.quantity_per_unit
-          : 1;
       const name = item.item_name ?? item.name ?? '';
       const itemNo = item.no ?? '';
       return {
@@ -75,13 +82,16 @@ export function buildSalesInvoicePayload(options: {
         item_no: itemNo,
         item_name: name,
         quantity: String(item.quantity),
-        unit_price: String(unitPrice / qpu),
+        unit_price: String(unitPrice),
         total_amount: String(unitPrice * item.quantity),
         line_discount_amount: String(item.line_discount_amount || 0),
         unit_of_measure: item.unit_of_measure || 'PCS',
         description: '',
         tracking_code:
           item.selectedLotNo || item.selectedTrackingCode || item.tracking_code || '',
+        serial_nos: Array.isArray(item.selectedSerialNos)
+          ? item.selectedSerialNos
+          : [],
       };
     }),
   };

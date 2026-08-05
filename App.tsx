@@ -12,6 +12,7 @@ import SplashScreen from './src/Screens/SplashScreen/SplashScreen';
 import OnBoarding from './src/OnBoarding/OnBoarding';
 import SignIn from './src/Screens/Authentication/SignIn';
 import { AppProvider, useAppContext, useAuth } from './src/context/Store';
+import { QueryProvider } from './src/context/QueryProvider';
 import { TenantProvider } from './src/context/TenantContext';
 import { NetworkProvider } from './src/context/NetworkContext';
 import { OfflineProvider } from './src/context/OfflineContext';
@@ -53,7 +54,7 @@ import OpeningBalanceJournal from './src/Screens/ItemJournal/OpeningBalanceJourn
 import ItemJournalHistory from './src/Screens/ItemJournal/ItemJournalHistory';
 import SearchPage from './src/Screens/Search/SearchPage';
 import NetworkManager from './src/utils/networkManager';
-import Toast from 'react-native-toast-message';
+import AppToastHost from './src/Components/AppToastHost';
 import Login from './src/Screens/Authentication/Login';
 import SelectBranch from './src/Screens/Authentication/SelectBranch';
 import RestaurantPinSignIn from './src/Screens/Authentication/RestaurantPinSignIn';
@@ -690,7 +691,7 @@ const AppNavigator = () => {
           </>
         )}
       </Stack.Navigator>
-      <Toast />
+      <AppToastHost />
     </>
   );
 };
@@ -723,24 +724,26 @@ function ThemedNavigation() {
 function App() {
   return (
     <SafeAreaProvider>
-      <AppProvider>
-        <NetworkProvider>
-          <OfflineProvider>
-            <TenantProvider>
-              <CartProvider>
-                <SearchModeProvider>
-                  <ThemeProvider>
-                    <AppUpdateGate>
-                      <ThemedNavigation />
-                      <NotificationBootstrap />
-                    </AppUpdateGate>
-                  </ThemeProvider>
-                </SearchModeProvider>
-              </CartProvider>
-            </TenantProvider>
-          </OfflineProvider>
-        </NetworkProvider>
-      </AppProvider>
+      <QueryProvider>
+        <AppProvider>
+          <NetworkProvider>
+            <OfflineProvider>
+              <TenantProvider>
+                <CartProvider>
+                  <SearchModeProvider>
+                    <ThemeProvider>
+                      <AppUpdateGate>
+                        <ThemedNavigation />
+                        <NotificationBootstrap />
+                      </AppUpdateGate>
+                    </ThemeProvider>
+                  </SearchModeProvider>
+                </CartProvider>
+              </TenantProvider>
+            </OfflineProvider>
+          </NetworkProvider>
+        </AppProvider>
+      </QueryProvider>
     </SafeAreaProvider>
   );
 }

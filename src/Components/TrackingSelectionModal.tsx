@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useEffect, useState} from 'react';
 import {
   View,
   Text,
@@ -19,8 +19,13 @@ type Props = {
   title: string;
   loading: boolean;
   options: TrackingLotOption[];
+  mode?: 'lot' | 'serial';
+  /** Required serial count when mode=serial (usually cart line qty). */
+  requiredCount?: number;
+  selectedSerialNos?: string[];
   onClose: () => void;
   onSelect: (option: TrackingLotOption) => void;
+  onConfirmSerials?: (serialNos: string[]) => void;
   /**
    * When true, render as an in-panel overlay (same window as parent).
    * Use inside "Current sale" so the sheet stacks above the cart editor on Android.
@@ -33,10 +38,61 @@ const TrackingSelectionModal: React.FC<Props> = ({
   title,
   loading,
   options,
+  mode = 'lot',
+  requiredCount = 1,
+  selectedSerialNos,
   onClose,
   onSelect,
+  onConfirmSerials,
   embedded = false,
 }) => {
+  const isSerial = mode === 'serial';
+  const [picked, setPicked] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!visible) {
+      return;
+    }
+    setPicked([...(selectedSerialNos ?? [])]);
+  }, [visible, selectedSerialNos]);
+
+  const availableSerialCount = isSerial ? options.length : 0;
+  const effectiveRequired =
+    isSerial && availableSerialCount > 0
+      ? Math.min(requiredCount, availableSerialCount)
+      : requiredCount;
+
+  const toggleSerial = (serial: string) => {
+    setPicked(prev => {
+      let next: string[];
+      if (prev.includes(serial)) {
+        next = prev.filter(s => s !== serial);
+      } else if (prev.length >= effectiveRequired) {
+        next = prev;
+      } else {
+        next = [...prev, serial];
+      }
+      if (
+        next.length === effectiveRequired &&
+        effectiveRequired >= 1 &&
+        onConfirmSerials
+      ) {
+        queueMicrotask(() => onConfirmSerials(next));
+      }
+      return next;
+    });
+  };
+
+  const hint = isSerial
+    ? `Select ${effectiveRequired} serial${
+        effectiveRequired === 1 ? '' : 's'
+      } (${picked.length} selected). Same as web POS.`
+    : 'Lots with remaining quantity (first expiry first). Same as web POS.';
+
+  const emptyText = isSerial
+    ? 'No serials with remaining quantity are available for this item.'
+    : 'No available lots for this item. Receive stock with lot tracking or check inventory postings.';
+
   const sheetBody = (
     <>
       <View style={styles.header}>
@@ -50,45 +106,58 @@ const TrackingSelectionModal: React.FC<Props> = ({
           <Text style={styles.close}>✕</Text>
         </QuickIconPressable>
       </View>
-      <Text style={styles.hint}>
-        Lots with remaining quantity (first expiry first). Same as web POS.
-      </Text>
+      <Text style={styles.hint}>{hint}</Text>
+      {isSerial &&
+      !loading &&
+      availableSerialCount > 0 &&
+      requiredCount > availableSerialCount ? (
+        <Text style={styles.warn}>
+          Only {availableSerialCount} serial
+          {availableSerialCount === 1 ? '' : 's'} in stock — quantity will be
+          set to {effectiveRequired} on confirm.
+        </Text>
+      ) : null}
 
       {loading ? (
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={COLORS.primary} />
-          <Text style={styles.loadingText}>Loading lots…</Text>
+          <Text style={styles.loadingText}>
+            {isSerial ? 'Loading serials…' : 'Loading lots…'}
+          </Text>
         </View>
       ) : options.length === 0 ? (
         <View style={styles.centered}>
-          <Text style={styles.emptyText}>
-            No available lots for this item. Receive stock with lot tracking or
-            check inventory postings.
-          </Text>
+          <Text style={styles.emptyText}>{emptyText}</Text>
         </View>
       ) : (
         <FlatList
           data={options}
-          keyExtractor={item => item.lot_no}
+          keyExtractor={item => item.serial_no || item.lot_no}
           contentContainerStyle={styles.list}
           keyboardShouldPersistTaps="handled"
-          renderItem={({item}) => (
-            <TouchableOpacity
-              style={styles.row}
-              onPress={() => onSelect(item)}>
-              <View style={{flex: 1}}>
-                <Text style={styles.lotLabel}>{item.lot_no}</Text>
-                <Text style={styles.meta}>
-                  Qty: {item.remaining_quantity}
-                  {item.expiry_date ? ` · Exp: ${item.expiry_date}` : ''}
-                </Text>
-                {item.document_no ? (
-                  <Text style={styles.doc}>{item.document_no}</Text>
-                ) : null}
-              </View>
-              <Text style={styles.chev}>›</Text>
-            </TouchableOpacity>
-          )}
+          renderItem={({item}) => {
+            const code = item.serial_no || item.lot_no;
+            const selected = isSerial && picked.includes(code);
+            return (
+              <TouchableOpacity
+                style={[styles.row, selected && styles.rowSelected]}
+                onPress={() =>
+                  isSerial ? toggleSerial(code) : onSelect(item)
+                }>
+                <View style={{flex: 1}}>
+                  <Text style={styles.lotLabel}>{code}</Text>
+                  <Text style={styles.meta}>
+                    Qty: {item.remaining_quantity}
+                    {item.expiry_date ? ` · Exp: ${item.expiry_date}` : ''}
+                  </Text>
+                  {item.document_no ? (
+                    <Text style={styles.doc}>{item.document_no}</Text>
+                  ) : null}
+                </View>
+                <Text style={styles.chev}>{isSerial ? (selected ? '✓' : '+') : '›'}</Text>
+              </TouchableOpacity>
+            );
+          }}
         />
       )}
     </>
@@ -103,7 +172,7 @@ const TrackingSelectionModal: React.FC<Props> = ({
         <Pressable
           {...ICON_BUTTON_QUICK_PRESS}
           accessibilityRole="button"
-          accessibilityLabel="Close lot picker"
+          accessibilityLabel="Close tracking picker"
           style={styles.embeddedBackdrop}
           onPress={onClose}
         />
@@ -186,6 +255,14 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
     fontSize: 12,
   },
+  warn: {
+    ...FONTS.body5,
+    color: '#B42318',
+    paddingHorizontal: 16,
+    paddingBottom: 4,
+    fontSize: 12,
+    fontWeight: '600',
+  },
   list: {
     paddingHorizontal: 8,
     paddingBottom: 16,
@@ -198,6 +275,11 @@ const styles = StyleSheet.create({
     marginVertical: 4,
     backgroundColor: COLORS.lightGray2,
     borderRadius: 10,
+  },
+  rowSelected: {
+    backgroundColor: 'rgba(2, 134, 255, 0.15)',
+    borderWidth: 1,
+    borderColor: COLORS.primary,
   },
   lotLabel: {
     ...FONTS.h4,

@@ -16,6 +16,7 @@ import {SafeAreaView} from 'react-native-safe-area-context';
 import {useNavigation} from '@react-navigation/native';
 import {safeGoBack} from '../../hooks/NavigationService';
 import Toast from 'react-native-toast-message';
+import AppToastHost from '../../Components/AppToastHost';
 
 import {FONTS, SIZES, COLORS, icons} from '../../constants';
 import {Header, IconButton, QuickIconPressable} from '../../Components';
@@ -315,7 +316,7 @@ const SearchPage = () => {
         </View>
       </KeyboardAvoidingView>
 
-      <Toast />
+      <AppToastHost />
     </SafeAreaView>
   );
 };

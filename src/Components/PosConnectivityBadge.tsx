@@ -6,9 +6,14 @@ import {useOfflineOptional} from '../context/OfflineContext';
 
 type PosConnectivityBadgeProps = {
   onPress?: () => void;
+  /** Compact chip for embedding in the POS toolbar row (no outer margins). */
+  compact?: boolean;
 };
 
-export function PosConnectivityBadge({onPress}: PosConnectivityBadgeProps) {
+export function PosConnectivityBadge({
+  onPress,
+  compact = false,
+}: PosConnectivityBadgeProps) {
   const {colors, isDark} = useTheme();
   const offline = useOfflineOptional();
   if (!offline) {
@@ -30,6 +35,7 @@ export function PosConnectivityBadge({onPress}: PosConnectivityBadgeProps) {
     <View
       style={[
         styles.wrap,
+        compact && styles.wrapCompact,
         {
           backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : colors.screenMuted,
           borderColor: colors.border,
@@ -67,6 +73,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     marginHorizontal: 16,
     marginBottom: 8,
+  },
+  wrapCompact: {
+    marginHorizontal: 0,
+    marginBottom: 0,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
   },
   dot: {
     width: 8,

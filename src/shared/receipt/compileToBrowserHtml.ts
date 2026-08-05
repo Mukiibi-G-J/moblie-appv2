@@ -16,7 +16,7 @@ function nodeToHtml(node: ReceiptDocumentNode): string {
   switch (node.type) {
     case "image":
       return node.src
-        ? `<div style="text-align:center;margin:4px 0;"><img src="${escapeHtml(node.src)}" style="max-width:48mm;max-height:24mm;object-fit:contain;" alt="" /></div>`
+        ? `<div style="text-align:center;margin:2px 0;"><img src="${escapeHtml(node.src)}" style="max-width:32mm;max-height:16mm;width:auto;height:auto;object-fit:contain;" alt="" /></div>`
         : "";
     case "text":
       return `<div style="text-align:${align};${bold}${dbl}">${escapeHtml(node.text || "")}</div>`;

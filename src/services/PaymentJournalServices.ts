@@ -20,17 +20,32 @@ export const PaymentJournalServices = {
     params?: PaymentJournalFilterQueries,
   ): Promise<PaginatedPaymentJournalResponse> {
     try {
-      const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-      const axiosInstance = createAxiosInstance(tenant);
-
-      const response = await axiosInstance.get('/api/payments/payment-journal/', {
-        params,
-      });
-
-      if (response?.data?.results && Array.isArray(response.data.results)) {
-        return response.data;
+      const {fetchPageDataPaginated, PAGE_IDS} = await import(
+        './pageDataService'
+      );
+      const {mapPageDataPaymentJournal} = await import('./pageDataMappers');
+      const filters: Record<string, string | number | boolean> = {};
+      if (params?.status) {
+        filters.status = String(params.status);
       }
-      return {count: 0, next: null, previous: null, results: []};
+      if ((params as any)?.posting_date__gte || (params as any)?.start_date) {
+        filters.posting_date_from = String(
+          (params as any).posting_date__gte || (params as any).start_date,
+        );
+      }
+      if ((params as any)?.posting_date__lte || (params as any)?.end_date) {
+        filters.posting_date_to = String(
+          (params as any).posting_date__lte || (params as any).end_date,
+        );
+      }
+      return await fetchPageDataPaginated({
+        pageId: PAGE_IDS.PaymentJournalList,
+        page: params?.page ?? 1,
+        pageSize: params?.page_size ?? 50,
+        search: params?.search,
+        filters,
+        mapRow: mapPageDataPaymentJournal,
+      });
     } catch (error) {
       console.error('Error fetching payment journals:', error);
       throw error;
@@ -266,11 +281,12 @@ export const PaymentJournalServices = {
   // Get payment methods
   async getPaymentMethods(): Promise<PaymentMethod[]> {
     try {
-      const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-      const axiosInstance = createAxiosInstance(tenant);
-
-      const response = await axiosInstance.get('/api/financials/payment-methods/');
-      return response.data || [];
+      const {fetchPageDataAll, PAGE_IDS} = await import('./pageDataService');
+      const {mapPageDataPaymentMethod} = await import('./pageDataMappers');
+      return await fetchPageDataAll({
+        pageId: PAGE_IDS.PaymentMethodList,
+        mapRow: mapPageDataPaymentMethod as any,
+      });
     } catch (error) {
       console.error('Error fetching payment methods:', error);
       return [];
@@ -280,14 +296,16 @@ export const PaymentJournalServices = {
   // Get customers
   async getCustomers(): Promise<{results: Customer[]; count: number}> {
     try {
-      const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-      const axiosInstance = createAxiosInstance(tenant);
-
-      const response = await axiosInstance.get('/api/customers/');
-      if (response?.data?.results && Array.isArray(response.data.results)) {
-        return response.data;
-      }
-      return {results: [], count: 0};
+      const {fetchPageDataPaginated, PAGE_IDS} = await import(
+        './pageDataService'
+      );
+      const {mapPageDataCustomer} = await import('./pageDataMappers');
+      return await fetchPageDataPaginated({
+        pageId: PAGE_IDS.CustomerList,
+        page: 1,
+        pageSize: 200,
+        mapRow: mapPageDataCustomer as any,
+      });
     } catch (error) {
       console.error('Error fetching customers:', error);
       return {results: [], count: 0};
@@ -297,14 +315,16 @@ export const PaymentJournalServices = {
   // Get vendors
   async getVendors(): Promise<{results: Vendor[]; count: number}> {
     try {
-      const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-      const axiosInstance = createAxiosInstance(tenant);
-
-      const response = await axiosInstance.get('/api/vendors/');
-      if (response?.data?.results && Array.isArray(response.data.results)) {
-        return response.data;
-      }
-      return {results: [], count: 0};
+      const {fetchPageDataPaginated, PAGE_IDS} = await import(
+        './pageDataService'
+      );
+      const {mapPageDataVendor} = await import('./pageDataMappers');
+      return await fetchPageDataPaginated({
+        pageId: PAGE_IDS.VendorList,
+        page: 1,
+        pageSize: 200,
+        mapRow: mapPageDataVendor as any,
+      });
     } catch (error) {
       console.error('Error fetching vendors:', error);
       return {results: [], count: 0};
@@ -314,11 +334,12 @@ export const PaymentJournalServices = {
   // Get GL accounts
   async getGLAccounts(): Promise<GLAccount[]> {
     try {
-      const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-      const axiosInstance = createAxiosInstance(tenant);
-
-      const response = await axiosInstance.get('/api/financials/gl-accounts/');
-      return response.data || [];
+      const {fetchPageDataAll, PAGE_IDS} = await import('./pageDataService');
+      const {mapPageDataGLAccount} = await import('./pageDataMappers');
+      return await fetchPageDataAll({
+        pageId: PAGE_IDS.GLAccountList,
+        mapRow: mapPageDataGLAccount as any,
+      });
     } catch (error) {
       console.error('Error fetching GL accounts:', error);
       return [];

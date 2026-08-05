@@ -13,15 +13,17 @@ export const VendorServices = {
   // Get vendors list with filters
   async getVendors(params?: VendorListParams): Promise<PaginatedVendorResponse> {
     try {
-      const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-      const axiosInstance = createAxiosInstance(tenant);
-
-      const response = await axiosInstance.get('/api/vendors/', {params});
-
-      if (response?.data?.results && Array.isArray(response.data.results)) {
-        return response.data;
-      }
-      return {count: 0, next: null, previous: null, results: []};
+      const {fetchPageDataPaginated, PAGE_IDS} = await import(
+        './pageDataService'
+      );
+      const {mapPageDataVendor} = await import('./pageDataMappers');
+      return await fetchPageDataPaginated({
+        pageId: PAGE_IDS.VendorList,
+        page: params?.page ?? 1,
+        pageSize: params?.page_size ?? 50,
+        search: params?.search,
+        mapRow: mapPageDataVendor,
+      });
     } catch (error) {
       console.error('Error fetching vendors:', error);
       throw error;
@@ -164,19 +166,12 @@ export const VendorServices = {
   // Get payment methods
   async getPaymentMethods(): Promise<PaymentMethod[]> {
     try {
-      const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-      const axiosInstance = createAxiosInstance(tenant);
-
-      const response = await axiosInstance.get(
-        '/api/financials/payment-methods/',
-      );
-      if (response?.data?.results && Array.isArray(response.data.results)) {
-        return response.data.results;
-      }
-      if (Array.isArray(response.data)) {
-        return response.data;
-      }
-      return [];
+      const {fetchPageDataAll, PAGE_IDS} = await import('./pageDataService');
+      const {mapPageDataPaymentMethod} = await import('./pageDataMappers');
+      return await fetchPageDataAll({
+        pageId: PAGE_IDS.PaymentMethodList,
+        mapRow: mapPageDataPaymentMethod as any,
+      });
     } catch (error) {
       console.error('Error fetching payment methods:', error);
       return [];

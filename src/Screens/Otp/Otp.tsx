@@ -13,6 +13,7 @@ import CustomOTPInput from '../../Components/CustomOTPInput';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { resendOtp, verifyOtp } from '../../services/auth.services';
 import Toast from 'react-native-toast-message';
+import AppToastHost from '../../Components/AppToastHost';
 import { getEmail, setVerifiedEmail } from '../../utils/tenant';
 import { useAppContext, AppContextType } from '../../context/Store';
 import { useTheme } from '../../context/ThemeContext';
@@ -329,7 +330,7 @@ const Otp = () => {
                     )}
                 </TouchableOpacity>
             </View>
-            <Toast />
+            <AppToastHost />
         </AuthLayout>
     );
 };

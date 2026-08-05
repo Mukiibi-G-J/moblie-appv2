@@ -23,7 +23,7 @@ export const NetworkAwareComponent = () => {
     error,
     isConnected,
     retry,
-  } = useNetworkGet<Item[]>('/api/items/', {
+  } = useNetworkGet<Item[]>('/api/pages/data/?PageId=10201&limit=50', {
     cacheKey: 'items-list',
     retryCount: 3,
     onOffline: () => console.log('Device went offline'),

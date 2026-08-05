@@ -31,6 +31,12 @@ import {
   ICON_BUTTON_HIT_SLOP,
 } from '../../constants';
 import { usePermissions } from '../../hooks/usePermissions';
+import { usePaymentMethodsQuery } from '../../hooks/useCustomersQuery';
+import {
+  useExpensesQuery,
+  useExpenseTypesQuery,
+  useInvalidateExpenses,
+} from '../../hooks/useExpensesQuery';
 import { PAGE_NAMES } from '../../constants/pageNames';
 import { ExpenseServices } from '../../services/ExpenseServices';
 import { Expense, ExpenseType, PaymentMethod } from '../../@types/expense';
@@ -142,23 +148,9 @@ const Expenses = () => {
     [colors],
   );
 
-  // Early return if no read permission
-  if (!canRead(PAGE_NAME)) {
-    return (
-      <View style={[styles.container, t.accessWrap]}>
-        <View style={[styles.accessDeniedContainer, t.accessCard]}>
-          <Text style={styles.accessDeniedTitle}>Access Denied</Text>
-          <Text style={[styles.accessDeniedMessage, t.accessMessage]}>
-            You don't have permission to view expenses.
-          </Text>
-        </View>
-      </View>
-    );
-  }
+  const hasAccess = canRead(PAGE_NAME);
 
   // State management
-  const [expenses, setExpenses] = useState < Expense[] > ([]);
-  const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
@@ -174,10 +166,6 @@ const Expenses = () => {
     initialRange.startDate,
   );
   const [dateTo, setDateTo] = useState < string | null > (initialRange.endDate);
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
-  const [expenseTypes, setExpenseTypes] = useState < ExpenseType[] > ([]);
-  const [paymentMethods, setPaymentMethods] = useState < PaymentMethod[] > ([]);
   const [selectedExpenseType, setSelectedExpenseType] = useState < number | null > (
     null,
   );
@@ -190,11 +178,30 @@ const Expenses = () => {
   const [datePickerMode, setDatePickerMode] = useState < 'from' | 'to' | null > (
     null,
   );
-  const [totalCount, setTotalCount] = useState(0);
   const [showFilters, setShowFilters] = useState(false);
   const [expenseTypeFilterSearch, setExpenseTypeFilterSearch] = useState('');
   const [paymentMethodFilterSearch, setPaymentMethodFilterSearch] = useState('');
   const searchTimeoutRef = useRef < NodeJS.Timeout | null > (null);
+  const invalidateExpenses = useInvalidateExpenses();
+  const { data: expenseTypes = [] } = useExpenseTypesQuery(hasAccess);
+  const { data: paymentMethods = [] } = usePaymentMethodsQuery(hasAccess);
+  const {
+    expenses,
+    isLoading: loading,
+    isFetchingNextPage,
+    hasNextPage: hasMore,
+    refetch: refetchExpenses,
+    fetchNextPage,
+    error: expensesError,
+  } = useExpensesQuery({
+    enabled: hasAccess,
+    search: debouncedSearchQuery,
+    status: statusFilter,
+    startDate: dateFrom,
+    endDate: dateTo,
+    expenseType: selectedExpenseType,
+    paymentMethod: selectedPaymentMethod,
+  });
 
   const filteredExpenseTypes = useMemo(() => {
     const q = expenseTypeFilterSearch.trim().toLowerCase();
@@ -240,7 +247,6 @@ const Expenses = () => {
 
     searchTimeoutRef.current = setTimeout(() => {
       setDebouncedSearchQuery(searchQuery);
-      setPage(1); // Reset to first page on search
     }, 500);
 
     return () => {
@@ -250,116 +256,49 @@ const Expenses = () => {
     };
   }, [searchQuery]);
 
-  // Load expense types and payment methods
   useEffect(() => {
-    loadReferenceData();
-  }, []);
-
-  // Load expenses when filters change
-  useEffect(() => {
-    loadExpenses();
-  }, [page, statusFilter, dateFrom, dateTo, debouncedSearchQuery, selectedExpenseType, selectedPaymentMethod]);
-
-  const loadReferenceData = async () => {
-    try {
-      const [types, methods] = await Promise.all([
-        ExpenseServices.getExpenseTypes(),
-        ExpenseServices.getPaymentMethods(),
-      ]);
-      setExpenseTypes(types);
-      setPaymentMethods(methods);
-    } catch (error) {
-      console.error('Error loading reference data:', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Failed to load expense types and payment methods',
-      });
+    if (!expensesError) {
+      return;
     }
-  };
+    const detail =
+      (expensesError as any)?.response?.data?.detail ||
+      (expensesError as any)?.message ||
+      'Failed to load expenses';
+    Toast.show({
+      type: 'error',
+      text1: 'Error',
+      text2: String(detail),
+    });
+  }, [expensesError]);
 
-  const loadExpenses = async () => {
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
     try {
-      setLoading(true);
-      const params: any = {
-        page,
-        page_size: 20,
-      };
-
-      if (debouncedSearchQuery) {
-        params.search = debouncedSearchQuery;
-      }
-
-      params.status = statusFilter;
-
-      if (dateFrom) {
-        params.start_date = dateFrom;
-      }
-
-      if (dateTo) {
-        params.end_date = dateTo;
-      }
-
-      if (selectedExpenseType) {
-        params.expense_type = selectedExpenseType;
-      }
-
-      if (selectedPaymentMethod) {
-        params.payment_method = selectedPaymentMethod;
-      }
-
-      const response = await ExpenseServices.getExpenses(params);
-
-      if (response && response.results && Array.isArray(response.results)) {
-        if (page === 1) {
-          setExpenses(response.results);
-        } else {
-          setExpenses(prev => [...prev, ...response.results]);
-        }
-        setTotalCount(response.count);
-        setHasMore(!!response.next);
-      } else {
-        setExpenses([]);
-        setTotalCount(0);
-        setHasMore(false);
-      }
-    } catch (error: any) {
-      console.error('Error loading expenses:', error);
-      const invalidPage =
-        error?.response?.data?.detail === 'Invalid page.' ||
-        error?.response?.data?.error === 'Invalid page.';
-
-      if (invalidPage && page > 1) {
-        setPage(1);
-        setHasMore(false);
-      } else {
-        setExpenses([]);
-        setTotalCount(0);
-        setHasMore(false);
-        Toast.show({
-          type: 'error',
-          text1: 'Error',
-          text2: error?.response?.data?.detail || 'Failed to load expenses',
-        });
-      }
+      await invalidateExpenses();
+      await refetchExpenses();
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
-  };
-
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    setPage(1);
-    setHasMore(true);
-    loadExpenses();
-  }, [statusFilter, dateFrom, dateTo, debouncedSearchQuery]);
+  }, [invalidateExpenses, refetchExpenses]);
 
   const handleLoadMore = () => {
-    if (!loading && hasMore) {
-      setPage(prev => prev + 1);
+    if (!loading && !isFetchingNextPage && hasMore) {
+      fetchNextPage();
     }
   };
+
+  if (!hasAccess) {
+    return (
+      <View style={[styles.container, t.accessWrap]}>
+        <View style={[styles.accessDeniedContainer, t.accessCard]}>
+          <Text style={styles.accessDeniedTitle}>Access Denied</Text>
+          <Text style={[styles.accessDeniedMessage, t.accessMessage]}>
+            You don't have permission to view expenses.
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   const handleCreate = () => {
     setSelectedExpense(null);
@@ -506,7 +445,6 @@ const Expenses = () => {
 
   const handleDateFilterChange = (filter: DateFilter) => {
     setDateFilter(filter);
-    setPage(1);
   };
 
   const handleCustomDateRange = () => {
@@ -544,7 +482,6 @@ const Expenses = () => {
         setDatePickerMode(null);
         setIsDatePickerVisible(false);
         setDateFilter('alltime'); // Switch to custom range
-        setPage(1);
       }
     }
   };
@@ -689,7 +626,6 @@ const Expenses = () => {
                 setSelectedPaymentMethod(null);
                 setExpenseTypeFilterSearch('');
                 setPaymentMethodFilterSearch('');
-                setPage(1);
               }}
               style={[styles.clearFiltersButton, t.clearFiltersBtn]}>
               <Text style={styles.clearFiltersButtonText}>Clear All</Text>
@@ -731,7 +667,6 @@ const Expenses = () => {
                   ]}
                   onPress={() => {
                     setStatusFilter(status);
-                    setPage(1);
                   }}>
                   <Text
                     style={[
@@ -774,7 +709,6 @@ const Expenses = () => {
                   ]}
                   onPress={() => {
                     setSelectedExpenseType(null);
-                    setPage(1);
                   }}>
                   <Text
                     style={[
@@ -795,7 +729,6 @@ const Expenses = () => {
                     ]}
                     onPress={() => {
                       setSelectedExpenseType(type.id);
-                      setPage(1);
                     }}>
                     <Text
                       style={[
@@ -845,7 +778,6 @@ const Expenses = () => {
                   ]}
                   onPress={() => {
                     setSelectedPaymentMethod(null);
-                    setPage(1);
                   }}>
                   <Text
                     style={[
@@ -866,7 +798,6 @@ const Expenses = () => {
                     ]}
                     onPress={() => {
                       setSelectedPaymentMethod(method.id);
-                      setPage(1);
                     }}>
                     <Text
                       style={[
@@ -926,7 +857,7 @@ const Expenses = () => {
   );
 
   const renderFooter = () => {
-    if (!loading) return null;
+    if (!isFetchingNextPage) return null;
     return (
       <View style={styles.footerLoader}>
         <ActivityIndicator size="small" color={COLORS.primary2} />
@@ -940,7 +871,7 @@ const Expenses = () => {
       {renderSearchSection()}
       {renderPostedExpensesRow()}
 
-      {loading && page === 1 ? (
+      {loading && expenses.length === 0 ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={COLORS.primary2} />
           <Text style={[styles.loadingText, t.loadingText]}>Loading expenses...</Text>

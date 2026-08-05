@@ -1,12 +1,65 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {Image} from 'react-native';
 import RNFS from 'react-native-fs';
 import {createAxiosInstance} from '../axios/axios';
 
 const PLACEHOLDER_LOGO = 'company_logos/default.png';
-const logoCache = new Map<string, string>();
+const logoCache = new Map<string, PreparedCompanyLogo>();
 
 /** Max logo width on 58mm thermal receipts (~1/3 of printable width). */
 export const RECEIPT_LOGO_WIDTH_PX = 128;
+/** Cap height so tall / padded logos do not feed blank paper after the mark. */
+export const RECEIPT_LOGO_HEIGHT_PX = 64;
+
+export type PreparedCompanyLogo = {
+  url: string;
+  localPath: string;
+  /** Source pixel size (for contain fit). */
+  width: number;
+  height: number;
+};
+
+/**
+ * Fit logo into the receipt box (object-fit: contain), never upscaling.
+ * Used so printers that only accept width still end up with a short bitmap.
+ */
+export function fitReceiptLogoSize(
+  srcW: number,
+  srcH: number,
+  maxW: number = RECEIPT_LOGO_WIDTH_PX,
+  maxH: number = RECEIPT_LOGO_HEIGHT_PX,
+): {width: number; height: number} {
+  if (!srcW || !srcH || srcW < 1 || srcH < 1) {
+    return {width: maxW, height: Math.min(maxH, maxW)};
+  }
+  const scale = Math.min(maxW / srcW, maxH / srcH, 1);
+  return {
+    width: Math.max(8, Math.round(srcW * scale)),
+    height: Math.max(8, Math.round(srcH * scale)),
+  };
+}
+
+function probeImageSize(
+  fileUri: string,
+): Promise<{width: number; height: number}> {
+  return new Promise(resolve => {
+    Image.getSize(
+      fileUri,
+      (width, height) => {
+        resolve({
+          width: width > 0 ? width : RECEIPT_LOGO_WIDTH_PX,
+          height: height > 0 ? height : RECEIPT_LOGO_HEIGHT_PX,
+        });
+      },
+      () => {
+        resolve({
+          width: RECEIPT_LOGO_WIDTH_PX,
+          height: RECEIPT_LOGO_HEIGHT_PX,
+        });
+      },
+    );
+  });
+}
 
 /**
  * Build a full image URI for company logo from GET /api/sales/company-info/.
@@ -52,7 +105,7 @@ export function isPlaceholderCompanyLogo(
  */
 export async function prepareCompanyLogoForPrint(
   logo: string | null | undefined,
-): Promise<{url: string; localPath: string} | null> {
+): Promise<PreparedCompanyLogo | null> {
   if (isPlaceholderCompanyLogo(logo)) {
     return null;
   }
@@ -63,8 +116,8 @@ export async function prepareCompanyLogoForPrint(
   }
 
   const cached = logoCache.get(url);
-  if (cached && (await RNFS.exists(cached))) {
-    return {url, localPath: cached};
+  if (cached && (await RNFS.exists(cached.localPath))) {
+    return cached;
   }
 
   const filename = `company_logo_${Date.now()}.png`;
@@ -82,6 +135,17 @@ export async function prepareCompanyLogoForPrint(
     throw new Error('Downloaded logo file is empty');
   }
 
-  logoCache.set(url, localPath);
-  return {url, localPath};
+  const fileUri = localPath.startsWith('file://')
+    ? localPath
+    : `file://${localPath}`;
+  const size = await probeImageSize(fileUri);
+
+  const prepared: PreparedCompanyLogo = {
+    url,
+    localPath,
+    width: size.width,
+    height: size.height,
+  };
+  logoCache.set(url, prepared);
+  return prepared;
 }

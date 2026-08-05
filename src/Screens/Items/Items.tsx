@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   View,
@@ -27,8 +27,6 @@ import {
   CameraOptions,
 } from 'react-native-image-picker';
 import {
-  fetchItems,
-  isInvalidPageError,
   updateItem,
   deleteItem,
   createItem,
@@ -40,6 +38,12 @@ import {
 } from '../../services/app.services';
 import ItemUnitOfMeasureModal from './ItemUnitOfMeasureModal';
 import { usePermissions } from '../../hooks/usePermissions';
+import {
+  useItemsQuery,
+  useCategoriesQuery,
+  useInvalidateItems,
+  type ItemRow,
+} from '../../hooks/useItemsQuery';
 import { safeGoBack } from '../../hooks/NavigationService';
 import { PAGE_NAMES } from '../../constants/pageNames';
 import { COLORS, SIZES, FONTS } from '../../constants/theme';
@@ -52,36 +56,7 @@ import { useAppContext, useTabContext } from '../../context/Store';
 import Toast from 'react-native-toast-message';
 // CameraRoll import removed - using native gallery picker instead
 
-export interface Item {
-  id?: number;
-  no?: string;
-  system_id: string;
-  item_name: string;
-  unit_price: number;
-  item_images: {
-    url: string;
-    id: number;
-  }[];
-  inventory: number;
-  minimum_stock?: number | null;
-  /** Backend item kind — matches web (`Inventory`, `Service`, `Non-Inventory`). */
-  type?: string;
-  category_id?: number | string | null;
-  item_category?: any;
-  description?: string;
-  bar_code_no?: string;
-  unit_cost?: number;
-  unit_of_measure?: string;
-  created_at?: string;
-  updated_at?: string;
-}
-
-interface PaginatedResponse {
-  count: number;
-  next: string | null;
-  previous: string | null;
-  results: Item[];
-}
+export type Item = ItemRow;
 
 interface Category {
   id?: number;
@@ -132,6 +107,7 @@ const EditItemModal = ({
   visible: boolean;
   onClose: () => void;
   item: Item | null;
+  /** Called after a successful auto-save so the list can refresh (does not close). */
   onSave: (updatedItem: Item) => void;
   onDelete?: (item: Item) => void;
   canEdit: boolean;
@@ -159,7 +135,17 @@ const EditItemModal = ({
   const [inventoryEntries, setInventoryEntries] = useState<InventoryEntry[]>([]);
   const [uomModalVisible, setUomModalVisible] = useState(false);
   const [itemUomCount, setItemUomCount] = useState(0);
-  // Removed in-app gallery states since we're using native gallery
+  const [isSaving, setIsSaving] = useState(false);
+  const [showSaved, setShowSaved] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+
+  const editedItemRef = useRef<Item | null>(null);
+  const categoriesRef = useRef<Category[]>([]);
+  const savingRef = useRef(false);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  editedItemRef.current = editedItem;
+  categoriesRef.current = categories;
 
   const loadItemUomCount = useCallback(async (itemNo: string) => {
     try {
@@ -276,15 +262,39 @@ const EditItemModal = ({
   }, []);
 
   useEffect(() => {
+    if (!visible) {
+      setEditedItem(null);
+      setSelectedImage(null);
+      setImageUploadError(null);
+      setFieldErrors({});
+      setShowSaved(false);
+      if (savedTimerRef.current) {
+        clearTimeout(savedTimerRef.current);
+        savedTimerRef.current = null;
+      }
+      return;
+    }
+
     if (item) {
-      setEditedItem(item);
-    } else if (visible && isCreateMode) {
+      const currentId =
+        editedItemRef.current?.system_id ||
+        editedItemRef.current?.id ||
+        editedItemRef.current?.no;
+      const nextId = item.system_id || item.id || item.no;
+      if (!currentId || String(currentId) !== String(nextId || '')) {
+        setEditedItem(item);
+      } else {
+        setEditedItem(prev => (prev ? {...prev, ...item} : item));
+      }
+    } else if (isCreateMode && !editedItemRef.current?.system_id && !editedItemRef.current?.id) {
       setEditedItem(createEmptyItemDraft(defaultCreateType));
     }
     setSelectedImage(null);
     setImageUploadError(null);
+    setFieldErrors({});
+    setShowSaved(false);
     loadCategories();
-  }, [item, visible, isCreateMode, loadCategories, defaultCreateType]);
+  }, [item?.system_id, item?.id, item?.no, visible, isCreateMode, loadCategories, defaultCreateType]);
 
   useEffect(() => {
     if (!visible) {
@@ -297,10 +307,231 @@ const EditItemModal = ({
   }, [visible]);
 
   useEffect(() => {
-    if (visible && editedItem?.no && !isCreateMode) {
+    if (visible && editedItem?.no) {
       loadItemUomCount(editedItem.no);
     }
-  }, [visible, editedItem?.no, isCreateMode, loadItemUomCount]);
+  }, [visible, editedItem?.no, loadItemUomCount]);
+
+  const isPersisted = !!(
+    editedItem?.system_id ||
+    editedItem?.id ||
+    (editedItem?.no && String(editedItem.no).trim())
+  );
+  const canWrite = isPersisted ? canEdit : !!canCreate;
+
+  const flashSaved = useCallback(() => {
+    setShowSaved(true);
+    if (savedTimerRef.current) {
+      clearTimeout(savedTimerRef.current);
+    }
+    savedTimerRef.current = setTimeout(() => {
+      setShowSaved(false);
+      savedTimerRef.current = null;
+    }, 2000);
+  }, []);
+
+  const resolveCategoryCode = useCallback(
+    (categoryId: Item['category_id'], cats: Category[] = categoriesRef.current) => {
+      if (categoryId == null || categoryId === '') {
+        return undefined;
+      }
+      const selectedCategory = cats.find(
+        cat => String(cat.id || cat.code) === String(categoryId),
+      );
+      return selectedCategory?.code;
+    },
+    [],
+  );
+
+  const normalizeSavedItem = useCallback((data: any, previous: Item): Item => {
+    const categoryCode =
+      typeof data?.item_category === 'string'
+        ? data.item_category
+        : data?.item_category?.code;
+    let category_id = previous.category_id ?? null;
+    if (categoryCode) {
+      const matched = categoriesRef.current.find(cat => cat.code === categoryCode);
+      if (matched) {
+        category_id = (matched.id || matched.code) as any;
+      }
+    }
+    return {
+      ...previous,
+      ...data,
+      id: data?.id ?? previous.id,
+      no: data?.no ?? previous.no,
+      system_id: data?.system_id || data?.no || previous.system_id || '',
+      item_name: data?.item_name ?? previous.item_name,
+      description: data?.description ?? previous.description,
+      bar_code_no: data?.bar_code_no ?? previous.bar_code_no,
+      unit_price: Number(data?.unit_price ?? previous.unit_price) || 0,
+      unit_cost:
+        data?.unit_cost !== undefined
+          ? Number(data.unit_cost) || 0
+          : previous.unit_cost,
+      minimum_stock:
+        data?.minimum_stock !== undefined
+          ? data.minimum_stock
+          : previous.minimum_stock,
+      type: data?.type ?? previous.type,
+      inventory: Number(data?.inventory ?? previous.inventory) || 0,
+      item_images: data?.item_images ?? previous.item_images ?? [],
+      item_category: data?.item_category ?? previous.item_category,
+      category_id,
+    };
+  }, []);
+
+  const extractItemError = (error: any, field: string) => {
+    const data = error?.response?.data;
+    const fieldErrors = data?.errors?.[field] || data?.[field];
+    if (Array.isArray(fieldErrors) && fieldErrors[0]) {
+      return String(fieldErrors[0]);
+    }
+    if (typeof fieldErrors === 'string') {
+      return fieldErrors;
+    }
+    const raw = data?.error ?? data?.detail ?? data?.message;
+    if (typeof raw === 'string') {
+      const match = raw.match(/string='([^']+)'/);
+      if (match?.[1]) {
+        return match[1].replace(/^"|"$/g, '');
+      }
+      if (!raw.includes('ErrorDetail') && !raw.startsWith('{')) {
+        return raw;
+      }
+    }
+    return `Failed to save ${field.replace(/_/g, ' ')}`;
+  };
+
+  const autoSaveField = useCallback(
+    async (field: string, rawValue: any) => {
+      const current = editedItemRef.current;
+      if (!visible || !current || !canWrite || savingRef.current) {
+        return;
+      }
+
+      const value =
+        typeof rawValue === 'string' ? rawValue.trim() : rawValue;
+      const persisted = !!(
+        current.system_id ||
+        current.id ||
+        (current.no && String(current.no).trim())
+      );
+
+      const previousValue = (current as any)[field];
+      if (String(previousValue ?? '') === String(value ?? '')) {
+        return;
+      }
+
+      if (field === 'item_name' && (!value || !String(value).trim())) {
+        setFieldErrors(prev => ({...prev, item_name: 'Item name is required'}));
+        return;
+      }
+
+      if (!persisted && !current.item_name?.trim() && field !== 'item_name') {
+        return;
+      }
+
+      setFieldErrors(prev => {
+        const next = {...prev};
+        delete next[field];
+        return next;
+      });
+
+      savingRef.current = true;
+      setIsSaving(true);
+      try {
+        const nextValues: Item = {...current, [field]: value} as Item;
+
+        if (!persisted) {
+          if (!nextValues.item_name?.trim()) {
+            return;
+          }
+          const createPayload: any = {
+            item_name: nextValues.item_name.trim(),
+            type: nextValues.type?.trim() || defaultCreateType,
+          };
+          if (nextValues.description?.trim()) {
+            createPayload.description = nextValues.description.trim();
+          }
+          if (nextValues.bar_code_no?.trim()) {
+            createPayload.bar_code_no = nextValues.bar_code_no.trim();
+          }
+          if ((Number(nextValues.unit_price) || 0) > 0) {
+            createPayload.unit_price = Number(nextValues.unit_price) || 0;
+          }
+          const catCode = resolveCategoryCode(nextValues.category_id);
+          if (catCode) {
+            createPayload.item_category = catCode;
+          }
+          const itemType = createPayload.type;
+          if (
+            (itemType === 'Service' || itemType === 'Non-Inventory') &&
+            nextValues.unit_cost !== undefined &&
+            nextValues.unit_cost !== null
+          ) {
+            createPayload.unit_cost = Number(nextValues.unit_cost) || 0;
+          }
+          if (itemType === 'Inventory' && nextValues.minimum_stock != null) {
+            const minStock = Number(nextValues.minimum_stock);
+            if (minStock > 0) {
+              createPayload.minimum_stock = minStock;
+            }
+          }
+
+          const response = await createItem(createPayload);
+          const saved = normalizeSavedItem(response.data, nextValues);
+          setEditedItem(saved);
+          editedItemRef.current = saved;
+          onSave(saved);
+          flashSaved();
+        } else {
+          const itemId = current.system_id || current.no || current.id;
+          if (!itemId) {
+            return;
+          }
+          const updatePayload: any = {
+            system_id: current.system_id || current.no || String(itemId),
+            item_name: nextValues.item_name,
+          };
+          if (field === 'category_id') {
+            const catCode = resolveCategoryCode(value);
+            updatePayload.item_category = catCode || null;
+          } else {
+            updatePayload[field] = value;
+          }
+
+          const response = await updateItem(itemId, updatePayload);
+          const saved = normalizeSavedItem(response.data, nextValues);
+          setEditedItem(saved);
+          editedItemRef.current = saved;
+          onSave(saved);
+          flashSaved();
+        }
+      } catch (error: any) {
+        console.error('Error auto-saving item:', error);
+        const message = extractItemError(error, field);
+        setFieldErrors(prev => ({...prev, [field]: message}));
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: message,
+        });
+      } finally {
+        savingRef.current = false;
+        setIsSaving(false);
+      }
+    },
+    [
+      visible,
+      canWrite,
+      defaultCreateType,
+      resolveCategoryCode,
+      normalizeSavedItem,
+      onSave,
+      flashSaved,
+    ],
+  );
 
   const getSelectedCategoryLabel = () => {
     if (!editedItem || !editedItem.category_id) {
@@ -413,15 +644,21 @@ const EditItemModal = ({
         return prev;
       }
       if (pick.code == null || pick.code === '') {
+        void autoSaveField('category_id', null);
         return {...prev, category_id: null};
       }
       const cat = categories.find(c => c.code === pick.code);
+      const nextCategoryId = (cat?.id ?? cat?.code ?? pick.code) as
+        | number
+        | string
+        | null;
+      void autoSaveField('category_id', nextCategoryId);
       return {
         ...prev,
-        category_id: (cat?.id ?? cat?.code ?? pick.code) as number | string | null,
+        category_id: nextCategoryId,
       };
     });
-  }, [visible, route.params?.categoryPick, navigation, categories]);
+  }, [visible, route.params?.categoryPick, navigation, categories, autoSaveField]);
 
   // Map item_category to category_id when categories are loaded
   useEffect(() => {
@@ -452,8 +689,8 @@ const EditItemModal = ({
   const handleImagePick = async () => {
     console.log('handleImagePick called');
 
-    if (isCreateMode) {
-      Alert.alert('Save item first', 'Create the item before adding an image.');
+    if (!isPersisted) {
+      Alert.alert('Save item first', 'Enter an item name so it can auto-save, then add an image.');
       return;
     }
 
@@ -840,7 +1077,7 @@ const EditItemModal = ({
   };
 
   const handleDeleteItem = () => {
-    if (!editedItem || !onDelete || !canDelete || isCreateMode) {
+    if (!editedItem || !onDelete || !canDelete || !isPersisted) {
       return;
     }
 
@@ -864,13 +1101,6 @@ const EditItemModal = ({
         },
       ],
     );
-  };
-
-  const handleSave = () => {
-    if (editedItem) {
-      onSave(editedItem);
-      // Don't close immediately - let the parent handle closing after successful save
-    }
   };
 
   const previewUri =
@@ -925,22 +1155,19 @@ const EditItemModal = ({
                     </QuickIconPressable>
                   </View>
                   <Text style={[styles.editItemHeaderTitle, editTheme.headerTitle]}>
-                    {isCreateMode
+                    {isCreateMode && !isPersisted
                       ? editedItem?.type === 'Service'
                         ? 'Create Service'
                         : 'Create Item'
                       : 'Edit Item'}
                   </Text>
                   <View style={[styles.editItemHeaderSide, styles.editItemHeaderSideEnd]}>
-                    {(isCreateMode ? canCreate : canEdit) ? (
-                      <TouchableOpacity
-                        style={styles.editItemSavePill}
-                        onPress={handleSave}
-                        activeOpacity={0.85}
-                        accessibilityRole="button"
-                        accessibilityLabel="Save item">
-                        <Text style={styles.editItemSavePillText}>Save</Text>
-                      </TouchableOpacity>
+                    {canWrite && (isSaving || showSaved) ? (
+                      <View style={styles.editItemSavePill}>
+                        <Text style={styles.editItemSavePillText}>
+                          {isSaving ? 'Saving...' : 'Saved'}
+                        </Text>
+                      </View>
                     ) : (
                       <View style={styles.editItemHeaderSpacer} />
                     )}
@@ -956,6 +1183,9 @@ const EditItemModal = ({
                   showsVerticalScrollIndicator={false}
                   keyboardShouldPersistTaps="handled"
                   nestedScrollEnabled={true}>
+                  <Text style={[styles.editItemAutoSaveHint, editTheme.optionsCopy]}>
+                    Changes save automatically when you leave a field
+                  </Text>
                   {imageUploadError ? (
                     <View style={styles.errorContainer}>
                       <View style={styles.errorIconContainer}>
@@ -1010,7 +1240,7 @@ const EditItemModal = ({
                       <ActivityIndicator size="small" color={colors.textSecondary} />
                     ) : (
                       <Text style={[styles.squareChangeImagePillText, editTheme.changePillText]}>
-                        {isCreateMode ? 'Add image later' : 'Change image'}
+                        {!isPersisted ? 'Add image after name saves' : 'Change image'}
                       </Text>
                     )}
                   </TouchableOpacity>
@@ -1037,9 +1267,19 @@ const EditItemModal = ({
                       onChangeText={text =>
                         setEditedItem({ ...editedItem, item_name: text })
                       }
+                      onBlur={() =>
+                        void autoSaveField(
+                          'item_name',
+                          editedItemRef.current?.item_name || '',
+                        )
+                      }
+                      editable={canWrite}
                       placeholder="Item name"
                       placeholderTextColor={colors.placeholder}
                     />
+                    {fieldErrors.item_name ? (
+                      <Text style={styles.editItemFieldError}>{fieldErrors.item_name}</Text>
+                    ) : null}
                   </View>
 
                   <View style={[styles.squareOutlineField, editTheme.outlineField]}>
@@ -1052,12 +1292,22 @@ const EditItemModal = ({
                       onChangeText={text =>
                         setEditedItem({...editedItem, bar_code_no: text})
                       }
+                      onBlur={() =>
+                        void autoSaveField(
+                          'bar_code_no',
+                          editedItemRef.current?.bar_code_no || '',
+                        )
+                      }
+                      editable={canWrite}
                       placeholder="Scan or enter barcode"
                       placeholderTextColor={colors.placeholder}
                       autoCapitalize="characters"
                       autoCorrect={false}
                       maxLength={100}
                     />
+                    {fieldErrors.bar_code_no ? (
+                      <Text style={styles.editItemFieldError}>{fieldErrors.bar_code_no}</Text>
+                    ) : null}
                   </View>
 
                   <View
@@ -1077,6 +1327,13 @@ const EditItemModal = ({
                       onChangeText={text =>
                         setEditedItem({ ...editedItem, description: text })
                       }
+                      onBlur={() =>
+                        void autoSaveField(
+                          'description',
+                          editedItemRef.current?.description || '',
+                        )
+                      }
+                      editable={canWrite}
                       placeholder="Description"
                       placeholderTextColor={colors.placeholder}
                       multiline
@@ -1084,7 +1341,7 @@ const EditItemModal = ({
                     />
                   </View>
 
-                  {isCreateMode ? (
+                  {!isPersisted ? (
                     <>
                       <View style={[styles.editItemThickBar, editTheme.thickBar]} />
                       <Text style={[styles.editItemSectionHeading, editTheme.sectionHeading]}>
@@ -1117,10 +1374,12 @@ const EditItemModal = ({
                                     : colors.inputBackground,
                                 },
                               ]}
-                              onPress={() =>
-                                setEditedItem({...editedItem, type: opt.value})
-                              }
-                              activeOpacity={0.75}>
+                              onPress={() => {
+                                setEditedItem({...editedItem, type: opt.value});
+                                void autoSaveField('type', opt.value);
+                              }}
+                              activeOpacity={0.75}
+                              disabled={!canWrite}>
                               <Text
                                 style={[
                                   styles.itemTypeChipText,
@@ -1180,9 +1439,9 @@ const EditItemModal = ({
                     Define how this item is sold (e.g. PCS, BOX). The default unit must
                     have quantity per unit of 1.
                   </Text>
-                  {isCreateMode || !editedItem.no ? (
+                  {!isPersisted || !editedItem.no ? (
                     <Text style={[styles.editItemOptionsCopy, editTheme.optionsCopy]}>
-                      Save the item first, then open it again to add units of measure.
+                      Enter a name to auto-save the item, then add units of measure.
                     </Text>
                   ) : (
                     <TouchableOpacity
@@ -1235,11 +1494,21 @@ const EditItemModal = ({
                             unit_price: numericValue,
                           });
                         }}
+                        onBlur={() =>
+                          void autoSaveField(
+                            'unit_price',
+                            Number(editedItemRef.current?.unit_price) || 0,
+                          )
+                        }
+                        editable={canWrite}
                         keyboardType="numeric"
                         placeholder="0"
                         placeholderTextColor={colors.placeholder}
                       />
                     </View>
+                    {fieldErrors.unit_price ? (
+                      <Text style={styles.editItemFieldError}>{fieldErrors.unit_price}</Text>
+                    ) : null}
                   </View>
 
                   {canSeeBuyingPriceUi ? (
@@ -1262,6 +1531,13 @@ const EditItemModal = ({
                                 unit_cost: numericValue,
                               });
                             }}
+                            onBlur={() =>
+                              void autoSaveField(
+                                'unit_cost',
+                                Number(editedItemRef.current?.unit_cost) || 0,
+                              )
+                            }
+                            editable={canWrite}
                             keyboardType="numeric"
                             placeholder="0"
                             placeholderTextColor={colors.placeholder}
@@ -1327,6 +1603,13 @@ const EditItemModal = ({
                               digits.length > 0 ? parseInt(digits, 10) : null,
                           });
                         }}
+                        onBlur={() =>
+                          void autoSaveField(
+                            'minimum_stock',
+                            editedItemRef.current?.minimum_stock ?? null,
+                          )
+                        }
+                        editable={canWrite}
                         keyboardType="number-pad"
                         placeholder="Reorder threshold"
                         placeholderTextColor={colors.placeholder}
@@ -1334,7 +1617,7 @@ const EditItemModal = ({
                     </View>
                   ) : null}
 
-                  {!isCreateMode ? (
+                  {isPersisted ? (
                     <View style={[styles.squareOutlineField, editTheme.outlineField]}>
                       <Text style={[styles.squareOutlineLabel, editTheme.outlineLabel]}>Quantity</Text>
                       <TouchableOpacity
@@ -1358,7 +1641,7 @@ const EditItemModal = ({
                     </View>
                   ) : null}
 
-                  {!isCreateMode && canDelete && onDelete ? (
+                  {isPersisted && canDelete && onDelete ? (
                     <>
                       <View style={[styles.editItemThickBar, editTheme.thickBar]} />
                       <TouchableOpacity
@@ -1525,21 +1808,34 @@ const Items = () => {
   const [createModal, setCreateModal] = useState(false);
   const [createDraftItem, setCreateDraftItem] = useState<Item | null>(null);
   const [selectedItem, setSelectedItem] = useState < Item | null > (null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [hasNextPage, setHasNextPage] = useState(true);
-  const [items, setItems] = useState < Item[] > ([]);
-  const [loading, setLoading] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
   const [filterModal, setFilterModal] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState < number | null > (null);
+  const [selectedCategory, setSelectedCategory] = useState<number | string | null>(null);
   const [stockFilter, setStockFilter] = useState <
     'all' | 'in_stock' | 'low_stock' | 'out_of_stock'
-    > ('all');
-  const [categories, setCategories] = useState < Category[] > ([]);
-  const [categoriesLoading, setCategoriesLoading] = useState(false);
+  > ('all');
+  const invalidateItems = useInvalidateItems();
+  const {
+    data: categories = [],
+    isLoading: categoriesLoading,
+    refetch: refetchCategories,
+  } = useCategoriesQuery();
+  const {
+    items,
+    isLoading: loading,
+    isFetchingNextPage: loadingMore,
+    hasNextPage,
+    refetch: refetchItems,
+    fetchNextPage,
+  } = useItemsQuery({
+    searchQuery: debouncedSearchQuery,
+    categoryId: selectedCategory,
+    stockFilter,
+    servicesOnly: isAllServicesScreen,
+  });
 
   const screenTitle = useMemo(() => {
     if (isAllServicesScreen) {
@@ -1566,44 +1862,17 @@ const Items = () => {
     return numericValue.toLocaleString('en-US');
   };
 
-  const loadCategories = useCallback(async () => {
-    try {
-      setCategoriesLoading(true);
-      const categoriesData = await fetchCategories();
-
-      // fetchCategories now returns an array directly (handles both array and paginated responses)
-      if (!Array.isArray(categoriesData)) {
-        console.warn('Categories response is not an array:', categoriesData);
-        setCategories([]);
-        return;
-      }
-
-      // Map categories to expected format (code/description -> id/name)
-      const mappedCategories = categoriesData.map((cat: any, index: number) => ({
-        id: cat.id || cat.code || `cat_${index}`, // Use code as id if no id exists
-        code: cat.code,
-        name: cat.name || cat.description || cat.code,
-        description: cat.description || cat.code,
-      }));
-
-      setCategories(mappedCategories);
-    } catch (error) {
-      console.error('Error loading categories:', error);
-      setCategories([]);
-    } finally {
-      setCategoriesLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    loadCategories();
-  }, [loadCategories]);
+    setSearchLoading(true);
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+      setSearchLoading(false);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   useFocusEffect(
     useCallback(() => {
-      setCurrentPage(1);
-      setHasNextPage(false);
-
       const incoming = route.params?.stockFilter as
         | 'all'
         | 'in_stock'
@@ -1672,120 +1941,19 @@ const Items = () => {
     navigation,
   ]);
 
-  const stockApiFilters = useMemo(() => {
-    if (stockFilter === 'low_stock') {
-      return { lowStock: true };
-    }
-    if (stockFilter === 'out_of_stock') {
-      return { inventoryStatus: 'OUT_OF_STOCK' as const };
-    }
-    return undefined;
-  }, [stockFilter]);
-
-  const applyStockFilter = useCallback(
-    (results: Item[]) => {
-      const scopedResults = isAllServicesScreen
-        ? results.filter(
-            item => item?.type === 'Service' || item?.type === 'Non-Inventory',
-          )
-        : results;
-
-      if (stockFilter === 'all') {
-        return scopedResults;
-      }
-
-      if (stockFilter === 'low_stock' || stockFilter === 'out_of_stock') {
-        return scopedResults;
-      }
-
-      return scopedResults.filter(item => {
-        const inventory = item?.inventory || 0;
-        const min = item?.minimum_stock;
-        const isLow =
-          min != null &&
-          min > 0 &&
-          inventory > 0 &&
-          inventory <= min;
-        if (stockFilter === 'out_of_stock') return inventory === 0;
-        if (stockFilter === 'low_stock') return isLow;
-        if (stockFilter === 'in_stock') return inventory > 0 && !isLow;
-        return true;
-      });
-    },
-    [isAllServicesScreen, stockFilter],
-  );
-
-  const mergeUniqueItems = useCallback((existing: Item[], incoming: Item[]) => {
-    const seen = new Set<string>();
-    return [...existing, ...incoming].filter(item => {
-      const key = String(item?.id || item?.no || item?.system_id || '');
-      if (!key || seen.has(key)) {
-        return false;
-      }
-      seen.add(key);
-      return true;
-    });
-  }, []);
-
-  const loadItems = useCallback(
-    async (pageToLoad: number = 1, replace: boolean = true) => {
-      try {
-        if (replace) {
-          setLoading(true);
-        } else {
-          setLoadingMore(true);
-        }
-
-        const response: PaginatedResponse = await fetchItems(
-          pageToLoad,
-          searchQuery,
-          selectedCategory || undefined,
-          stockApiFilters,
-        );
-
-        const pageResults = Array.isArray(response?.results) ? response.results : [];
-        const filteredResults = applyStockFilter(pageResults);
-
-        setItems(prev =>
-          replace ? filteredResults : mergeUniqueItems(prev, filteredResults),
-        );
-        setCurrentPage(pageToLoad);
-        setHasNextPage(Boolean(response?.next));
-      } catch (error) {
-        if (isInvalidPageError(error) && pageToLoad > 1) {
-          setHasNextPage(false);
-          return;
-        }
-        console.error('Error fetching items:', error);
-        if (replace) {
-          setItems([]);
-        }
-        setHasNextPage(false);
-      } finally {
-        setLoading(false);
-        setLoadingMore(false);
-        setRefreshing(false);
-        setSearchLoading(false);
-      }
-    },
-    [applyStockFilter, mergeUniqueItems, searchQuery, selectedCategory, stockApiFilters],
-  );
+  const reloadItems = useCallback(async () => {
+    await invalidateItems();
+    await refetchItems();
+  }, [invalidateItems, refetchItems]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    setHasNextPage(true);
-    await loadItems(1, true);
+    try {
+      await Promise.all([refetchItems(), refetchCategories()]);
+    } finally {
+      setRefreshing(false);
+    }
   };
-
-  useEffect(() => {
-    setCurrentPage(1);
-    setHasNextPage(false);
-    const debounceTimer = setTimeout(() => {
-      loadItems(1, true);
-    }, 500);
-
-    return () => clearTimeout(debounceTimer);
-  }, [searchQuery, selectedCategory, stockFilter, loadItems]);
 
   const handleSearch = (text: string) => {
     setSearchQuery(text);
@@ -1794,16 +1962,12 @@ const Items = () => {
 
   const handleApplyFilter = () => {
     setFilterModal(false);
-    setHasNextPage(true);
-    setSearchLoading(true);
-    loadItems(1, true);
   };
 
   const handleClearFilter = () => {
     setSelectedCategory(null);
     setStockFilter('all');
     setFilterModal(false);
-    setHasNextPage(true);
   };
 
   const hasActiveFilters = selectedCategory !== null || stockFilter !== 'all';
@@ -1838,7 +2002,7 @@ const Items = () => {
       return;
     }
 
-    loadItems(currentPage + 1, false);
+    fetchNextPage();
   };
 
   const handleCreateItem = () => {
@@ -1984,7 +2148,7 @@ const Items = () => {
         });
         setEditModal(false);
         setSelectedItem(null);
-        loadItems();
+        reloadItems();
       } else {
         Alert.alert('Error', 'Failed to delete item');
       }
@@ -1999,141 +2163,14 @@ const Items = () => {
     }
   };
 
-  const handleItemSave = async (selectedItem: Item) => {
-    // Check permission before saving
-    if (!canEdit(PAGE_NAME)) {
-      Alert.alert('Access Denied', 'You do not have permission to edit items.');
-      return;
-    }
-
-    const itemId = selectedItem.id || selectedItem.no;
-    if (!selectedItem || !itemId) {
-      console.warn('Invalid item data for saving');
-      return;
-    }
-
-    try {
-      // Map category_id to item_category code for backend
-      const itemToSave: any = {
-        ...selectedItem,
-        system_id:
-          selectedItem.system_id || selectedItem.no || itemId.toString(),
-      };
-
-      // Convert category_id to item_category code if needed
-      if (selectedItem.category_id) {
-        const selectedCategory = categories.find(
-          cat => (cat.id || cat.code) === selectedItem.category_id,
-        );
-        if (selectedCategory && selectedCategory.code) {
-          itemToSave.item_category = selectedCategory.code;
-          // Remove category_id as backend expects item_category
-          delete itemToSave.category_id;
-        }
-      }
-
-      const response = await updateItem(itemId, itemToSave);
-      if (response.status === 200 || response.status === 201) {
-        Toast.show({
-          type: 'success',
-          text1: 'Item updated',
-          text2: 'Your changes have been saved.',
-        });
-        setEditModal(false);
-        setSelectedItem(null);
-        loadItems();
-      } else {
-        Alert.alert('Error', 'Failed to update item');
-      }
-    } catch (error: any) {
-      console.error('Error saving item:', error);
-      const errorMessage =
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to save item';
-      Alert.alert('Error', errorMessage);
-    }
+  const handleItemSave = (savedItem: Item) => {
+    setSelectedItem(savedItem);
+    reloadItems();
   };
 
-  const handleCreateSave = async (draftItem: Item) => {
-    if (!canCreate(PAGE_NAME)) {
-      Alert.alert('Access Denied', 'You do not have permission to create items.');
-      return;
-    }
-
-    if (!draftItem.item_name || !draftItem.item_name.trim()) {
-      Alert.alert('Validation Error', 'Item name is required.');
-      return;
-    }
-
-    try {
-      const itemToCreate: any = {
-        item_name: draftItem.item_name.trim(),
-      };
-
-      if (draftItem.description && draftItem.description.trim()) {
-        itemToCreate.description = draftItem.description.trim();
-      }
-
-      if (draftItem.bar_code_no && draftItem.bar_code_no.trim()) {
-        itemToCreate.bar_code_no = draftItem.bar_code_no.trim();
-      }
-
-      if ((Number(draftItem.unit_price) || 0) > 0) {
-        itemToCreate.unit_price = Number(draftItem.unit_price) || 0;
-      }
-
-      if (draftItem.category_id) {
-        const selectedCategory = categories.find(
-          cat => (cat.id || cat.code) === draftItem.category_id,
-        );
-        if (selectedCategory?.code) {
-          itemToCreate.item_category = selectedCategory.code;
-        }
-      }
-
-      const itemType = draftItem.type?.trim() || 'Inventory';
-      itemToCreate.type = itemType;
-
-      if (
-        (itemType === 'Service' || itemType === 'Non-Inventory') &&
-        draftItem.unit_cost !== undefined &&
-        draftItem.unit_cost !== null
-      ) {
-        itemToCreate.unit_cost = Number(draftItem.unit_cost) || 0;
-      }
-
-      if (itemType === 'Inventory' && draftItem.minimum_stock != null) {
-        const minStock = Number(draftItem.minimum_stock);
-        if (minStock > 0) {
-          itemToCreate.minimum_stock = minStock;
-        }
-      }
-
-      const response = await createItem(itemToCreate);
-      if (response.status === 200 || response.status === 201) {
-        Toast.show({
-          type: 'success',
-          text1: itemType === 'Service' ? 'Service created' : 'Item created',
-          text2: 'It is now available in your catalog.',
-        });
-        setCreateModal(false);
-        setCreateDraftItem(null);
-        setSelectedItem(null);
-        loadItems();
-      } else {
-        Alert.alert('Error', 'Failed to create item');
-      }
-    } catch (error: any) {
-      console.error('Error creating item:', error);
-      const errorMessage =
-        error?.response?.data?.detail ||
-        error?.response?.data?.error ||
-        error?.response?.data?.item_name?.[0] ||
-        error?.message ||
-        'Failed to create item';
-      Alert.alert('Error', errorMessage);
-    }
+  const handleCreateSave = (savedItem: Item) => {
+    setCreateDraftItem(savedItem);
+    reloadItems();
   };
 
   const onSelectMainTab = (tab: string) => {
@@ -2267,7 +2304,7 @@ const Items = () => {
         </View>
       ) : null}
 
-      {loading ? (
+      {loading && items.length === 0 ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={COLORS.primary2} />
           <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
@@ -2360,6 +2397,7 @@ const Items = () => {
           setCreateModal(false);
           setCreateDraftItem(null);
           setSelectedItem(null);
+          reloadItems();
         }}
         item={createDraftItem}
         onSave={handleCreateSave}
@@ -2378,6 +2416,7 @@ const Items = () => {
           console.log('Closing edit modal');
           setEditModal(false);
           setSelectedItem(null);
+          reloadItems();
         }}
         item={selectedItem}
         onSave={handleItemSave}
@@ -2884,29 +2923,37 @@ const styles = StyleSheet.create({
     paddingHorizontal: SIZES.padding,
     paddingTop: SIZES.padding * 1.25,
   },
+  editItemAutoSaveHint: {
+    ...FONTS.body5,
+    marginBottom: 12,
+  },
+  editItemFieldError: {
+    ...FONTS.body5,
+    color: COLORS.error,
+    marginTop: 6,
+  },
   squareTileOuter: {
     alignSelf: 'center',
-    width: '92%',
-    maxWidth: 380,
-    aspectRatio: 1,
+    width: 112,
+    height: 112,
     backgroundColor: '#ECECEC',
-    borderRadius: 16,
+    borderRadius: 14,
     alignItems: 'stretch',
     justifyContent: 'center',
-    padding: 8,
-    marginBottom: 12,
+    padding: 6,
+    marginBottom: 10,
   },
   squareTileInner: {
     flex: 1,
     alignSelf: 'stretch',
     width: '100%',
     backgroundColor: COLORS.white,
-    borderRadius: 12,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    minHeight: 72,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    minHeight: 0,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.06,
@@ -2922,8 +2969,8 @@ const styles = StyleSheet.create({
   squareTileImageWrap: {
     flex: 1,
     width: '100%',
-    minHeight: 180,
-    borderRadius: 12,
+    minHeight: 0,
+    borderRadius: 10,
     overflow: 'hidden',
     backgroundColor: COLORS.lightGray2,
   },
@@ -2932,26 +2979,26 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.lightGray2,
   },
   squareTileInitials: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '700',
     color: COLORS.black,
     letterSpacing: -0.5,
   },
   squareTileName: {
     ...FONTS.body4,
-    fontSize: 11,
+    fontSize: 10,
     color: COLORS.gray2,
-    marginTop: 4,
+    marginTop: 2,
     textAlign: 'center',
     fontWeight: '500',
   },
   squareChangeImagePill: {
     alignSelf: 'center',
     backgroundColor: '#E8EAED',
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
     borderRadius: 999,
-    marginBottom: 6,
+    marginBottom: 10,
     minWidth: 124,
     alignItems: 'center',
   },

@@ -22,13 +22,15 @@ import icons from '../../constants/icons';
 import {useTheme} from '../../context/ThemeContext';
 import {safeGoBack} from '../../hooks/NavigationService';
 import {usePermissions} from '../../hooks/usePermissions';
+import {usePaymentMethodsQuery} from '../../hooks/useCustomersQuery';
+import {
+  useVendorsQuery,
+  useInvalidateVendors,
+} from '../../hooks/useVendorsQuery';
 import {PAGE_NAMES} from '../../constants/pageNames';
 import {VendorServices} from '../../services/VendorServices';
 import {PaymentJournalServices} from '../../services/PaymentJournalServices';
-import {
-  Vendor,
-  PaymentMethod,
-} from '../../@types/vendor';
+import {Vendor} from '../../@types/vendor';
 import {VendorLedgerEntry} from '../../@types/paymentJournal';
 import {QuickIconPressable} from '../../Components';
 import SupplierListItem from './SupplierListItem';
@@ -45,17 +47,11 @@ const Suppliers: React.FC = () => {
   const PAGE_NAME = PAGE_NAMES.SUPPLIERS;
 
   // State management
-  const [vendors, setVendors] = useState<Vendor[]>([]);
-  const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [selectedVendor, setSelectedVendor] = useState<Vendor | null>(null);
   const [isFormModalVisible, setIsFormModalVisible] = useState(false);
-  const [totalCount, setTotalCount] = useState(0);
   const [filterModalVisible, setFilterModalVisible] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [ledgerModalVisible, setLedgerModalVisible] = useState(false);
@@ -66,6 +62,19 @@ const Suppliers: React.FC = () => {
     VendorLedgerEntry[]
   >([]);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const invalidateVendors = useInvalidateVendors();
+  const {data: paymentMethods = []} = usePaymentMethodsQuery();
+  const {
+    vendors,
+    isLoading: loading,
+    isFetchingNextPage,
+    hasNextPage: hasMore,
+    refetch: refetchVendors,
+    fetchNextPage,
+    error: vendorsError,
+  } = useVendorsQuery({
+    searchQuery: debouncedSearchQuery,
+  });
 
   // Debounce search query
   useEffect(() => {
@@ -76,7 +85,6 @@ const Suppliers: React.FC = () => {
     setSearchLoading(true);
     searchTimeoutRef.current = setTimeout(() => {
       setDebouncedSearchQuery(searchQuery);
-      setPage(1); // Reset to first page on search
       setSearchLoading(false);
     }, 500);
 
@@ -87,93 +95,34 @@ const Suppliers: React.FC = () => {
     };
   }, [searchQuery]);
 
-  // Load reference data
   useEffect(() => {
-    loadReferenceData();
-  }, []);
-
-  // Load vendors when filters change
-  useEffect(() => {
-    loadVendors();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, debouncedSearchQuery]);
-
-  const loadReferenceData = async () => {
-    try {
-      const methods = await VendorServices.getPaymentMethods();
-      setPaymentMethods(methods);
-    } catch (error) {
-      console.error('Error loading reference data:', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Failed to load reference data',
-      });
+    if (!vendorsError) {
+      return;
     }
-  };
+    const detail =
+      (vendorsError as any)?.response?.data?.detail ||
+      (vendorsError as any)?.message ||
+      'Failed to load suppliers';
+    Toast.show({
+      type: 'error',
+      text1: 'Error',
+      text2: String(detail),
+    });
+  }, [vendorsError]);
 
-  const loadVendors = async () => {
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
     try {
-      setLoading(true);
-      const params: any = {
-        page,
-        page_size: 20,
-      };
-
-      if (debouncedSearchQuery) {
-        params.search = debouncedSearchQuery;
-      }
-
-      const response = await VendorServices.getVendors(params);
-
-      if (response && response.results && Array.isArray(response.results)) {
-        if (page === 1) {
-          setVendors(response.results);
-        } else {
-          setVendors(prev => [...prev, ...response.results]);
-        }
-        setTotalCount(response.count);
-        setHasMore(!!response.next);
-      } else {
-        setVendors([]);
-        setTotalCount(0);
-        setHasMore(false);
-      }
-    } catch (error: any) {
-      console.error('Error loading vendors:', error);
-      const invalidPage =
-        error?.response?.data?.detail === 'Invalid page.' ||
-        error?.response?.data?.error === 'Invalid page.';
-
-      if (invalidPage && page > 1) {
-        setPage(1);
-        setHasMore(false);
-      } else {
-        setVendors([]);
-        setTotalCount(0);
-        setHasMore(false);
-        Toast.show({
-          type: 'error',
-          text1: 'Error',
-          text2: error?.response?.data?.detail || 'Failed to load suppliers',
-        });
-      }
+      await invalidateVendors();
+      await refetchVendors();
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
-  };
-
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    setPage(1);
-    setHasMore(true);
-    loadVendors();
-  }, [debouncedSearchQuery]);
+  }, [invalidateVendors, refetchVendors]);
 
   const handleLoadMore = () => {
-    if (!loading && hasMore) {
-      setPage(prev => prev + 1);
+    if (!loading && !isFetchingNextPage && hasMore) {
+      fetchNextPage();
     }
   };
 
@@ -235,9 +184,11 @@ const Suppliers: React.FC = () => {
   };
 
   const handleFormSave = () => {
-    setIsFormModalVisible(false);
-    setSelectedVendor(null);
     onRefresh();
+  };
+
+  const handleRecordChange = (record: Vendor) => {
+    setSelectedVendor(record);
   };
 
   const handleOpenBalanceDrilldown = async (vendor: Vendor) => {
@@ -271,14 +222,11 @@ const Suppliers: React.FC = () => {
 
   const handleClearFilter = () => {
     setSearchQuery('');
-    setPage(1);
     setFilterModalVisible(false);
   };
 
   const handleApplyFilter = () => {
-    setPage(1);
     setFilterModalVisible(false);
-    loadVendors();
   };
 
   const renderEmptyState = () => (
@@ -313,7 +261,7 @@ const Suppliers: React.FC = () => {
   );
 
   const renderFooter = () => {
-    if (!loading || page === 1) return null;
+    if (!isFetchingNextPage) return null;
     return (
       <View style={styles.footerLoader}>
         <ActivityIndicator size="small" color={COLORS.primary} />
@@ -452,7 +400,7 @@ const Suppliers: React.FC = () => {
       </View>
       </View>
 
-      {loading && page === 1 ? (
+      {loading && vendors.length === 0 ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={COLORS.primary2} />
           <Text style={[styles.loadingText, {color: colors.textSecondary}]}>
@@ -688,9 +636,11 @@ const Suppliers: React.FC = () => {
         onClose={() => {
           setIsFormModalVisible(false);
           setSelectedVendor(null);
+          onRefresh();
         }}
         vendor={selectedVendor}
         onSave={handleFormSave}
+        onRecordChange={handleRecordChange}
         paymentMethods={paymentMethods}
         canCreate={canCreate(PAGE_NAME)}
         canEdit={canEdit(PAGE_NAME)}

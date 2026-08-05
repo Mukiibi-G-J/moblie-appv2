@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useMemo} from 'react';
+import React, {useState, useEffect, useMemo, useRef, useCallback} from 'react';
 import {
   View,
   Text,
@@ -7,7 +7,6 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  Alert,
   ActivityIndicator,
   Image,
   Platform,
@@ -26,11 +25,52 @@ import {useScreenTopInset} from '../../hooks/useScreenTopInset';
 import {VendorServices} from '../../services/VendorServices';
 import Toast from 'react-native-toast-message';
 
+const emptyVendorForm = (): VendorFormValues => ({
+  name: '',
+  blocked: false,
+  address: '',
+  city: '',
+  phone: '',
+  email: '',
+  website: '',
+  payment_method: null,
+  vendor_posting_group: null,
+  business_posting_group: null,
+});
+
+const vendorToForm = (vendor: Vendor): VendorFormValues => ({
+  name: vendor.name || '',
+  blocked: vendor.blocked || false,
+  address: vendor.address || '',
+  city: vendor.city || '',
+  phone: vendor.phone || '',
+  email: vendor.email || '',
+  website: vendor.website || '',
+  payment_method: vendor.payment_method || null,
+  vendor_posting_group: vendor.vendor_posting_group || null,
+  business_posting_group: vendor.business_posting_group || null,
+});
+
+const OPTIONAL_VENDOR_FIELDS = new Set<keyof VendorFormValues>([
+  'blocked',
+  'address',
+  'city',
+  'phone',
+  'email',
+  'website',
+  'payment_method',
+  'vendor_posting_group',
+  'business_posting_group',
+]);
+
 interface VendorFormModalProps {
   visible: boolean;
   onClose: () => void;
   vendor: Vendor | null;
+  /** Called after a successful auto-save so the list can refresh (does not close). */
   onSave: () => void;
+  /** Keeps parent selection in sync after create / update. */
+  onRecordChange?: (vendor: Vendor) => void;
   paymentMethods: PaymentMethod[];
   canCreate: boolean;
   canEdit: boolean;
@@ -44,12 +84,11 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
   onClose,
   vendor,
   onSave,
+  onRecordChange,
   paymentMethods,
   canCreate,
   canEdit,
 }) => {
-  const isEditMode = !!vendor;
-  const isGeneralVendor = isProtectedGeneralVendor(vendor);
   const {colors, isDark} = useTheme();
   const topInset = useScreenTopInset();
 
@@ -57,6 +96,7 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
     () => ({
       pageRoot: {backgroundColor: colors.background},
       pageTitle: {color: colors.textPrimary},
+      autoSaveHint: {color: colors.textSecondary},
       previewSection: {
         backgroundColor: colors.card,
         borderColor: colors.border,
@@ -96,178 +136,209 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
     [colors],
   );
 
-  const [formData, setFormData] = useState<VendorFormValues>({
-    name: '',
-    blocked: false,
-    address: '',
-    city: '',
-    phone: '',
-    email: '',
-    website: '',
-    payment_method: null,
-    vendor_posting_group: null,
-    business_posting_group: null,
-  });
-
-  const [loading, setLoading] = useState(false);
+  const [formData, setFormData] = useState<VendorFormValues>(emptyVendorForm);
+  const [currentRecord, setCurrentRecord] = useState<Vendor | null>(vendor);
+  const [isSaving, setIsSaving] = useState(false);
+  const [showSaved, setShowSaved] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  const formDataRef = useRef(formData);
+  const currentRecordRef = useRef(currentRecord);
+  const savingRef = useRef(false);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  formDataRef.current = formData;
+  currentRecordRef.current = currentRecord;
+
+  const isEditMode = !!currentRecord?.id;
+  const isGeneralVendor = isProtectedGeneralVendor(currentRecord || vendor);
+  const canWrite = isEditMode ? canEdit : canCreate;
+
   useEffect(() => {
-    if (vendor) {
-      setFormData({
-        name: vendor.name || '',
-        blocked: vendor.blocked || false,
-        address: vendor.address || '',
-        city: vendor.city || '',
-        phone: vendor.phone || '',
-        email: vendor.email || '',
-        website: vendor.website || '',
-        payment_method: vendor.payment_method || null,
-        vendor_posting_group: vendor.vendor_posting_group || null,
-        business_posting_group: vendor.business_posting_group || null,
-      });
-    } else {
-      setFormData({
-        name: '',
-        blocked: false,
-        address: '',
-        city: '',
-        phone: '',
-        email: '',
-        website: '',
-        payment_method: null,
-        vendor_posting_group: null,
-        business_posting_group: null,
-      });
+    if (!visible) {
+      setCurrentRecord(null);
+      setFormData(emptyVendorForm());
+      setErrors({});
+      setShowSaved(false);
+      return;
+    }
+    if (vendor?.id) {
+      if (currentRecordRef.current?.id !== vendor.id) {
+        setCurrentRecord(vendor);
+        setFormData(vendorToForm(vendor));
+      } else {
+        setCurrentRecord(vendor);
+      }
+    } else if (!currentRecordRef.current?.id) {
+      setCurrentRecord(null);
+      setFormData(emptyVendorForm());
     }
     setErrors({});
-  }, [vendor, visible]);
+    setShowSaved(false);
+  }, [vendor?.id, visible]);
 
-  const validateForm = (): boolean => {
-    const newErrors: Record<string, string> = {};
-
-    if (!formData.name || !formData.name.trim()) {
-      newErrors.name = 'Supplier name is required';
+  useEffect(() => {
+    if (!visible && savedTimerRef.current) {
+      clearTimeout(savedTimerRef.current);
+      savedTimerRef.current = null;
     }
+  }, [visible]);
 
-    if (formData.email && formData.email.trim()) {
+  const flashSaved = useCallback(() => {
+    setShowSaved(true);
+    if (savedTimerRef.current) {
+      clearTimeout(savedTimerRef.current);
+    }
+    savedTimerRef.current = setTimeout(() => {
+      setShowSaved(false);
+      savedTimerRef.current = null;
+    }, 2000);
+  }, []);
+
+  const buildCreatePayload = (values: VendorFormValues): Partial<Vendor> => {
+    const payload: Partial<Vendor> = {
+      name: values.name.trim(),
+      blocked: !!values.blocked,
+    };
+    if (values.address?.trim()) {
+      payload.address = values.address.trim();
+    }
+    if (values.city?.trim()) {
+      payload.city = values.city.trim();
+    }
+    if (values.phone?.trim()) {
+      payload.phone = values.phone.trim();
+    }
+    if (values.email?.trim()) {
+      payload.email = values.email.trim();
+    }
+    if (values.website?.trim()) {
+      payload.website = values.website.trim();
+    }
+    if (values.payment_method) {
+      payload.payment_method = values.payment_method;
+    }
+    if (values.vendor_posting_group) {
+      payload.vendor_posting_group = values.vendor_posting_group;
+    }
+    if (values.business_posting_group) {
+      payload.business_posting_group = values.business_posting_group;
+    }
+    return payload;
+  };
+
+  const getFieldError = (field: keyof VendorFormValues, value: unknown) => {
+    if (field === 'name' && (!value || !String(value).trim())) {
+      return 'Supplier name is required';
+    }
+    if (field === 'email' && value && String(value).trim()) {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(formData.email.trim())) {
-        newErrors.email = 'Enter a valid email address';
+      if (!emailRegex.test(String(value).trim())) {
+        return 'Enter a valid email address';
       }
     }
-
-    if (formData.website && formData.website.trim()) {
+    if (field === 'website' && value && String(value).trim()) {
       try {
-        new URL(formData.website.trim());
+        new URL(String(value).trim());
       } catch {
-        newErrors.website = 'Enter a valid URL';
+        return 'Enter a valid URL';
       }
     }
-
-    if (formData.phone && !/^\+?[\d\s\-()]+$/.test(formData.phone)) {
-      newErrors.phone =
-        'Phone number can only contain numbers, +, -, (), and spaces';
+    if (field === 'phone' && value && !/^\+?[\d\s\-()]+$/.test(String(value))) {
+      return 'Phone number can only contain numbers, +, -, (), and spaces';
     }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    return null;
   };
 
-  const handleSave = async () => {
-    if (!validateForm()) {
-      return;
-    }
-
-    if (isEditMode && !canEdit) {
-      Alert.alert(
-        'Permission Denied',
-        'You do not have permission to edit vendors.',
-      );
-      return;
-    }
-
-    if (!isEditMode && !canCreate) {
-      Alert.alert(
-        'Permission Denied',
-        'You do not have permission to create vendors.',
-      );
-      return;
-    }
-
-    if (isEditMode && isGeneralVendor) {
-      Alert.alert(
-        'Protected supplier',
-        'The General Vendor cannot be edited.',
-      );
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const vendorData: Partial<Vendor> = {
-        name: formData.name.trim(),
-        blocked: formData.blocked,
-      };
-
-      if (formData.address && formData.address.trim()) {
-        vendorData.address = formData.address.trim();
-      }
-      if (formData.city && formData.city.trim()) {
-        vendorData.city = formData.city.trim();
-      }
-      if (formData.phone && formData.phone.trim()) {
-        vendorData.phone = formData.phone.trim();
-      }
-      if (formData.email && formData.email.trim()) {
-        vendorData.email = formData.email.trim();
-      }
-      if (formData.website && formData.website.trim()) {
-        vendorData.website = formData.website.trim();
-      }
-      if (formData.payment_method) {
-        vendorData.payment_method = formData.payment_method;
-      }
-      if (formData.vendor_posting_group) {
-        vendorData.vendor_posting_group = formData.vendor_posting_group;
-      }
-      if (formData.business_posting_group) {
-        vendorData.business_posting_group = formData.business_posting_group;
+  const autoSaveField = useCallback(
+    async (
+      field: keyof VendorFormValues,
+      rawValue: VendorFormValues[keyof VendorFormValues],
+    ) => {
+      if (!visible || isGeneralVendor || !canWrite || savingRef.current) {
+        return;
       }
 
-      if (isEditMode && vendor) {
-        await VendorServices.updateVendor(vendor.id, vendorData);
-        Toast.show({
-          type: 'success',
-          text1: 'Success',
-          text2: 'Supplier updated successfully',
-        });
-      } else {
-        await VendorServices.createVendor(vendorData);
-        Toast.show({
-          type: 'success',
-          text1: 'Success',
-          text2: 'Supplier created successfully',
-        });
+      const value =
+        typeof rawValue === 'string' ? rawValue.trim() : rawValue;
+      const record = currentRecordRef.current;
+      const values = {...formDataRef.current, [field]: rawValue};
+
+      if (record?.id) {
+        const existing = (record as any)[field];
+        if (String(existing ?? '') === String(value ?? '')) {
+          return;
+        }
       }
 
-      onSave();
-    } catch (error: any) {
-      console.error('Error saving vendor:', error);
-      const errorMessage =
-        error?.response?.data?.detail ||
-        error?.response?.data?.error ||
-        error?.response?.data?.name?.[0] ||
-        'Failed to save supplier';
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: errorMessage,
+      const fieldError = getFieldError(field, value);
+      if (fieldError) {
+        setErrors(prev => ({...prev, [field]: fieldError}));
+        return;
+      }
+
+      if (
+        field !== 'blocked' &&
+        !OPTIONAL_VENDOR_FIELDS.has(field) &&
+        (value === '' || value === null || value === undefined)
+      ) {
+        return;
+      }
+
+      const nameForCreate =
+        field === 'name' ? String(value || '') : values.name || '';
+      if (!record?.id && !nameForCreate.trim()) {
+        return;
+      }
+
+      setErrors(prev => {
+        const next = {...prev};
+        delete next[field];
+        return next;
       });
-    } finally {
-      setLoading(false);
-    }
-  };
+
+      savingRef.current = true;
+      setIsSaving(true);
+      try {
+        if (!record?.id) {
+          const created = await VendorServices.createVendor(
+            buildCreatePayload({...values, [field]: value as any}),
+          );
+          setCurrentRecord(created);
+          setFormData(vendorToForm(created));
+          onRecordChange?.(created);
+          onSave();
+          flashSaved();
+        } else {
+          const updated = await VendorServices.updateVendor(record.id, {
+            [field]: value,
+          } as Partial<Vendor>);
+          setCurrentRecord(updated);
+          onRecordChange?.(updated);
+          onSave();
+          flashSaved();
+        }
+      } catch (error: any) {
+        console.error('Error auto-saving vendor:', error);
+        const errorMessage =
+          error?.response?.data?.errors?.[field]?.[0] ||
+          error?.response?.data?.detail ||
+          error?.response?.data?.error ||
+          error?.response?.data?.name?.[0] ||
+          `Failed to save ${field.replace(/_/g, ' ')}`;
+        setErrors(prev => ({...prev, [field]: errorMessage}));
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: errorMessage,
+        });
+      } finally {
+        savingRef.current = false;
+        setIsSaving(false);
+      }
+    },
+    [visible, isGeneralVendor, canWrite, onRecordChange, onSave, flashSaved],
+  );
 
   const previewName = (formData.name || 'My Supplier').trim();
   const previewInitials =
@@ -300,28 +371,27 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
             />
           </QuickIconPressable>
 
-          {((isEditMode && canEdit && !isGeneralVendor) ||
-            (!isEditMode && canCreate)) && (
-            <TouchableOpacity
-              style={[styles.headerSaveButton, loading && styles.buttonDisabled]}
-              onPress={handleSave}
-              disabled={loading}
-              activeOpacity={0.85}>
-              {loading ? (
-                <ActivityIndicator size="small" color={COLORS.white} />
-              ) : (
-                <Text style={styles.headerSaveText}>Save</Text>
-              )}
-            </TouchableOpacity>
+          {canWrite && !isGeneralVendor && (isSaving || showSaved) ? (
+            <View style={styles.headerSaveButton}>
+              <Text style={styles.headerSaveText}>
+                {isSaving ? 'Saving...' : 'Saved'}
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.headerSpacer} />
           )}
         </View>
 
         <ScrollView
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}>
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled">
           <Text style={[styles.pageTitle, themed.pageTitle]}>
             {isEditMode ? 'Edit supplier' : 'Add supplier'}
+          </Text>
+          <Text style={[styles.autoSaveHint, themed.autoSaveHint]}>
+            Changes save automatically when you leave a field
           </Text>
 
           <View style={[styles.previewSection, themed.previewSection]}>
@@ -343,12 +413,12 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
           <View style={styles.section}>
             <Text style={[styles.sectionTitle, themed.sectionTitle]}>Details</Text>
 
-            {isEditMode && vendor?.no ? (
+            {isEditMode && currentRecord?.no ? (
               <View style={styles.fieldGroup}>
                 <Text style={[styles.label, themed.label]}>Supplier number</Text>
                 <TextInput
                   style={[styles.input, themed.input, themed.disabledInput]}
-                  value={vendor.no}
+                  value={currentRecord.no}
                   editable={false}
                 />
               </View>
@@ -360,9 +430,10 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
                 style={[styles.input, themed.input, errors.name && styles.inputError]}
                 value={formData.name}
                 onChangeText={text => setFormData({...formData, name: text})}
+                onBlur={() => autoSaveField('name', formDataRef.current.name)}
                 placeholder="Supplier name"
                 placeholderTextColor={colors.placeholder}
-                editable={!isGeneralVendor}
+                editable={!isGeneralVendor && canWrite}
               />
               {errors.name ? <Text style={styles.errorText}>{errors.name}</Text> : null}
             </View>
@@ -373,10 +444,13 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
                 style={[styles.input, themed.input, errors.phone && styles.inputError]}
                 value={formData.phone}
                 onChangeText={text => setFormData({...formData, phone: text})}
+                onBlur={() =>
+                  autoSaveField('phone', formDataRef.current.phone || '')
+                }
                 placeholder="+256700000000"
                 placeholderTextColor={colors.placeholder}
                 keyboardType="phone-pad"
-                editable={!isGeneralVendor}
+                editable={!isGeneralVendor && canWrite}
               />
               {errors.phone ? <Text style={styles.errorText}>{errors.phone}</Text> : null}
             </View>
@@ -387,11 +461,14 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
                 style={[styles.input, themed.input, errors.email && styles.inputError]}
                 value={formData.email}
                 onChangeText={text => setFormData({...formData, email: text})}
+                onBlur={() =>
+                  autoSaveField('email', formDataRef.current.email || '')
+                }
                 placeholder="supplier@example.com"
                 placeholderTextColor={colors.placeholder}
                 keyboardType="email-address"
                 autoCapitalize="none"
-                editable={!isGeneralVendor}
+                editable={!isGeneralVendor && canWrite}
               />
               {errors.email ? <Text style={styles.errorText}>{errors.email}</Text> : null}
             </View>
@@ -402,11 +479,14 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
                 style={[styles.input, themed.input, errors.website && styles.inputError]}
                 value={formData.website}
                 onChangeText={text => setFormData({...formData, website: text})}
+                onBlur={() =>
+                  autoSaveField('website', formDataRef.current.website || '')
+                }
                 placeholder="https://supplier.com"
                 placeholderTextColor={colors.placeholder}
                 keyboardType="url"
                 autoCapitalize="none"
-                editable={!isGeneralVendor}
+                editable={!isGeneralVendor && canWrite}
               />
               {errors.website ? (
                 <Text style={styles.errorText}>{errors.website}</Text>
@@ -420,10 +500,12 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
                 isGeneralVendor && themed.disabledInput,
               ]}
               activeOpacity={0.8}
-              disabled={isGeneralVendor}
-              onPress={() =>
-                setFormData(prev => ({...prev, blocked: !prev.blocked}))
-              }>
+              disabled={isGeneralVendor || !canWrite}
+              onPress={() => {
+                const nextBlocked = !formData.blocked;
+                setFormData(prev => ({...prev, blocked: nextBlocked}));
+                void autoSaveField('blocked', nextBlocked);
+              }}>
               <View
                 style={[
                   styles.blockedToggle,
@@ -451,11 +533,14 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
                 style={[styles.input, styles.textArea, themed.input]}
                 value={formData.address}
                 onChangeText={text => setFormData({...formData, address: text})}
+                onBlur={() =>
+                  autoSaveField('address', formDataRef.current.address || '')
+                }
                 placeholder="Street address"
                 placeholderTextColor={colors.placeholder}
                 multiline
                 numberOfLines={3}
-                editable={!isGeneralVendor}
+                editable={!isGeneralVendor && canWrite}
               />
             </View>
 
@@ -465,9 +550,12 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
                 style={[styles.input, themed.input]}
                 value={formData.city}
                 onChangeText={text => setFormData({...formData, city: text})}
+                onBlur={() =>
+                  autoSaveField('city', formDataRef.current.city || '')
+                }
                 placeholder="City"
                 placeholderTextColor={colors.placeholder}
-                editable={!isGeneralVendor}
+                editable={!isGeneralVendor && canWrite}
               />
             </View>
           </View>
@@ -492,16 +580,14 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
                     <Picker
                       selectedValue={formData.payment_method || 0}
                       onValueChange={value => {
-                        if (value === 0) {
-                          setFormData({...formData, payment_method: null});
-                        } else {
-                          setFormData({...formData, payment_method: value});
-                        }
+                        const nextValue = value === 0 ? null : value;
+                        setFormData({...formData, payment_method: nextValue});
+                        void autoSaveField('payment_method', nextValue);
                       }}
                       style={[styles.picker, themed.picker]}
                       dropdownIconColor={colors.textPrimary}
                       itemStyle={isDark ? {color: colors.textPrimary} : undefined}
-                      enabled={!isGeneralVendor}>
+                      enabled={!isGeneralVendor && canWrite}>
                       <Picker.Item label="Select payment method" value={0} />
                       {paymentMethods.map(method => (
                         <Picker.Item
@@ -552,6 +638,13 @@ const styles = StyleSheet.create({
     width: 16,
     height: 16,
   },
+  headerSpacer: {
+    width: 108,
+  },
+  autoSaveHint: {
+    ...FONTS.body5,
+    marginBottom: 18,
+  },
   headerSaveButton: {
     minWidth: 108,
     height: 48,
@@ -582,7 +675,7 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '700',
     marginTop: 22,
-    marginBottom: 24,
+    marginBottom: 4,
   },
   previewSection: {
     flexDirection: 'row',

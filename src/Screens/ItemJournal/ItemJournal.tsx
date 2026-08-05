@@ -10,12 +10,11 @@ import {
   Alert,
   Image,
   RefreshControl,
-  InteractionManager,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
-import Clipboard from '@react-native-clipboard/clipboard';
 import {StackScreenLayout} from '../../Components';
+import {showUserError} from '../../utils/userFeedback';
 import {
   deleteItemJournal,
   fetchItemJournal,
@@ -116,30 +115,6 @@ function formatItemJournalPostFailure(e: unknown): string {
   return typeof msg === 'string' && msg.trim()
     ? msg.trim()
     : 'Post failed. Please try again.';
-}
-
-function showPostErrorAlert(message: string) {
-  InteractionManager.runAfterInteractions(() => {
-    Alert.alert(
-      'Could not post',
-      message,
-      [
-        {
-          text: 'Copy error',
-          onPress: () => {
-            try {
-              Clipboard.setString(message);
-              Toast.show({type: 'success', text1: 'Error copied to clipboard'});
-            } catch {
-              Toast.show({type: 'error', text1: 'Could not copy'});
-            }
-          },
-        },
-        {text: 'OK', style: 'cancel'},
-      ],
-      {cancelable: true},
-    );
-  });
 }
 
 const ItemJournalScreen = ({
@@ -352,7 +327,10 @@ const ItemJournalScreen = ({
               setPage(1);
               loadJournals(1);
             } catch (e: unknown) {
-              showPostErrorAlert(formatItemJournalPostFailure(e));
+              showUserError(
+                'Could not post',
+                formatItemJournalPostFailure(e),
+              );
             }
           },
         },

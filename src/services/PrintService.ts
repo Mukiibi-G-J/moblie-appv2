@@ -6,7 +6,7 @@ import BluetoothPrinterService from './BluetoothPrinterService';
 import UsbPrinterService, {KotData} from './UsbPrinterService';
 import {
   prepareCompanyLogoForPrint,
-  RECEIPT_LOGO_WIDTH_PX,
+  fitReceiptLogoSize,
 } from '../utils/companyLogoUrl';
 import {printSunmiDocument} from '../shared/receipt/compileToSunmi';
 import {
@@ -698,11 +698,14 @@ class PrintService {
       ? prepared.localPath
       : `file://${prepared.localPath}`;
 
+    const {width, height} = fitReceiptLogoSize(prepared.width, prepared.height);
+
     PrinterSunmi.printBitmap(bitmapPath, {
-      width: RECEIPT_LOGO_WIDTH_PX,
+      width,
+      height,
       align: 'CENTER',
     });
-    PrinterSunmi.printDividingLine('EMPTY', 2);
+    PrinterSunmi.printDividingLine('EMPTY', 1);
   }
 
   /**

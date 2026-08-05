@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Image,
   ImageSourcePropType,
+  ActivityIndicator,
 } from 'react-native';
 import {COLORS, FONTS, SIZES, icons} from '../../constants';
 import {useTheme} from '../../context/ThemeContext';
@@ -48,12 +49,20 @@ type Props = {
   onPress: () => void;
   /** Shown for posted invoices only when provided (e.g. reprint receipt). */
   onPrintPress?: () => void;
+  /** Shown for Open/Draft invoices when provided. */
+  onPostPress?: () => void;
+  /** Load into Make Sale cart (edit lot/qty/lines). */
+  onEditInPosPress?: () => void;
+  posting?: boolean;
 };
 
 const SalesHistoryListItem: React.FC<Props> = ({
   item,
   onPress,
   onPrintPress,
+  onPostPress,
+  onEditInPosPress,
+  posting = false,
 }) => {
   const {colors} = useTheme();
   const t = useMemo(
@@ -84,10 +93,17 @@ const SalesHistoryListItem: React.FC<Props> = ({
     return formatCurrencyCompact(amount);
   };
 
+  const statusLower = String(item.status || '').toLowerCase();
   const isPosted =
-    String(item.status || '').toLowerCase() === 'posted' &&
+    statusLower === 'posted' && !item.reversed && onPrintPress;
+  const canPost =
+    (statusLower === 'open' || statusLower === 'draft') &&
     !item.reversed &&
-    onPrintPress;
+    onPostPress;
+  const canEditInPos =
+    (statusLower === 'open' || statusLower === 'draft') &&
+    !item.reversed &&
+    onEditInPosPress;
 
   const formatDate = (dateString?: string) => {
     if (!dateString) {
@@ -135,6 +151,35 @@ const SalesHistoryListItem: React.FC<Props> = ({
             ) : null}
           </View>
           <View style={styles.amountRow}>
+            {canEditInPos ? (
+              <TouchableOpacity
+                style={[styles.editPosHit, t.iconWrap]}
+                onPress={onEditInPosPress}
+                disabled={posting}
+                activeOpacity={0.65}
+                accessibilityRole="button"
+                accessibilityLabel="Edit in POS">
+                <Image
+                  source={icons.cart as ImageSourcePropType}
+                  style={[styles.printIcon, {tintColor: COLORS.primary}]}
+                />
+              </TouchableOpacity>
+            ) : null}
+            {canPost ? (
+              <TouchableOpacity
+                style={[styles.postHit, {backgroundColor: COLORS.primary}]}
+                onPress={onPostPress}
+                disabled={posting}
+                activeOpacity={0.65}
+                accessibilityRole="button"
+                accessibilityLabel="Post sale">
+                {posting ? (
+                  <ActivityIndicator color={COLORS.white} size="small" />
+                ) : (
+                  <Text style={styles.postHitText}>Post</Text>
+                )}
+              </TouchableOpacity>
+            ) : null}
             {isPosted ? (
               <TouchableOpacity
                 style={[styles.printHit, t.iconWrap]}
@@ -247,6 +292,29 @@ const styles = StyleSheet.create({
   printIcon: {
     width: 18,
     height: 18,
+  },
+  postHit: {
+    minWidth: 52,
+    height: 32,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  postHitText: {
+    ...FONTS.body5,
+    color: COLORS.white,
+    fontWeight: '700',
+  },
+  editPosHit: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 8,
   },
   amount: {
     ...FONTS.body3,

@@ -1,5 +1,5 @@
 import React from 'react';
-import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../utils/currency';
+import {formatCurrencyCompact, getLocalCurrencyCode} from '../utils/currency';
 import {
   View,
   Text,
@@ -8,7 +8,8 @@ import {
   ActivityIndicator,
   Platform,
 } from 'react-native';
-import {FONTS, SIZES, COLORS, ICON_BUTTON_QUICK_PRESS} from '../constants';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
+import {FONTS, COLORS, ICON_BUTTON_QUICK_PRESS} from '../constants';
 import {useTheme} from '../context/ThemeContext';
 
 interface FooterTotalProps {
@@ -21,27 +22,47 @@ interface FooterTotalProps {
   setPrintReceipt: (value: boolean) => void;
   /** When true, checkout stays disabled even if the cart has items (e.g. no sales permission). */
   checkoutBlocked?: boolean;
+  /**
+   * When true (Make Sale tab), skip extra safe-area bottom padding —
+   * the tab bar already clears the home indicator.
+   */
+  embeddedInTabBar?: boolean;
 }
 
 const FooterTotal: React.FC<FooterTotalProps> = ({
-  subTotal,
+  subTotal: _subTotal,
   totalQuantity,
   total,
   isLoading,
   onPress,
-  printReceipt,
-  setPrintReceipt,
+  printReceipt: _printReceipt,
+  setPrintReceipt: _setPrintReceipt,
   checkoutBlocked = false,
+  embeddedInTabBar = false,
 }) => {
-  const {colors} = useTheme();
+  const {colors, isDark} = useTheme();
+  const insets = useSafeAreaInsets();
   const disabled = isLoading || totalQuantity === 0 || checkoutBlocked;
+  const bottomPad = embeddedInTabBar
+    ? 10
+    : Math.max(insets.bottom, 12);
 
   return (
-    <View style={[styles.container, {backgroundColor: colors.background}]}>
+    <View
+      style={[
+        styles.container,
+        {
+          backgroundColor: colors.background,
+          borderTopColor: isDark ? 'rgba(255,255,255,0.1)' : colors.border,
+          paddingBottom: bottomPad,
+        },
+      ]}>
       <Pressable
         {...ICON_BUTTON_QUICK_PRESS}
         accessibilityRole="button"
-        accessibilityLabel="Open current sale"
+        accessibilityLabel={`Charge ${getLocalCurrencyCode()} ${
+          total?.toLocaleString() || '0'
+        }`}
         disabled={disabled}
         android_ripple={
           Platform.OS === 'android' && !disabled
@@ -59,7 +80,7 @@ const FooterTotal: React.FC<FooterTotalProps> = ({
         ) : (
           <>
             <Text style={styles.checkoutButtonText}>
-              Charge {getLocalCurrencyCode()} {total?.toLocaleString() || '0'}
+              Charge {formatCurrencyCompact(total || 0)}
             </Text>
             <Text style={styles.checkoutButtonSubtext}>
               {totalQuantity} {totalQuantity === 1 ? 'item' : 'items'}
@@ -74,9 +95,8 @@ const FooterTotal: React.FC<FooterTotalProps> = ({
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: 12,
-    paddingTop: 0,
-    paddingBottom: 0,
-    backgroundColor: COLORS.white,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
   checkoutButton: {
     backgroundColor: COLORS.primary2,

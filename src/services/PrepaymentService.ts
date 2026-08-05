@@ -211,17 +211,13 @@ export const PrepaymentService = {
   },
 
   async getPaymentMethods(): Promise<any[]> {
-    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const axiosInstance = createAxiosInstance(tenant);
     try {
-      const response = await axiosInstance.get('/api/financials/payment-methods/');
-      if (response?.data?.results && Array.isArray(response.data.results)) {
-        return response.data.results;
-      }
-      if (Array.isArray(response?.data)) {
-        return response.data;
-      }
-      return [];
+      const {fetchPageDataAll, PAGE_IDS} = await import('./pageDataService');
+      const {mapPageDataPaymentMethod} = await import('./pageDataMappers');
+      return await fetchPageDataAll({
+        pageId: PAGE_IDS.PaymentMethodList,
+        mapRow: mapPageDataPaymentMethod,
+      });
     } catch (error) {
       console.error('Error fetching payment methods:', error);
       return [];

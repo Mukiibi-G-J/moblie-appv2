@@ -12,13 +12,26 @@ export const UserSetupService = {
   async getUserSetups(
     params?: UserSetupListParams,
   ): Promise<PaginatedUserSetupResponse> {
-    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const api = createAxiosInstance(tenant);
-    const response = await api.get('/api/user-setup/', {params});
-    if (response?.data?.results && Array.isArray(response.data.results)) {
-      return response.data;
-    }
-    return {count: 0, next: null, previous: null, results: []};
+    const {fetchPageDataPaginated, PAGE_IDS} = await import(
+      './pageDataService'
+    );
+    return fetchPageDataPaginated({
+      pageId: PAGE_IDS.UserSetupList,
+      page: params?.page ?? 1,
+      pageSize: params?.page_size ?? 50,
+      search: params?.search,
+      mapRow: row =>
+        ({
+          id: Number(row.id) || 0,
+          system_id: String(row.SystemId ?? row.system_id ?? ''),
+          user: row.user as any,
+          user_name: String(row.user_name ?? row.user ?? ''),
+          allow_posting_from: row.allow_posting_from as any,
+          allow_posting_to: row.allow_posting_to as any,
+          sales_resp_ctr_filter: row.sales_resp_ctr_filter as any,
+          purchase_resp_ctr_filter: row.purchase_resp_ctr_filter as any,
+        }) as any,
+    });
   },
 
   async createUserSetup(data: UserSetupFormValues): Promise<UserSetup> {

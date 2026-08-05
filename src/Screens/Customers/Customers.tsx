@@ -22,13 +22,15 @@ import icons from '../../constants/icons';
 import {useTheme} from '../../context/ThemeContext';
 import {safeGoBack} from '../../hooks/NavigationService';
 import {usePermissions} from '../../hooks/usePermissions';
+import {
+  useCustomersQuery,
+  usePaymentMethodsQuery,
+  useInvalidateCustomers,
+} from '../../hooks/useCustomersQuery';
 import {PAGE_NAMES} from '../../constants/pageNames';
 import {CustomerServices} from '../../services/CustomerServices';
 import {PaymentJournalServices} from '../../services/PaymentJournalServices';
-import {
-  Customer,
-  PaymentMethod,
-} from '../../@types/customer';
+import {Customer} from '../../@types/customer';
 import {CustomerLedgerEntry} from '../../@types/paymentJournal';
 import {QuickIconPressable} from '../../Components';
 import CustomerListItem from './CustomerListItem';
@@ -48,19 +50,13 @@ const Customers = () => {
   const PAGE_NAME = PAGE_NAMES.CUSTOMER_MANAGEMENT;
 
   // State management
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(
     null,
   );
   const [isFormModalVisible, setIsFormModalVisible] = useState(false);
-  const [totalCount, setTotalCount] = useState(0);
   const [filterModalVisible, setFilterModalVisible] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [ledgerModalVisible, setLedgerModalVisible] = useState(false);
@@ -71,6 +67,19 @@ const Customers = () => {
     CustomerLedgerEntry[]
   >([]);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const invalidateCustomers = useInvalidateCustomers();
+  const {data: paymentMethods = []} = usePaymentMethodsQuery();
+  const {
+    customers,
+    isLoading: loading,
+    isFetchingNextPage,
+    hasNextPage: hasMore,
+    refetch: refetchCustomers,
+    fetchNextPage,
+    error: customersError,
+  } = useCustomersQuery({
+    searchQuery: debouncedSearchQuery,
+  });
 
   // Debounce search query
   useEffect(() => {
@@ -81,7 +90,6 @@ const Customers = () => {
     setSearchLoading(true);
     searchTimeoutRef.current = setTimeout(() => {
       setDebouncedSearchQuery(searchQuery);
-      setPage(1); // Reset to first page on search
       setSearchLoading(false);
     }, 500);
 
@@ -92,93 +100,34 @@ const Customers = () => {
     };
   }, [searchQuery]);
 
-  // Load reference data
   useEffect(() => {
-    loadReferenceData();
-  }, []);
-
-  // Load customers when filters change
-  useEffect(() => {
-    loadCustomers();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, debouncedSearchQuery]);
-
-  const loadReferenceData = async () => {
-    try {
-      const methods = await CustomerServices.getPaymentMethods();
-      setPaymentMethods(methods);
-    } catch (error) {
-      console.error('Error loading reference data:', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Failed to load reference data',
-      });
+    if (!customersError) {
+      return;
     }
-  };
+    const detail =
+      (customersError as any)?.response?.data?.detail ||
+      (customersError as any)?.message ||
+      'Failed to load customers';
+    Toast.show({
+      type: 'error',
+      text1: 'Error',
+      text2: String(detail),
+    });
+  }, [customersError]);
 
-  const loadCustomers = async () => {
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
     try {
-      setLoading(true);
-      const params: any = {
-        page,
-        page_size: 20,
-      };
-
-      if (debouncedSearchQuery) {
-        params.search = debouncedSearchQuery;
-      }
-
-      const response = await CustomerServices.getCustomers(params);
-
-      if (response && response.results && Array.isArray(response.results)) {
-        if (page === 1) {
-          setCustomers(response.results);
-        } else {
-          setCustomers(prev => [...prev, ...response.results]);
-        }
-        setTotalCount(response.count);
-        setHasMore(!!response.next);
-      } else {
-        setCustomers([]);
-        setTotalCount(0);
-        setHasMore(false);
-      }
-    } catch (error: any) {
-      console.error('Error loading customers:', error);
-      const invalidPage =
-        error?.response?.data?.detail === 'Invalid page.' ||
-        error?.response?.data?.error === 'Invalid page.';
-
-      if (invalidPage && page > 1) {
-        setPage(1);
-        setHasMore(false);
-      } else {
-        setCustomers([]);
-        setTotalCount(0);
-        setHasMore(false);
-        Toast.show({
-          type: 'error',
-          text1: 'Error',
-          text2: error?.response?.data?.detail || 'Failed to load customers',
-        });
-      }
+      await invalidateCustomers();
+      await refetchCustomers();
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
-  };
-
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    setPage(1);
-    setHasMore(true);
-    loadCustomers();
-  }, [debouncedSearchQuery]);
+  }, [invalidateCustomers, refetchCustomers]);
 
   const handleLoadMore = () => {
-    if (!loading && hasMore) {
-      setPage(prev => prev + 1);
+    if (!loading && !isFetchingNextPage && hasMore) {
+      fetchNextPage();
     }
   };
 
@@ -268,23 +217,22 @@ const Customers = () => {
   };
 
   const handleFormSave = () => {
-    setIsFormModalVisible(false);
-    setSelectedCustomer(null);
     onRefresh();
+  };
+
+  const handleRecordChange = (record: Customer) => {
+    setSelectedCustomer(record);
   };
 
   const hasActiveFilters = searchQuery.trim() !== '';
 
   const handleClearFilter = () => {
     setSearchQuery('');
-    setPage(1);
     setFilterModalVisible(false);
   };
 
   const handleApplyFilter = () => {
-    setPage(1);
     setFilterModalVisible(false);
-    loadCustomers();
   };
 
   const renderEmptyState = () => (
@@ -313,7 +261,7 @@ const Customers = () => {
   );
 
   const renderFooter = () => {
-    if (!loading || page === 1) return null;
+    if (!isFetchingNextPage) return null;
     return (
       <View style={styles.footerLoader}>
         <ActivityIndicator size="small" color={COLORS.primary} />
@@ -436,7 +384,7 @@ const Customers = () => {
       </View>
       </View>
 
-      {loading && page === 1 ? (
+      {loading && customers.length === 0 ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={COLORS.primary2} />
           <Text style={styles.loadingText}>Loading customers...</Text>
@@ -616,13 +564,14 @@ const Customers = () => {
         onClose={() => {
           setIsFormModalVisible(false);
           setSelectedCustomer(null);
+          onRefresh();
         }}
         customer={selectedCustomer}
         onSave={handleFormSave}
+        onRecordChange={handleRecordChange}
         paymentMethods={paymentMethods}
         canCreate={canCreate(PAGE_NAME)}
         canEdit={canEdit(PAGE_NAME)}
-        canDelete={canDelete(PAGE_NAME)}
       />
     </View>
   );

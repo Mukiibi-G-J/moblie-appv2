@@ -149,17 +149,13 @@ export const LoanServices = {
 
   // Bank accounts helper
   async getBankAccounts(): Promise<BankAccount[]> {
-    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const axiosInstance = createAxiosInstance(tenant);
     try {
-      const response = await axiosInstance.get('/api/bank-accounts/');
-      if (response?.data?.results && Array.isArray(response.data.results)) {
-        return response.data.results;
-      }
-      if (Array.isArray(response?.data)) {
-        return response.data;
-      }
-      return [];
+      const {fetchPageDataAll, PAGE_IDS} = await import('./pageDataService');
+      const {mapPageDataBankAccount} = await import('./pageDataMappers');
+      return await fetchPageDataAll({
+        pageId: PAGE_IDS.BankAccountList,
+        mapRow: mapPageDataBankAccount as any,
+      });
     } catch (error) {
       console.error('Error fetching bank accounts:', error);
       return [];

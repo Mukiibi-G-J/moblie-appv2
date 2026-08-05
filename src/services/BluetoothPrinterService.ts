@@ -7,7 +7,7 @@ import {
 import Toast from 'react-native-toast-message';
 import {
   prepareCompanyLogoForPrint,
-  RECEIPT_LOGO_WIDTH_PX,
+  fitReceiptLogoSize,
 } from '../utils/companyLogoUrl';
 import type {ItemLabelPrintData, PrintReceiptData} from './PrintService';
 import type {KotData} from './UsbPrinterService';
@@ -1118,12 +1118,15 @@ class BluetoothPrinterService {
       throw new Error('Native printer image module unavailable');
     }
 
+    // BT path scales by width only — pick a width that keeps height ≤ max.
+    const {width} = fitReceiptLogoSize(prepared.width, prepared.height);
+
     const result = await NativePrinter.printImage(
       this.printerAddress,
       prepared.localPath,
       {
         align: 'center',
-        widthPx: RECEIPT_LOGO_WIDTH_PX,
+        widthPx: width,
         keepAlive: true,
         timeout: 15000,
       },

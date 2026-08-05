@@ -9,13 +9,17 @@ import {
 
 export const UserManagementService = {
   async getUsers(params?: UserListParams): Promise<PaginatedUserResponse> {
-    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const api = createAxiosInstance(tenant);
-    const response = await api.get('/api/users/', {params});
-    if (response?.data?.results && Array.isArray(response.data.results)) {
-      return response.data;
-    }
-    return {count: 0, next: null, previous: null, results: []};
+    const {fetchPageDataPaginated, PAGE_IDS} = await import(
+      './pageDataService'
+    );
+    const {mapPageDataUser} = await import('./pageDataMappers');
+    return fetchPageDataPaginated({
+      pageId: PAGE_IDS.UsersList,
+      page: params?.page ?? 1,
+      pageSize: params?.page_size ?? 50,
+      search: params?.search,
+      mapRow: mapPageDataUser,
+    });
   },
 
   async getUser(id: number): Promise<User> {

@@ -12,7 +12,11 @@ import {
   TEST_TENANT_SCHEMA,
 } from '../config/api.config';
 import {forceLogout} from '../utils/authEvents';
-import {isSubscriptionExpiredError} from '../utils/subscriptionExpired';
+import {
+  getSubscriptionExpiredPayload,
+  isSubscriptionExpiredError,
+  type SubscriptionExpiredPayload,
+} from '../utils/subscriptionExpired';
 import {assertApiNotSimulatedOffline} from '../utils/simulatedOfflineGate';
 
 interface ApiConfig {
@@ -213,37 +217,11 @@ const createAxiosInstance = (tenant?: string) => {
   );
 
   // Add response interceptor
-  const redirectToSubscriptionFlow = async (
-    api: AxiosInstance,
-  ): Promise<void> => {
-    try {
-      const instructionsResp = await api.get<{
-        has_pending_verification?: boolean;
-        pending_payment_reference?: string;
-      }>('/api/company/subscription/mobile-money-instructions/');
-      const instructions = instructionsResp.data;
-
-      if (
-        instructions?.has_pending_verification &&
-        instructions.pending_payment_reference
-      ) {
-        navigate('SubscriptionMobileMoney', {
-          fromExpired: 1,
-          submitted: true,
-          reference: instructions.pending_payment_reference,
-        });
-      } else {
-        navigate('Subscription', {
-          fromExpiredModal: true,
-        });
-      }
-    } catch (e: any) {
-      if (e?.response?.status === 401) {
-        throw e;
-      }
-      navigate('Subscription', {fromExpiredModal: true});
-    }
-  };
+  const subscriptionNavParams = (payload: SubscriptionExpiredPayload) => ({
+    fromExpiredModal: true,
+    expiryKind: payload.expiryKind,
+    lockDate: payload.lockDate,
+  });
 
   const maybeHandleSubscriptionExpired = async (error: AxiosError) => {
     if (!isSubscriptionExpiredError(error)) {
@@ -264,16 +242,9 @@ const createAxiosInstance = (tenant?: string) => {
       return true;
     }
 
-    try {
-      await redirectToSubscriptionFlow(instance);
-      return true;
-    } catch (e: any) {
-      if (e?.response?.status === 401) {
-        return false;
-      }
-      navigate('Subscription', {fromExpiredModal: true});
-      return true;
-    }
+    const payload = getSubscriptionExpiredPayload(error);
+    navigate('Subscription', subscriptionNavParams(payload));
+    return true;
   };
 
   const isBenignPaginationError = (err: any) => {
@@ -359,6 +330,12 @@ const createAxiosInstance = (tenant?: string) => {
             ? 'Unable to connect to test server. Make sure:\n1. Your device and computer are on the same WiFi network\n2. The server is running on http://10.10.0.3:8000\n3. For Android: Run "adb reverse tcp:8000 tcp:8000" and use "http://localhost:8000" instead'
             : 'Please check your internet connection and try again.',
         });
+      }
+
+      // Keep full Axios error for pagination "Invalid page." so callers can
+      // treat it as an empty page (unwrapping to a bare string hides status).
+      if (isBenignPaginationError(error)) {
+        return Promise.reject(error);
       }
 
       // If backend returned `{ detail: ... }`, often unwrap for callers — but keep the
@@ -501,37 +478,18 @@ class ApiService {
         const isAlreadyOnSubscription =
           currentRouteName === 'Subscription' ||
           currentRouteName === 'SubscriptionMobileMoney';
+        const payload = getSubscriptionExpiredPayload(error);
+        const navParams = {
+          fromExpiredModal: true,
+          expiryKind: payload.expiryKind,
+          lockDate: payload.lockDate,
+        };
 
         if (!isAlreadyOnSubscription) {
           const now = Date.now();
           if (now - lastSubscriptionRedirectAt >= 2000) {
             lastSubscriptionRedirectAt = now;
-            try {
-              const instructionsResp = await this.axiosInstance.get<{
-                has_pending_verification?: boolean;
-                pending_payment_reference?: string;
-              }>(
-                '/api/company/subscription/mobile-money-instructions/',
-              );
-              const instructions = instructionsResp.data;
-              if (
-                instructions?.has_pending_verification &&
-                instructions.pending_payment_reference
-              ) {
-                navigate('SubscriptionMobileMoney', {
-                  fromExpired: 1,
-                  submitted: true,
-                  reference: instructions.pending_payment_reference,
-                });
-              } else {
-                navigate('Subscription', {fromExpiredModal: true});
-              }
-            } catch (e: any) {
-              if (e?.response?.status === 401) {
-                throw e;
-              }
-              navigate('Subscription', {fromExpiredModal: true});
-            }
+            navigate('Subscription', navParams);
           }
         }
 

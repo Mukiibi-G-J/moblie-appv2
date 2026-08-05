@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useRef, useCallback} from 'react';
 import {
   View,
   Text,
@@ -7,7 +7,6 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  Alert,
   ActivityIndicator,
   Image,
   Platform,
@@ -34,19 +33,95 @@ type DeviceContact = {
   phoneNumber: string;
 };
 
+const emptyCustomerForm = (): CustomerFormValues => ({
+  name: '',
+  contact: '',
+  phone_number: '',
+  address: '',
+  address_2: '',
+  city: '',
+  credit_limit: '',
+  payment_method: null,
+  customer_posting_group: null,
+  general_business_posting_group: null,
+  customer_type: 'Individual',
+});
+
+const customerToForm = (customer: Customer): CustomerFormValues => ({
+  name: customer.name || '',
+  contact: customer.contact || '',
+  phone_number: customer.phone_number || '',
+  address: customer.address || '',
+  address_2: customer.address_2 || '',
+  city: customer.city || '',
+  credit_limit: customer.credit_limit || '',
+  payment_method: customer.payment_method || null,
+  customer_posting_group: customer.customer_posting_group || null,
+  general_business_posting_group:
+    customer.general_business_posting_group || null,
+  customer_type: customer.customer_type || 'Individual',
+});
+
 const isProtectedGeneralCustomer = (customer?: Customer | null) => {
   const normalizedName = customer?.name?.trim().toLowerCase();
   return normalizedName === 'general' || normalizedName === 'general customer';
+};
+
+const OPTIONAL_CUSTOMER_FIELDS = new Set<keyof CustomerFormValues>([
+  'contact',
+  'phone_number',
+  'address',
+  'address_2',
+  'city',
+  'credit_limit',
+  'payment_method',
+  'customer_posting_group',
+  'general_business_posting_group',
+  'customer_type',
+]);
+
+const extractApiErrorMessage = (
+  error: any,
+  field: string,
+  fallback: string,
+): string => {
+  const data = error?.response?.data;
+  const fieldErrors = data?.errors?.[field] || data?.[field];
+  if (Array.isArray(fieldErrors) && fieldErrors[0]) {
+    return String(fieldErrors[0]);
+  }
+  if (typeof fieldErrors === 'string') {
+    return fieldErrors;
+  }
+
+  const raw = data?.error ?? data?.detail ?? data?.message;
+  if (typeof raw === 'string') {
+    // Backend sometimes stringifies DRF error dicts, e.g.
+    // {'customer_type': [ErrorDetail(string='"GENERAL" is not a valid choice.', code='invalid_choice')]}
+    const match = raw.match(/string='([^']+)'/);
+    if (match?.[1]) {
+      return match[1].replace(/^"|"$/g, '');
+    }
+    if (!raw.includes('ErrorDetail') && !raw.startsWith('{')) {
+      return raw;
+    }
+  }
+
+  return fallback;
 };
 
 interface CustomerFormModalProps {
   visible: boolean;
   onClose: () => void;
   customer: Customer | null; // null for create, Customer for edit
+  /** Called after a successful auto-save so the list can refresh (does not close). */
   onSave: () => void;
+  /** Keeps parent selection in sync after create / update. */
+  onRecordChange?: (customer: Customer) => void;
   paymentMethods: PaymentMethod[];
   canCreate: boolean;
   canEdit: boolean;
+  canDelete?: boolean;
 }
 
 const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
@@ -54,71 +129,57 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
   onClose,
   customer,
   onSave,
+  onRecordChange,
   paymentMethods,
   canCreate,
   canEdit,
 }) => {
-  const isEditMode = !!customer;
-  const isGeneralCustomer = isProtectedGeneralCustomer(customer);
   const topInset = useScreenTopInset();
 
-  // Form state
-  const [formData, setFormData] = useState<CustomerFormValues>({
-    name: '',
-    contact: '',
-    phone_number: '',
-    address: '',
-    address_2: '',
-    city: '',
-    credit_limit: '',
-    payment_method: null,
-    customer_posting_group: null,
-    general_business_posting_group: null,
-    customer_type: 'GENERAL',
-  });
-
-  const [loading, setLoading] = useState(false);
+  const [formData, setFormData] = useState<CustomerFormValues>(emptyCustomerForm);
+  const [currentRecord, setCurrentRecord] = useState<Customer | null>(customer);
+  const [isSaving, setIsSaving] = useState(false);
+  const [showSaved, setShowSaved] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [contactsModalVisible, setContactsModalVisible] = useState(false);
   const [loadingContacts, setLoadingContacts] = useState(false);
   const [contactSearchQuery, setContactSearchQuery] = useState('');
   const [deviceContacts, setDeviceContacts] = useState<DeviceContact[]>([]);
 
-  // Initialize form when customer changes
+  const formDataRef = useRef(formData);
+  const currentRecordRef = useRef(currentRecord);
+  const savingRef = useRef(false);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  formDataRef.current = formData;
+  currentRecordRef.current = currentRecord;
+
+  const isEditMode = !!currentRecord?.id;
+  const isGeneralCustomer = isProtectedGeneralCustomer(currentRecord || customer);
+  const canWrite = isEditMode ? canEdit : canCreate;
+
   useEffect(() => {
-    if (customer) {
-      setFormData({
-        name: customer.name || '',
-        contact: customer.contact || '',
-        phone_number: customer.phone_number || '',
-        address: customer.address || '',
-        address_2: customer.address_2 || '',
-        city: customer.city || '',
-        credit_limit: customer.credit_limit || '',
-        payment_method: customer.payment_method || null,
-        customer_posting_group: customer.customer_posting_group || null,
-        general_business_posting_group:
-          customer.general_business_posting_group || null,
-        customer_type: customer.customer_type || 'GENERAL',
-      });
-    } else {
-      // Reset form for new customer
-      setFormData({
-        name: '',
-        contact: '',
-        phone_number: '',
-        address: '',
-        address_2: '',
-        city: '',
-        credit_limit: '',
-        payment_method: null,
-        customer_posting_group: null,
-        general_business_posting_group: null,
-        customer_type: 'GENERAL',
-      });
+    if (!visible) {
+      setCurrentRecord(null);
+      setFormData(emptyCustomerForm());
+      setErrors({});
+      setShowSaved(false);
+      return;
+    }
+    if (customer?.id) {
+      if (currentRecordRef.current?.id !== customer.id) {
+        setCurrentRecord(customer);
+        setFormData(customerToForm(customer));
+      } else {
+        setCurrentRecord(customer);
+      }
+    } else if (!currentRecordRef.current?.id) {
+      setCurrentRecord(null);
+      setFormData(emptyCustomerForm());
     }
     setErrors({});
-  }, [customer, visible]);
+    setShowSaved(false);
+  }, [customer?.id, visible]);
 
   useEffect(() => {
     if (!visible) {
@@ -126,122 +187,162 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
       setContactSearchQuery('');
       setDeviceContacts([]);
       setLoadingContacts(false);
+      if (savedTimerRef.current) {
+        clearTimeout(savedTimerRef.current);
+        savedTimerRef.current = null;
+      }
     }
   }, [visible]);
 
-  const validateForm = (): boolean => {
-    const newErrors: Record<string, string> = {};
-
-    if (!formData.name || !formData.name.trim()) {
-      newErrors.name = 'Customer name is required';
+  const flashSaved = useCallback(() => {
+    setShowSaved(true);
+    if (savedTimerRef.current) {
+      clearTimeout(savedTimerRef.current);
     }
+    savedTimerRef.current = setTimeout(() => {
+      setShowSaved(false);
+      savedTimerRef.current = null;
+    }, 2000);
+  }, []);
 
-    // Phone number validation (optional but if provided, should be valid format)
+  const buildCreatePayload = (
+    values: CustomerFormValues,
+  ): Partial<Customer> => {
+    const payload: Partial<Customer> = {
+      name: values.name.trim(),
+    };
+    if (values.contact?.trim()) {
+      payload.contact = values.contact.trim();
+    }
+    if (values.phone_number?.trim()) {
+      payload.phone_number = values.phone_number.trim();
+    }
+    if (values.address?.trim()) {
+      payload.address = values.address.trim();
+    }
+    if (values.address_2?.trim()) {
+      payload.address_2 = values.address_2.trim();
+    }
+    if (values.city?.trim()) {
+      payload.city = values.city.trim();
+    }
+    if (values.payment_method) {
+      payload.payment_method = values.payment_method;
+    }
+    if (values.customer_posting_group) {
+      payload.customer_posting_group = values.customer_posting_group;
+    }
+    if (values.general_business_posting_group) {
+      payload.general_business_posting_group =
+        values.general_business_posting_group;
+    }
+    if (values.customer_type) {
+      payload.customer_type = values.customer_type;
+    }
+    return payload;
+  };
+
+  const getFieldError = (field: keyof CustomerFormValues, value: unknown) => {
+    if (field === 'name' && (!value || !String(value).trim())) {
+      return 'Customer name is required';
+    }
     if (
-      formData.phone_number &&
-      !/^\+?[\d\s\-()]+$/.test(formData.phone_number)
+      field === 'phone_number' &&
+      value &&
+      !/^\+?[\d\s\-()]+$/.test(String(value))
     ) {
-      newErrors.phone_number =
-        'Phone number can only contain numbers, +, -, (), and spaces';
+      return 'Phone number can only contain numbers, +, -, (), and spaces';
     }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    return null;
   };
 
-  const handleSave = async () => {
-    if (!validateForm()) {
-      return;
-    }
-
-    // Check permissions
-    if (isEditMode && !canEdit) {
-      Alert.alert(
-        'Permission Denied',
-        'You do not have permission to edit customers.',
-      );
-      return;
-    }
-
-    if (!isEditMode && !canCreate) {
-      Alert.alert(
-        'Permission Denied',
-        'You do not have permission to create customers.',
-      );
-      return;
-    }
-
-    if (isEditMode && isGeneralCustomer) {
-      Alert.alert(
-        'Protected customer',
-        'The General Customer cannot be edited.',
-      );
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const customerData: Partial<Customer> = {
-        name: formData.name.trim(),
-      };
-
-      // Only include optional fields if they have values
-      if (formData.contact && formData.contact.trim()) {
-        customerData.contact = formData.contact.trim();
-      }
-      if (formData.phone_number && formData.phone_number.trim()) {
-        customerData.phone_number = formData.phone_number.trim();
-      }
-      if (formData.address && formData.address.trim()) {
-        customerData.address = formData.address.trim();
-      }
-      if (formData.city && formData.city.trim()) {
-        customerData.city = formData.city.trim();
-      }
-      if (formData.payment_method) {
-        customerData.payment_method = formData.payment_method;
-      }
-      if (formData.customer_posting_group) {
-        customerData.customer_posting_group = formData.customer_posting_group;
-      }
-      if (formData.general_business_posting_group) {
-        customerData.general_business_posting_group =
-          formData.general_business_posting_group;
+  const autoSaveField = useCallback(
+    async (
+      field: keyof CustomerFormValues,
+      rawValue: CustomerFormValues[keyof CustomerFormValues],
+    ) => {
+      if (!visible || isGeneralCustomer || !canWrite || savingRef.current) {
+        return;
       }
 
-      if (isEditMode && customer) {
-        await CustomerServices.updateCustomer(customer.id, customerData);
-        Toast.show({
-          type: 'success',
-          text1: 'Success',
-          text2: 'Customer updated successfully',
-        });
-      } else {
-        await CustomerServices.createCustomer(customerData);
-        Toast.show({
-          type: 'success',
-          text1: 'Success',
-          text2: 'Customer created successfully',
-        });
+      const value =
+        typeof rawValue === 'string' ? rawValue.trim() : rawValue;
+      const record = currentRecordRef.current;
+      const values = {...formDataRef.current, [field]: rawValue};
+
+      if (record?.id) {
+        const existing = (record as any)[field];
+        if (String(existing ?? '') === String(value ?? '')) {
+          return;
+        }
       }
 
-      onSave();
-    } catch (error: any) {
-      console.error('Error saving customer:', error);
-      const errorMessage =
-        error?.response?.data?.detail ||
-        error?.response?.data?.error ||
-        error?.response?.data?.name?.[0] ||
-        'Failed to save customer';
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: errorMessage,
+      const fieldError = getFieldError(field, value);
+      if (fieldError) {
+        setErrors(prev => ({...prev, [field]: fieldError}));
+        return;
+      }
+
+      if (
+        !OPTIONAL_CUSTOMER_FIELDS.has(field) &&
+        (value === '' || value === null || value === undefined)
+      ) {
+        return;
+      }
+
+      const nameForCreate =
+        field === 'name' ? String(value || '') : values.name || '';
+      if (!record?.id && !nameForCreate.trim()) {
+        return;
+      }
+
+      setErrors(prev => {
+        const next = {...prev};
+        delete next[field];
+        return next;
       });
-    } finally {
-      setLoading(false);
-    }
-  };
+
+      savingRef.current = true;
+      setIsSaving(true);
+      try {
+        if (!record?.id) {
+          const created = await CustomerServices.createCustomer(
+            buildCreatePayload({...values, [field]: value as any}),
+          );
+          setCurrentRecord(created);
+          setFormData(customerToForm(created));
+          onRecordChange?.(created);
+          onSave();
+          flashSaved();
+        } else {
+          const updated = await CustomerServices.updateCustomer(record.id, {
+            [field]: value,
+          } as Partial<Customer>);
+          setCurrentRecord(updated);
+          onRecordChange?.(updated);
+          onSave();
+          flashSaved();
+        }
+      } catch (error: any) {
+        console.error('Error auto-saving customer:', error);
+        const errorMessage = extractApiErrorMessage(
+          error,
+          field,
+          `Failed to save ${field.replace(/_/g, ' ')}`,
+        );
+        setErrors(prev => ({...prev, [field]: errorMessage}));
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: errorMessage,
+        });
+      } finally {
+        savingRef.current = false;
+        setIsSaving(false);
+      }
+    },
+    [visible, isGeneralCustomer, canWrite, onRecordChange, onSave, flashSaved],
+  );
 
   const normalizePhoneNumber = (value: string) =>
     value.replace(/[^\d+]/g, '').trim();
@@ -312,15 +413,27 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
     }
   };
 
-  const handlePickContact = (contact: DeviceContact) => {
-    setFormData(prev => ({
-      ...prev,
-      name: contact.displayName || prev.name,
-      phone_number: contact.phoneNumber || prev.phone_number,
-      contact: prev.contact || contact.displayName,
-    }));
+  const handlePickContact = async (contact: DeviceContact) => {
+    const nextValues: CustomerFormValues = {
+      ...formDataRef.current,
+      name: contact.displayName || formDataRef.current.name,
+      phone_number: contact.phoneNumber || formDataRef.current.phone_number,
+      contact: formDataRef.current.contact || contact.displayName,
+    };
+    setFormData(nextValues);
+    formDataRef.current = nextValues;
     setContactsModalVisible(false);
     setContactSearchQuery('');
+
+    if (currentRecordRef.current?.id) {
+      await autoSaveField('name', nextValues.name);
+      await autoSaveField('phone_number', nextValues.phone_number || '');
+      if (nextValues.contact) {
+        await autoSaveField('contact', nextValues.contact);
+      }
+    } else {
+      await autoSaveField('name', nextValues.name);
+    }
   };
 
   const previewName = (formData.name || 'My Customer').trim();
@@ -362,27 +475,27 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
             />
           </QuickIconPressable>
 
-          {((isEditMode && canEdit) || (!isEditMode && canCreate)) && (
-            <TouchableOpacity
-              style={[styles.headerSaveButton, loading && styles.buttonDisabled]}
-              onPress={handleSave}
-              disabled={loading}
-              activeOpacity={0.85}>
-              {loading ? (
-                <ActivityIndicator size="small" color={COLORS.white} />
-              ) : (
-                <Text style={styles.headerSaveText}>Save</Text>
-              )}
-            </TouchableOpacity>
+          {canWrite && !isGeneralCustomer && (isSaving || showSaved) ? (
+            <View style={styles.headerSaveButton}>
+              <Text style={styles.headerSaveText}>
+                {isSaving ? 'Saving...' : 'Saved'}
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.headerSpacer} />
           )}
         </View>
 
         <ScrollView
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}>
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled">
           <Text style={styles.pageTitle}>
             {isEditMode ? 'Edit customer' : 'Add customer'}
+          </Text>
+          <Text style={styles.autoSaveHint}>
+            Changes save automatically when you leave a field
           </Text>
 
           <View style={styles.previewSection}>
@@ -406,7 +519,7 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
             style={styles.importContactsButton}
             onPress={handleOpenContactsPicker}
             activeOpacity={0.85}
-            disabled={loadingContacts}>
+            disabled={loadingContacts || isGeneralCustomer || !canWrite}>
             {loadingContacts ? (
               <ActivityIndicator size="small" color={COLORS.primary2} />
             ) : (
@@ -424,12 +537,12 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Details</Text>
 
-            {isEditMode && customer?.no ? (
+            {isEditMode && currentRecord?.no ? (
               <View style={styles.fieldGroup}>
                 <Text style={styles.label}>Customer number</Text>
                 <TextInput
                   style={[styles.input, styles.disabledInput]}
-                  value={customer.no}
+                  value={currentRecord.no}
                   editable={false}
                 />
               </View>
@@ -441,9 +554,10 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
                 style={[styles.input, errors.name && styles.inputError]}
                 value={formData.name}
                 onChangeText={text => setFormData({...formData, name: text})}
+                onBlur={() => autoSaveField('name', formDataRef.current.name)}
                 placeholder="Customer name"
                 placeholderTextColor={COLORS.gray2}
-                editable={!isGeneralCustomer}
+                editable={!isGeneralCustomer && canWrite}
               />
               {errors.name ? <Text style={styles.errorText}>{errors.name}</Text> : null}
             </View>
@@ -454,9 +568,12 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
                 style={styles.input}
                 value={formData.contact}
                 onChangeText={text => setFormData({...formData, contact: text})}
+                onBlur={() =>
+                  autoSaveField('contact', formDataRef.current.contact || '')
+                }
                 placeholder="Contact person"
                 placeholderTextColor={COLORS.gray2}
-                editable={!isGeneralCustomer}
+                editable={!isGeneralCustomer && canWrite}
               />
             </View>
 
@@ -468,10 +585,16 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
                 onChangeText={text =>
                   setFormData({...formData, phone_number: text})
                 }
+                onBlur={() =>
+                  autoSaveField(
+                    'phone_number',
+                    formDataRef.current.phone_number || '',
+                  )
+                }
                 placeholder="+256700000000"
                 placeholderTextColor={COLORS.gray2}
                 keyboardType="phone-pad"
-                editable={!isGeneralCustomer}
+                editable={!isGeneralCustomer && canWrite}
               />
               {errors.phone_number ? (
                 <Text style={styles.errorText}>{errors.phone_number}</Text>
@@ -490,11 +613,14 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
                 style={[styles.input, styles.textArea]}
                 value={formData.address}
                 onChangeText={text => setFormData({...formData, address: text})}
+                onBlur={() =>
+                  autoSaveField('address', formDataRef.current.address || '')
+                }
                 placeholder="Street address"
                 placeholderTextColor={COLORS.gray2}
                 multiline
                 numberOfLines={3}
-                editable={!isGeneralCustomer}
+                editable={!isGeneralCustomer && canWrite}
               />
             </View>
 
@@ -504,9 +630,12 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
                 style={styles.input}
                 value={formData.city}
                 onChangeText={text => setFormData({...formData, city: text})}
+                onBlur={() =>
+                  autoSaveField('city', formDataRef.current.city || '')
+                }
                 placeholder="City"
                 placeholderTextColor={COLORS.gray2}
-                editable={!isGeneralCustomer}
+                editable={!isGeneralCustomer && canWrite}
               />
             </View>
           </View>
@@ -529,14 +658,12 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
                     <Picker
                       selectedValue={formData.payment_method || 0}
                       onValueChange={value => {
-                        if (value === 0) {
-                          setFormData({...formData, payment_method: null});
-                        } else {
-                          setFormData({...formData, payment_method: value});
-                        }
+                        const nextValue = value === 0 ? null : value;
+                        setFormData({...formData, payment_method: nextValue});
+                        void autoSaveField('payment_method', nextValue);
                       }}
                       style={styles.picker}
-                      enabled={!isGeneralCustomer}>
+                      enabled={!isGeneralCustomer && canWrite}>
                       <Picker.Item label="Select payment method" value={0} />
                       {paymentMethods.map(method => (
                         <Picker.Item
@@ -659,6 +786,14 @@ const styles = StyleSheet.create({
     height: 16,
     tintColor: COLORS.primary3,
   },
+  headerSpacer: {
+    width: 88,
+  },
+  autoSaveHint: {
+    ...FONTS.body5,
+    color: COLORS.gray2,
+    marginBottom: 12,
+  },
   headerSaveButton: {
     minWidth: 108,
     height: 48,
@@ -690,7 +825,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: COLORS.black,
     marginTop: 22,
-    marginBottom: 24,
+    marginBottom: 4,
   },
   previewSection: {
     flexDirection: 'row',

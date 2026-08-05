@@ -27,7 +27,7 @@ import {
   Dimensions,
 } from 'react-native';
 import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
-import {useNavigation} from '@react-navigation/native';
+import {useNavigation, useRoute} from '@react-navigation/native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import ReactNativeModal from 'react-native-modal';
 import Toast from 'react-native-toast-message';
@@ -37,28 +37,37 @@ import {
   FONTS,
   SIZES,
   icons,
+  constants,
   ICON_BUTTON_ACTIVE_OPACITY,
   ICON_BUTTON_HIT_SLOP,
 } from '../../constants';
 import {
-  fetchMyUserSetup,
-  fetchSalesData,
-  fetchSalesSummary,
-  fetchSalesUserSummary,
-  fetchPaymentMethods,
   getCompanyInfo,
+  getSalesApiErrorMessage,
   getSalesInvoice,
-  PaymentMethod,
+  isAlreadyPostedSalesError,
+  postSalesInvoice,
   reverseSalesInvoice,
-  SalesHistorySummary,
-  SalesUserSummaryRow,
 } from '../../services/app.services';
+import {
+  showUserError,
+  showUserSuccess,
+} from '../../utils/userFeedback';
+import {requestLoadUnpostedIntoPos} from '../../utils/posInvoiceLoad';
 import PrintService, {
   CompanyInfo,
   PrintReceiptData,
 } from '../../services/PrintService';
-import {useAuth} from '../../context/Store';
+import {useAuth, useTabContext} from '../../context/Store';
 import {usePermissions} from '../../hooks/usePermissions';
+import {usePaymentMethodsQuery} from '../../hooks/useCustomersQuery';
+import {
+  useSalesQuery,
+  useSalesSummaryQuery,
+  useSalesUserSummaryQuery,
+  useUserSetupQuery,
+  useInvalidateSales,
+} from '../../hooks/useSalesQuery';
 import {safeGoBack} from '../../hooks/NavigationService';
 import {PAGE_NAMES} from '../../constants/pageNames';
 import {useTheme} from '../../context/ThemeContext';
@@ -70,16 +79,20 @@ import SalesInvoiceStatusBadge from './SalesInvoiceStatusBadge';
 
 type DateFilter =
   | 'today'
-  | 'last7days'
+  | 'yesterday'
+  | 'this_week'
+  | 'this_month'
   | 'last30days'
-  | 'last3months'
-  | 'alltime';
+  | 'alltime'
+  | 'custom';
 
-const DATE_FILTERS: {id: DateFilter; label: string}[] = [
+/** Quick ranges aligned with web Sales History (default: this month). */
+const DATE_FILTERS: {id: Exclude<DateFilter, 'custom'>; label: string}[] = [
+  {id: 'this_month', label: 'This month'},
   {id: 'today', label: 'Today'},
-  {id: 'last7days', label: 'Last 7 days'},
+  {id: 'yesterday', label: 'Yesterday'},
+  {id: 'this_week', label: 'This week'},
   {id: 'last30days', label: 'Last 30 days'},
-  {id: 'last3months', label: 'Last 3 months'},
   {id: 'alltime', label: 'All time'},
 ];
 
@@ -91,7 +104,40 @@ function formatDateYmdLocal(d: Date) {
   return `${y}-${m}-${day}`;
 }
 
-const STATUS_OPTIONS = ['All', 'Posted', 'Draft'] as const;
+/** Local calendar day at midnight (no time component). */
+function startOfLocalDay(d: Date) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+/** Sunday start of week — matches dayjs default used on web Sales History. */
+function startOfWeekSunday(d: Date) {
+  const day = startOfLocalDay(d);
+  day.setDate(day.getDate() - day.getDay());
+  return day;
+}
+
+function endOfWeekSaturday(d: Date) {
+  const start = startOfWeekSunday(d);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  return end;
+}
+
+const STATUS_OPTIONS = ['All', 'Posted', 'Unposted'] as const;
+
+/** Map legacy Open/Draft route params (and filter) to Unposted. */
+function normalizeSalesStatusParam(
+  status?: string,
+): (typeof STATUS_OPTIONS)[number] | undefined {
+  if (!status) return undefined;
+  if (status === 'Open' || status === 'Draft' || status === 'Unposted') {
+    return 'Unposted';
+  }
+  if ((STATUS_OPTIONS as readonly string[]).includes(status)) {
+    return status as (typeof STATUS_OPTIONS)[number];
+  }
+  return undefined;
+}
 const PAYMENT_STATUS_OPTIONS = [
   {id: 'all' as const, label: 'All'},
   {id: 'paid' as const, label: 'Paid'},
@@ -118,6 +164,11 @@ type SalesInvoice = SalesHistoryListItemData & {
 
 function isPostedSale(status?: string) {
   return String(status || '').toLowerCase() === 'posted';
+}
+
+function isUnpostedSale(status?: string) {
+  const s = String(status || '').toLowerCase();
+  return s === 'open' || s === 'draft';
 }
 
 function mapSalesInvoiceToReceiptData(
@@ -189,12 +240,30 @@ function mapSalesInvoiceToReceiptData(
 
 const SalesHistory = () => {
   const navigation = useNavigation();
+  const route = useRoute<any>();
   const insets = useSafeAreaInsets();
   const {auth} = useAuth();
-  const {canRead} = usePermissions();
+  const {setSelectedTab} = useTabContext();
+  const {canRead, canCreate, canEdit, canDelete} = usePermissions();
   const PAGE_NAME = PAGE_NAMES.SALES_HISTORY;
   const hasAccess = canRead(PAGE_NAME);
+  const canEditInPos =
+    canCreate(PAGE_NAMES.SALES) || canEdit(PAGE_NAMES.SALES);
   const {colors, isDark} = useTheme();
+  const initialStatusParam = route?.params?.status as string | undefined;
+  const initialStatus =
+    normalizeSalesStatusParam(initialStatusParam) ?? 'Posted';
+  const initialDateFilterParam = route?.params?.dateFilter as
+    | DateFilter
+    | undefined;
+  const initialDateFilter: DateFilter =
+    initialDateFilterParam &&
+    (DATE_FILTERS.some(f => f.id === initialDateFilterParam) ||
+      initialDateFilterParam === 'custom')
+      ? initialDateFilterParam
+      : initialStatus === 'Unposted'
+        ? 'alltime'
+        : 'this_month';
 
   const t = useMemo(
     () => ({
@@ -273,31 +342,38 @@ const SalesHistory = () => {
     [colors, isDark],
   );
 
-  const [sales, setSales] = useState<SalesInvoice[]>([]);
-  const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
-  const [dateFilter, setDateFilter] = useState<DateFilter>('last30days');
+  const [dateFilter, setDateFilter] = useState<DateFilter>(initialDateFilter);
   const [dateFrom, setDateFrom] = useState<string | null>(null);
   const [dateTo, setDateTo] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] =
-    useState<(typeof STATUS_OPTIONS)[number]>('Posted');
+    useState<(typeof STATUS_OPTIONS)[number]>(initialStatus);
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<
     'all' | 'paid' | 'unpaid'
   >('all');
+
+  // Home shortcuts pass { status: 'Unposted', dateFilter: 'alltime' }.
+  useEffect(() => {
+    const nextStatus = normalizeSalesStatusParam(
+      route?.params?.status as string | undefined,
+    );
+    if (nextStatus && nextStatus !== statusFilter) {
+      setStatusFilter(nextStatus);
+    }
+    const nextDate = route?.params?.dateFilter as DateFilter | undefined;
+    if (
+      nextDate &&
+      (DATE_FILTERS.some(f => f.id === nextDate) || nextDate === 'custom') &&
+      nextDate !== dateFilter
+    ) {
+      setDateFilter(nextDate);
+    }
+  }, [route?.params?.status, route?.params?.dateFilter]);
   const [paymentMethodIdFilter, setPaymentMethodIdFilter] = useState('');
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
-  const [summaryFromApi, setSummaryFromApi] =
-    useState<SalesHistorySummary | null>(null);
-  const [userSummaries, setUserSummaries] = useState<SalesUserSummaryRow[]>([]);
-  /** Mirrors web Sales History: User Setup → canViewOnlyTheirSales + ?user= JWT user_id */
-  const [restrictToOwnSales, setRestrictToOwnSales] = useState(true);
-  const [canReverseSalesInvoice, setCanReverseSalesInvoice] = useState(false);
   const [reversing, setReversing] = useState(false);
+  const [postingId, setPostingId] = useState<number | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [showDetail, setShowDetail] = useState(false);
   const [selectedItem, setSelectedItem] = useState<SalesInvoice | null>(null);
@@ -311,92 +387,136 @@ const SalesHistory = () => {
     null,
   );
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const invalidateSales = useInvalidateSales();
+  const {data: paymentMethods = []} = usePaymentMethodsQuery(hasAccess);
+  const {data: userSetup} = useUserSetupQuery(hasAccess);
+  const restrictToOwnSales = userSetup?.canViewOnlyTheirSales ?? true;
+  const canReverseSalesInvoice = userSetup?.canReverseSalesInvoice === true;
 
-  const {startDate, endDate} = useMemo(() => {
-    const today = new Date();
-    const end = new Date(
-      today.getFullYear(),
-      today.getMonth(),
-      today.getDate(),
-    );
-    let start = new Date(end);
+  const ownUserId = useMemo(() => {
+    if (!restrictToOwnSales) {
+      return null;
+    }
+    // Unposted (Open/Draft) have no CLE owner yet — ?user= hides them all.
+    if (statusFilter === 'Unposted') {
+      return null;
+    }
+    const uid = Number.parseInt(String(auth.user_id || ''), 10);
+    return Number.isFinite(uid) ? uid : null;
+  }, [restrictToOwnSales, auth.user_id, statusFilter]);
+
+  /** Preset → YYYY-MM-DD (null for alltime/custom; custom uses dateFrom/dateTo). */
+  const {startDate: presetStart, endDate: presetEnd} = useMemo(() => {
+    const today = startOfLocalDay(new Date());
 
     if (dateFilter === 'today') {
-      start = new Date(end);
-    } else if (dateFilter === 'last7days') {
-      start.setDate(end.getDate() - 6);
-    } else if (dateFilter === 'last30days') {
-      start.setDate(end.getDate() - 29);
-    } else if (dateFilter === 'last3months') {
-      start.setMonth(end.getMonth() - 3);
-    } else {
-      return {startDate: null, endDate: null};
+      return {
+        startDate: formatDateYmdLocal(today),
+        endDate: formatDateYmdLocal(today),
+      };
+    }
+    if (dateFilter === 'yesterday') {
+      const yesterday = new Date(today);
+      yesterday.setDate(today.getDate() - 1);
+      return {
+        startDate: formatDateYmdLocal(yesterday),
+        endDate: formatDateYmdLocal(yesterday),
+      };
+    }
+    if (dateFilter === 'this_week') {
+      return {
+        startDate: formatDateYmdLocal(startOfWeekSunday(today)),
+        endDate: formatDateYmdLocal(endOfWeekSaturday(today)),
+      };
+    }
+    if (dateFilter === 'this_month') {
+      const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+      const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+      return {
+        startDate: formatDateYmdLocal(monthStart),
+        endDate: formatDateYmdLocal(monthEnd),
+      };
+    }
+    if (dateFilter === 'last30days') {
+      const start = new Date(today);
+      start.setDate(today.getDate() - 29);
+      return {
+        startDate: formatDateYmdLocal(start),
+        endDate: formatDateYmdLocal(today),
+      };
     }
 
-    return {
-      startDate: formatDateYmdLocal(start),
-      endDate: formatDateYmdLocal(end),
-    };
+    return {startDate: null, endDate: null};
   }, [dateFilter]);
 
-  useEffect(() => {
-    if (dateFilter === 'alltime') {
-      setDateFrom(null);
-      setDateTo(null);
-    } else {
-      setDateFrom(startDate);
-      setDateTo(endDate);
+  const effectiveStartDate =
+    dateFilter === 'alltime'
+      ? null
+      : dateFilter === 'custom'
+        ? dateFrom
+        : presetStart;
+  const effectiveEndDate =
+    dateFilter === 'alltime'
+      ? null
+      : dateFilter === 'custom'
+        ? dateTo
+        : presetEnd;
+
+  const salesFilters = useMemo(() => {
+    let paymentMethod: string | undefined;
+    if (paymentStatusFilter === 'unpaid') {
+      paymentMethod = 'not_paid';
+    } else if (paymentMethodIdFilter) {
+      paymentMethod = paymentMethodIdFilter;
     }
-  }, [dateFilter, startDate, endDate]);
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const methods = await fetchPaymentMethods();
-        if (!cancelled) {
-          setPaymentMethods(methods);
-        }
-      } catch {
-        if (!cancelled) {
-          setPaymentMethods([]);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
+    return {
+      search: debouncedSearchQuery.trim(),
+      startDate: effectiveStartDate,
+      endDate: effectiveEndDate,
+      status: statusFilter,
+      paymentMethod,
+      user: ownUserId,
     };
-  }, []);
+  }, [
+    debouncedSearchQuery,
+    effectiveStartDate,
+    effectiveEndDate,
+    statusFilter,
+    paymentStatusFilter,
+    paymentMethodIdFilter,
+    ownUserId,
+  ]);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const setup = await fetchMyUserSetup();
-        if (cancelled) {
-          return;
-        }
-        setRestrictToOwnSales(setup?.canViewOnlyTheirSales ?? true);
-        setCanReverseSalesInvoice(setup?.canReverseSalesInvoice === true);
-      } catch {
-        if (!cancelled) {
-          setRestrictToOwnSales(true);
-          setCanReverseSalesInvoice(false);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
+  const {
+    sales: salesRaw,
+    isLoading: loading,
+    isFetchingNextPage,
+    hasNextPage: hasMore,
+    refetch: refetchSales,
+    fetchNextPage,
+    error: salesQueryError,
+  } = useSalesQuery({
+    ...salesFilters,
+    enabled: hasAccess,
+  });
+  const sales = salesRaw as SalesInvoice[];
+  const {data: summaryFromApi = null} = useSalesSummaryQuery({
+    ...salesFilters,
+    enabled: hasAccess && statusFilter !== 'Unposted',
+  });
+  const {data: userSummaries = []} = useSalesUserSummaryQuery({
+    ...salesFilters,
+    enabled: hasAccess && statusFilter !== 'Unposted',
+  });
+  const error = salesQueryError
+    ? 'Unable to load sales history. Please try again.'
+    : null;
   useEffect(() => {
     if (searchTimeoutRef.current) {
       clearTimeout(searchTimeoutRef.current);
     }
     searchTimeoutRef.current = setTimeout(() => {
       setDebouncedSearchQuery(searchQuery);
-      setPage(1);
     }, 400);
     return () => {
       if (searchTimeoutRef.current) {
@@ -405,128 +525,19 @@ const SalesHistory = () => {
     };
   }, [searchQuery]);
 
-  const loadSales = useCallback(async () => {
-    if (!hasAccess) {
-      return;
-    }
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
     try {
-      setLoading(true);
-      setError(null);
-
-      const filters: Parameters<typeof fetchSalesData>[0] = {
-        page,
-        pageSize: 20,
-      };
-
-      if (dateFrom) {
-        filters.startDate = dateFrom;
-      }
-      if (dateTo) {
-        filters.endDate = dateTo;
-      }
-      if (statusFilter !== 'All') {
-        filters.status = statusFilter;
-      }
-      if (paymentStatusFilter === 'unpaid') {
-        filters.paymentMethod = 'not_paid';
-      } else if (paymentMethodIdFilter) {
-        filters.paymentMethod = paymentMethodIdFilter;
-      }
-      const q = debouncedSearchQuery.trim();
-      if (q) {
-        filters.search = q;
-      }
-
-      if (restrictToOwnSales) {
-        const uid = Number.parseInt(String(auth.user_id || ''), 10);
-        if (Number.isFinite(uid)) {
-          filters.user = uid;
-        }
-      }
-
-      const response = await fetchSalesData(filters);
-      const results = (response?.results || []) as SalesInvoice[];
-
-      if (page === 1) {
-        setSales(results);
-      } else {
-        setSales(prev => [...prev, ...results]);
-      }
-      setHasMore(!!response?.next);
-
-      if (page === 1) {
-        const summaryFilters = {
-          startDate: dateFrom ?? undefined,
-          endDate: dateTo ?? undefined,
-          status: statusFilter !== 'All' ? statusFilter : undefined,
-          paymentMethod: filters.paymentMethod,
-          search: q || undefined,
-          ...(filters.user != null ? {user: filters.user} : {}),
-        };
-        const [summary, users] = await Promise.all([
-          fetchSalesSummary(summaryFilters),
-          fetchSalesUserSummary(summaryFilters),
-        ]);
-        setSummaryFromApi(summary);
-        setUserSummaries(users);
-      }
-    } catch {
-      setError('Unable to load sales history. Please try again.');
-      if (page === 1) {
-        setSales([]);
-        setSummaryFromApi(null);
-        setUserSummaries([]);
-      }
-      setHasMore(false);
+      await invalidateSales();
+      await refetchSales();
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
-  }, [
-    hasAccess,
-    page,
-    dateFrom,
-    dateTo,
-    statusFilter,
-    paymentStatusFilter,
-    paymentMethodIdFilter,
-    debouncedSearchQuery,
-    restrictToOwnSales,
-    auth.user_id,
-  ]);
-
-  useEffect(() => {
-    if (!hasAccess) {
-      return;
-    }
-    loadSales();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    page,
-    dateFrom,
-    dateTo,
-    statusFilter,
-    paymentStatusFilter,
-    paymentMethodIdFilter,
-    debouncedSearchQuery,
-    hasAccess,
-    restrictToOwnSales,
-    auth.user_id,
-  ]);
-
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    setHasMore(true);
-    if (page === 1) {
-      loadSales();
-    } else {
-      setPage(1);
-    }
-  }, [page, loadSales]);
+  }, [invalidateSales, refetchSales]);
 
   const handleLoadMore = () => {
-    if (!loading && hasMore) {
-      setPage(p => p + 1);
+    if (!loading && !isFetchingNextPage && hasMore) {
+      fetchNextPage();
     }
   };
 
@@ -554,7 +565,9 @@ const SalesHistory = () => {
   const activeFilterLabel = useMemo(() => {
     const parts: string[] = [];
     let dateLabel = 'All time';
-    if (dateFilter !== 'alltime') {
+    if (dateFilter === 'custom' && dateFrom && dateTo) {
+      dateLabel = `${dateFrom} → ${dateTo}`;
+    } else if (dateFilter !== 'alltime' && dateFilter !== 'custom') {
       const match = DATE_FILTERS.find(f => f.id === dateFilter);
       dateLabel = match ? match.label : 'Custom range';
     } else if (dateFrom && dateTo) {
@@ -747,28 +760,20 @@ const SalesHistory = () => {
           text2: `${result.sales_invoice_no} → Credit memo ${result.credit_memo_no}`,
         });
         closeDetail();
-        setHasMore(true);
-        if (page === 1) {
-          loadSales();
-        } else {
-          setPage(1);
-        }
+        await invalidateSales();
+        await refetchSales();
       } catch (error: any) {
         const detail =
           error?.response?.data?.detail ||
           error?.response?.data?.error ||
           error?.message ||
           'Failed to reverse sales invoice';
-        Toast.show({
-          type: 'error',
-          text1: 'Reverse failed',
-          text2: String(detail),
-        });
+        showUserError('Reverse failed', String(detail));
       } finally {
         setReversing(false);
       }
     },
-    [loadSales, page],
+    [invalidateSales, refetchSales],
   );
 
   const promptReverseSales = useCallback(
@@ -803,6 +808,119 @@ const SalesHistory = () => {
     [canReverseSalesInvoice, runReverseSales],
   );
 
+  const runPostSales = useCallback(
+    async (invoice: SalesInvoice) => {
+      if (invoice.id == null) {
+        return;
+      }
+      setPostingId(invoice.id);
+      try {
+        await postSalesInvoice(invoice.id);
+        const confirmed = await getSalesInvoice(invoice.id);
+        const status = String(confirmed?.status || '').toLowerCase();
+        if (status !== 'posted') {
+          showUserError(
+            'Post incomplete',
+            `Invoice ${invoice.invoice_no || ''} is still ${
+              confirmed?.status || 'unposted'
+            }. Check stock or try again.`,
+          );
+          return;
+        }
+        showUserSuccess(
+          'Sale posted',
+          `${invoice.invoice_no || 'Invoice'} is now posted.`,
+        );
+        closeDetail();
+        await invalidateSales();
+        await refetchSales();
+      } catch (error: any) {
+        if (isAlreadyPostedSalesError(error)) {
+          showUserSuccess(
+            'Already posted',
+            `${invoice.invoice_no || 'Invoice'} was already posted.`,
+          );
+          closeDetail();
+          await invalidateSales();
+          await refetchSales();
+          return;
+        }
+        showUserError(
+          'Could not post sale',
+          getSalesApiErrorMessage(error, 'Could not post this sale.'),
+        );
+      } finally {
+        setPostingId(null);
+      }
+    },
+    [invalidateSales, refetchSales],
+  );
+
+  const promptPostSales = useCallback(
+    (invoice: SalesInvoice) => {
+      if (!isUnpostedSale(invoice.status) || invoice.reversed) {
+        return;
+      }
+      const amount = formatCurrencyCompact(
+        Number(invoice.total_amount) || 0,
+      );
+      Alert.alert(
+        'Post sale',
+        `Post invoice ${invoice.invoice_no || '—'} for ${
+          invoice.customer_name || 'Walk-in customer'
+        } (${amount})?\n\nThis finalizes the sale, updates inventory, and posts customer ledger entries.`,
+        [
+          {text: 'Cancel', style: 'cancel'},
+          {
+            text: 'Post',
+            onPress: () => runPostSales(invoice),
+          },
+        ],
+      );
+    },
+    [runPostSales],
+  );
+
+  const promptEditInPos = useCallback(
+    (invoice: SalesInvoice) => {
+      if (!canEditInPos) {
+        showUserError(
+          'Permission denied',
+          'You need Sales create/edit permission to load this into POS.',
+        );
+        return;
+      }
+      if (invoice.id == null || !isUnpostedSale(invoice.status)) {
+        return;
+      }
+      const willDelete = canDelete(PAGE_NAMES.SALES);
+      Alert.alert(
+        'Edit in POS',
+        `Load ${invoice.invoice_no || 'this sale'} into Make Sale so you can change lot, quantity, or lines?\n\n${
+          willDelete
+            ? 'The unposted invoice will be removed after loading. Complete the sale from POS when ready.'
+            : 'The sale will load into POS. You may need permission to delete the original unposted invoice.'
+        }\n\nAny items currently in the cart will be replaced.`,
+        [
+          {text: 'Cancel', style: 'cancel'},
+          {
+            text: 'Load to POS',
+            onPress: () => {
+              closeDetail();
+              requestLoadUnpostedIntoPos({
+                invoiceId: invoice.id as number,
+                deleteAfterLoad: willDelete,
+              });
+              setSelectedTab(constants.screens.makeSale);
+              safeGoBack(navigation, 'Home');
+            },
+          },
+        ],
+      );
+    },
+    [canDelete, canEditInPos, navigation, setSelectedTab],
+  );
+
   const handleDatePickerChange = (event: any, selectedDate?: Date) => {
     if (Platform.OS === 'android') {
       setIsDatePickerVisible(false);
@@ -828,8 +946,7 @@ const SalesHistory = () => {
         setDateTo(dateStr);
         setDatePickerMode(null);
         setIsDatePickerVisible(false);
-        setDateFilter('alltime');
-        setPage(1);
+        setDateFilter('custom');
       }
     }
   };
@@ -847,7 +964,6 @@ const SalesHistory = () => {
             ]}
             onPress={() => {
               setDateFilter(filter.id);
-              setPage(1);
             }}>
             <Text
               style={[
@@ -861,12 +977,24 @@ const SalesHistory = () => {
         ))}
       </View>
       <TouchableOpacity
-        style={[styles.customDateButton, t.customDateBtn]}
+        style={[
+          styles.customDateButton,
+          t.customDateBtn,
+          dateFilter === 'custom' && styles.dateFilterChipActive,
+        ]}
         onPress={() => {
           setDatePickerMode('from');
           setIsDatePickerVisible(true);
         }}>
-        <Text style={styles.customDateButtonText}>Custom range</Text>
+        <Text
+          style={[
+            styles.customDateButtonText,
+            dateFilter === 'custom' && styles.dateFilterChipTextActive,
+          ]}>
+          {dateFilter === 'custom' && dateFrom && dateTo
+            ? `${dateFrom} → ${dateTo}`
+            : 'Custom range'}
+        </Text>
       </TouchableOpacity>
     </View>
   );
@@ -888,11 +1016,10 @@ const SalesHistory = () => {
           <View style={styles.bottomSheetHeaderActions}>
             <TouchableOpacity
               onPress={() => {
-                setDateFilter('last30days');
+                setDateFilter('this_month');
                 setStatusFilter('Posted');
                 setPaymentStatusFilter('all');
                 setPaymentMethodIdFilter('');
-                setPage(1);
               }}
               style={[styles.clearFiltersButton, t.clearFiltersBtn]}>
               <Text style={styles.clearFiltersButtonText}>Clear all</Text>
@@ -938,7 +1065,6 @@ const SalesHistory = () => {
                   ]}
                   onPress={() => {
                     setStatusFilter(status);
-                    setPage(1);
                   }}>
                   <Text
                     style={[
@@ -971,7 +1097,6 @@ const SalesHistory = () => {
                     if (opt.id === 'unpaid') {
                       setPaymentMethodIdFilter('');
                     }
-                    setPage(1);
                   }}>
                   <Text
                     style={[
@@ -1002,7 +1127,6 @@ const SalesHistory = () => {
                   ]}
                   onPress={() => {
                     setPaymentMethodIdFilter('');
-                    setPage(1);
                   }}>
                   <Text
                     style={[
@@ -1025,7 +1149,6 @@ const SalesHistory = () => {
                     ]}
                     onPress={() => {
                       setPaymentMethodIdFilter(String(pm.id));
-                      setPage(1);
                     }}>
                     <Text
                       style={[
@@ -1108,7 +1231,9 @@ const SalesHistory = () => {
           style={[styles.headerRoundIcon, t.headerRoundIcon]}
         />
       </QuickIconPressable>
-      <Text style={[styles.topTitle, t.topTitle]}>Sales History</Text>
+      <Text style={[styles.topTitle, t.topTitle]} numberOfLines={1}>
+        {statusFilter === 'Unposted' ? 'Unposted Sales' : 'Sales History'}
+      </Text>
       <View style={styles.headerTrailingSpacer} />
     </View>
   );
@@ -1119,38 +1244,66 @@ const SalesHistory = () => {
   const productsSold =
     summaryFromApi?.total_products ?? pageProductsFallback;
 
-  const renderSummary = () => (
-    <View style={[styles.summaryContainer, t.summaryContainer]}>
-      <View
-        style={[
-          styles.summaryCard,
-          t.summaryPrimary,
-          {borderWidth: 1},
-        ]}>
-        <Text style={[styles.summaryLabel, t.summaryLabel]}>Revenue</Text>
-        <Text style={[styles.summaryValuePrimary, t.summaryValuePrimary]}>
-          {formatCurrencyCompact(revenue)}
-        </Text>
-        <Text style={[styles.summarySubtext, t.summarySubtext]}>
-          {invoiceCount} invoices
-        </Text>
+  const renderSummary = () => {
+    if (statusFilter === 'Unposted') {
+      return (
+        <View style={[styles.summaryContainer, t.summaryContainer]}>
+          <View
+            style={[
+              styles.unpostedCountCard,
+              {
+                backgroundColor: colors.screenMuted,
+                borderColor: colors.border,
+              },
+            ]}>
+            <Text style={[styles.summaryLabel, t.summaryLabel]}>
+              Waiting to post
+            </Text>
+            <Text style={[styles.summaryValueSecondary, t.summaryValueSecondary]}>
+              {sales.length}
+              {hasMore ? '+' : ''}
+            </Text>
+            <Text style={[styles.summarySubtext, t.summarySubtext]}>
+              Open and draft invoices
+            </Text>
+          </View>
+        </View>
+      );
+    }
+
+    return (
+      <View style={[styles.summaryContainer, t.summaryContainer]}>
+        <View
+          style={[
+            styles.summaryCard,
+            t.summaryPrimary,
+            {borderWidth: 1},
+          ]}>
+          <Text style={[styles.summaryLabel, t.summaryLabel]}>Revenue</Text>
+          <Text style={[styles.summaryValuePrimary, t.summaryValuePrimary]}>
+            {formatCurrencyCompact(revenue)}
+          </Text>
+          <Text style={[styles.summarySubtext, t.summarySubtext]}>
+            {invoiceCount} invoices
+          </Text>
+        </View>
+        <View
+          style={[
+            styles.summaryCard,
+            t.summarySecondary,
+            {borderWidth: 1},
+          ]}>
+          <Text style={[styles.summaryLabel, t.summaryLabel]}>Qty sold</Text>
+          <Text style={[styles.summaryValueSecondary, t.summaryValueSecondary]}>
+            {Math.round(productsSold).toLocaleString()}
+          </Text>
+          <Text style={[styles.summarySubtext, t.summarySubtext]}>
+            Units (summary)
+          </Text>
+        </View>
       </View>
-      <View
-        style={[
-          styles.summaryCard,
-          t.summarySecondary,
-          {borderWidth: 1},
-        ]}>
-        <Text style={[styles.summaryLabel, t.summaryLabel]}>Qty sold</Text>
-        <Text style={[styles.summaryValueSecondary, t.summaryValueSecondary]}>
-          {Math.round(productsSold).toLocaleString()}
-        </Text>
-        <Text style={[styles.summarySubtext, t.summarySubtext]}>
-          Units (summary)
-        </Text>
-      </View>
-    </View>
-  );
+    );
+  };
 
   const renderUserSummaries = () => {
     if (!userSummaries.length) {
@@ -1322,6 +1475,60 @@ const SalesHistory = () => {
               </View>
             ) : null}
           </ScrollView>
+          {!detailLoading &&
+          isUnpostedSale(displayItem.status) &&
+          !displayItem.reversed ? (
+            <View
+              style={[
+                styles.detailPrintBar,
+                {
+                  borderTopColor: colors.border,
+                  backgroundColor: colors.surface,
+                },
+              ]}>
+              <View style={styles.detailActionRow}>
+                {canEditInPos ? (
+                  <TouchableOpacity
+                    style={[
+                      styles.reverseInvoiceBtn,
+                      postingId != null && styles.detailActionBtnDisabled,
+                    ]}
+                    onPress={() => promptEditInPos(displayItem)}
+                    disabled={postingId != null}
+                    activeOpacity={0.85}>
+                    <Image
+                      source={icons.cart as any}
+                      style={styles.reverseInvoiceBtnIcon}
+                    />
+                    <Text style={styles.reverseInvoiceBtnText}>
+                      Edit in POS
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
+                <TouchableOpacity
+                  style={[
+                    styles.printReceiptBtn,
+                    styles.printReceiptBtnFlex,
+                    postingId != null && styles.detailActionBtnDisabled,
+                  ]}
+                  onPress={() => promptPostSales(displayItem)}
+                  disabled={postingId != null}
+                  activeOpacity={0.85}>
+                  {postingId === displayItem.id ? (
+                    <ActivityIndicator color={COLORS.white} size="small" />
+                  ) : (
+                    <>
+                      <Image
+                        source={icons.check_circle as any}
+                        style={styles.printReceiptBtnIcon}
+                      />
+                      <Text style={styles.printReceiptBtnText}>Post sale</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
           {isPostedSale(displayItem.status) && !detailLoading ? (
             <View
               style={[
@@ -1395,19 +1602,23 @@ const SalesHistory = () => {
         />
       </View>
       <Text style={[styles.emptyTitle, t.emptyTitle]}>
-        {error ? 'Something went wrong' : 'No sales found'}
+        {error
+          ? 'Something went wrong'
+          : statusFilter === 'Unposted'
+            ? 'No unposted sales'
+            : 'No sales found'}
       </Text>
       <Text style={[styles.emptyBody, t.emptyBody]}>
         {error ||
-          'Adjust search or filters, or pull to refresh.'}
+          (statusFilter === 'Unposted'
+            ? 'Open and draft invoices will show up here until they are posted.'
+            : 'Adjust search or filters, or pull to refresh.')}
       </Text>
       {error ? (
         <TouchableOpacity
           style={styles.retryBtn}
           onPress={() => {
-            setError(null);
-            setPage(1);
-            loadSales();
+            refetchSales();
           }}
           activeOpacity={0.7}>
           <Text style={styles.retryBtnText}>Retry</Text>
@@ -1434,9 +1645,9 @@ const SalesHistory = () => {
       {renderTopBar()}
       {renderFilters()}
       {renderSummary()}
-      {renderUserSummaries()}
+      {statusFilter !== 'Unposted' ? renderUserSummaries() : null}
 
-      {loading && page === 1 ? (
+      {loading && sales.length === 0 ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={COLORS.primary} />
           <Text style={[styles.loadingText, t.loadingText]}>
@@ -1460,6 +1671,19 @@ const SalesHistory = () => {
                   ? () => handlePrintReceipt(item)
                   : undefined
               }
+              onPostPress={
+                isUnpostedSale(item.status) && !item.reversed
+                  ? () => promptPostSales(item)
+                  : undefined
+              }
+              onEditInPosPress={
+                canEditInPos &&
+                isUnpostedSale(item.status) &&
+                !item.reversed
+                  ? () => promptEditInPos(item)
+                  : undefined
+              }
+              posting={item.id != null && postingId === item.id}
             />
           )}
           ListEmptyComponent={!loading ? renderEmpty : null}
@@ -1474,7 +1698,7 @@ const SalesHistory = () => {
           onEndReached={handleLoadMore}
           onEndReachedThreshold={0.45}
           ListFooterComponent={
-            loading && page > 1 ? (
+            isFetchingNextPage ? (
               <View style={styles.footerLoader}>
                 <ActivityIndicator size="small" color={COLORS.primary} />
               </View>
@@ -1687,6 +1911,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     paddingHorizontal: SIZES.padding,
     paddingVertical: SIZES.base,
+  },
+  unpostedCountCard: {
+    flex: 1,
+    padding: SIZES.base,
+    marginHorizontal: SIZES.base / 2,
+    borderRadius: SIZES.radius,
+    borderWidth: 1,
   },
   summaryCard: {
     flex: 1,

@@ -20,6 +20,7 @@ import CustomPhoneInput, {
     UGANDA_DIAL_CODE,
 } from "../../Components/CustomPhoneInput";
 import Toast from "react-native-toast-message";
+import AppToastHost from "../../Components/AppToastHost";
 import { seedLoginCredentialsAfterSignup } from "../../utils/loginCredentials";
 import { loginAndRouteAfterCredentials } from "../../utils/postAuthNavigation";
 import { useAppContext } from "../../context/Store";
@@ -894,7 +895,7 @@ const SignUp = ({ navigation }) => {
                     </View>
                 </View>
             </AuthLayout>
-            <Toast />
+            <AppToastHost />
 
             <Modal
                 visible={busy}

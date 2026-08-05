@@ -31,12 +31,12 @@ import { useCompanyInfo } from '../../hooks/useCompanyInfo';
 import { useTheme } from '../../context/ThemeContext';
 import { navigate } from '../../hooks/NavigationService';
 import {
+  fetchHomeKpisFromSalesSummary,
   fetchHomeSnapshot,
-  mapHomeSnapshotToKPI,
   fetchMyUserSetup,
   fetchRecentTransactions,
   fetchLowStockItems,
-  fetchDraftSales,
+  fetchUnpostedSales,
   fetchOutstandingReceivables,
   KPIMetrics,
 } from '../../services/app.services';
@@ -140,9 +140,9 @@ export default function Home() {
   const [lowStockItems, setLowStockItems] = useState < any[] > ([]);
   const [lowStockLoading, setLowStockLoading] = useState(false);
 
-  // Draft Sales
-  const [draftSales, setDraftSales] = useState < any[] > ([]);
-  const [draftLoading, setDraftLoading] = useState(false);
+  // Open + Draft together
+  const [unpostedSales, setUnpostedSales] = useState<any[]>([]);
+  const [unpostedLoading, setUnpostedLoading] = useState(false);
 
   // Outstanding Receivables
   const [outstandingReceivables, setOutstandingReceivables] = useState < {
@@ -178,6 +178,9 @@ export default function Home() {
   const canViewDrafts =
     isModuleVisible('sales') && canCreate(PAGE_NAMES.SALES);
 
+  /** Open + Draft unposted sales — same visibility as recent / history. */
+  const canViewUnpostedSales = canViewTransactions || canViewDrafts;
+
   const canViewReceivables =
     (isModuleVisible('payments') || isModuleVisible('customers')) &&
     (hasAnyPageAccess(PAGE_NAMES.PAYMENTS) ||
@@ -194,7 +197,7 @@ export default function Home() {
 
   const t = useMemo(
     () => ({
-      root: { backgroundColor: colors.background },
+      root: { backgroundColor: colors.screenMuted },
       card: {
         backgroundColor: colors.card,
         borderColor: colors.border,
@@ -223,6 +226,21 @@ export default function Home() {
       },
     }),
     [colors],
+  );
+
+  const softCardShadow = useMemo(
+    () =>
+      Platform.select({
+        ios: {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.07,
+          shadowRadius: 8,
+        },
+        android: { elevation: 2 },
+        default: {},
+      }),
+    [],
   );
 
   // Debug auth state and handle loading
@@ -270,16 +288,17 @@ export default function Home() {
     setKpiLoading(true);
     setTopItemsLoading(true);
     try {
-      const snapshot = await fetchHomeSnapshot(5);
-      if (snapshot) {
-        setKpiMetrics(mapHomeSnapshotToKPI(snapshot));
-        setTopSellingItems(snapshot.top_selling_items ?? []);
-      } else {
-        setKpiMetrics(null);
-        setTopSellingItems([]);
-      }
+      // Same API as web POS / Sales History: GET /api/sales/summary/
+      const [kpi, snapshot] = await Promise.all([
+        fetchHomeKpisFromSalesSummary(),
+        fetchHomeSnapshot(5), // top sellers only (optional)
+      ]);
+      setKpiMetrics(kpi);
+      setTopSellingItems(snapshot?.top_selling_items ?? []);
     } catch (error) {
-      console.error('Error loading home snapshot:', error);
+      console.error('Error loading home sales KPIs:', error);
+      setKpiMetrics(null);
+      setTopSellingItems([]);
     } finally {
       setKpiLoading(false);
       setTopItemsLoading(false);
@@ -318,20 +337,19 @@ export default function Home() {
     }
   };
 
-  // Fetch Draft Sales
-  const loadDraftSales = async () => {
-    if (!canViewDrafts) return;
+  const loadUnpostedSales = useCallback(async () => {
+    if (!canViewUnpostedSales) return;
 
-    setDraftLoading(true);
+    setUnpostedLoading(true);
     try {
-      const drafts = await fetchDraftSales();
-      setDraftSales(drafts);
+      const rows = await fetchUnpostedSales(15);
+      setUnpostedSales(rows);
     } catch (error) {
-      console.error('Error loading draft sales:', error);
+      console.error('Error loading unposted sales:', error);
     } finally {
-      setDraftLoading(false);
+      setUnpostedLoading(false);
     }
-  };
+  }, [canViewUnpostedSales]);
 
   // Fetch Outstanding Receivables
   const loadOutstandingReceivables = async () => {
@@ -354,7 +372,7 @@ export default function Home() {
       loadHomeSnapshot();
       loadRecentTransactions();
       loadLowStockItems();
-      loadDraftSales();
+      loadUnpostedSales();
       loadOutstandingReceivables();
     }
   }, [
@@ -362,12 +380,13 @@ export default function Home() {
     canViewSalesDashboard,
     canViewTransactions,
     canViewItems,
-    canViewDrafts,
+    canViewUnpostedSales,
     canViewReceivables,
     restrictSalesToSelf,
     auth.user_id,
     loadRecentTransactions,
     loadHomeSnapshot,
+    loadUnpostedSales,
   ]);
 
   // Pull to refresh handler
@@ -380,7 +399,7 @@ export default function Home() {
         loadHomeSnapshot(),
         loadRecentTransactions(),
         loadLowStockItems(),
-        loadDraftSales(),
+        loadUnpostedSales(),
         loadOutstandingReceivables(),
       ]);
     } catch (error) {
@@ -392,10 +411,11 @@ export default function Home() {
     canViewSalesDashboard,
     canViewTransactions,
     canViewItems,
-    canViewDrafts,
+    canViewUnpostedSales,
     canViewReceivables,
     loadRecentTransactions,
     loadHomeSnapshot,
+    loadUnpostedSales,
   ]);
 
   const openMoreTab = () => {
@@ -410,8 +430,7 @@ export default function Home() {
           styles.homeCircleBtn,
           {
             backgroundColor: colors.card,
-            borderColor: colors.border,
-            borderWidth: StyleSheet.hairlineWidth,
+            ...softCardShadow,
           },
         ]}
         activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}
@@ -423,14 +442,30 @@ export default function Home() {
           style={[styles.homeTopBarIcon, { tintColor: colors.textPrimary }]}
         />
       </TouchableOpacity>
+
+      <View style={styles.homeTitleBlock} pointerEvents="none">
+        <Text
+          style={[styles.homeStoreTitle, { color: colors.textPrimary }]}
+          numberOfLines={1}>
+          {(storeLabel || 'Zentro').toUpperCase()}
+        </Text>
+        {activeBranchLabel || (!isAuthLoading && displayName) ? (
+          <Text
+            style={[styles.homeStoreSubtitle, { color: colors.textSecondary }]}
+            numberOfLines={1}>
+            {activeBranchLabel ||
+              (displayName ? `Hi, ${displayName}` : '')}
+          </Text>
+        ) : null}
+      </View>
+
       <TouchableOpacity
         onPress={() => navigate('PrinterConfig', undefined)}
         style={[
           styles.homeCircleBtn,
           {
             backgroundColor: colors.card,
-            borderColor: colors.border,
-            borderWidth: StyleSheet.hairlineWidth,
+            ...softCardShadow,
           },
         ]}
         activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}
@@ -445,168 +480,113 @@ export default function Home() {
     </View>
   );
 
-  const renderHomeHero = () => (
-    <View style={styles.homeHero}>
-      <Text style={[styles.homeWelcomeTitle, { color: colors.textPrimary }]}>
-        {isAuthLoading
-          ? 'Welcome back'
-          : `Welcome back${displayName ? `, ${displayName}` : ''}`}
-      </Text>
-      <Text style={[styles.homeStoreName, { color: colors.textSecondary }]}>
-        {storeLabel}
-      </Text>
-      {activeBranchLabel ? (
-        <Text style={[styles.homeBranchName, { color: colors.textSecondary }]}>
-          {activeBranchLabel}
-        </Text>
-      ) : null}
-    </View>
-  );
-
-  const renderSnapshotTintWell = (
-    icon: number,
-    bg: string,
-    tint: string,
-    variant: 'metric' | 'row' = 'metric',
-  ) => (
-    <View
-      style={[
-        styles.snapshotTintWell,
-        variant === 'row' ? styles.snapshotTintWellRow : null,
-        { backgroundColor: bg },
-      ]}>
-      <Image
-        source={icon}
-        style={[styles.snapshotTintWellImage, { tintColor: tint }]}
-      />
-    </View>
-  );
-
-  const renderSnapshotAlertRow = (
-    key: string,
-    opts: {
-      icon: number;
-      iconBg: string;
-      iconTint: string;
-      title: string;
-      subtitle: string;
-      onPress: () => void;
-      isLast: boolean;
-    },
-  ) => (
-    <TouchableOpacity
-      key={key}
-      style={[
-        styles.snapshotAlertRow,
-        { borderBottomColor: colors.border },
-        opts.isLast ? styles.snapshotAlertRowLast : null,
-      ]}
-      onPress={opts.onPress}
-      activeOpacity={0.7}
-      accessibilityRole="button"
-      accessibilityLabel={`${opts.title}. ${opts.subtitle}`}>
-      {renderSnapshotTintWell(opts.icon, opts.iconBg, opts.iconTint, 'row')}
-      <View style={styles.snapshotAlertCopy}>
-        <Text style={[styles.alertTitle, t.alertTitle]}>{opts.title}</Text>
-        <Text style={[styles.alertText, t.alertText]} numberOfLines={2}>
-          {opts.subtitle}
-        </Text>
-      </View>
-    </TouchableOpacity>
-  );
-
-  // Render KPI cards + optional alerts in one card (matches Quick actions / list sections)
+  /** QuickBooks-style Insights: large money figures + soft progress bars. */
   const renderQuickStats = () => {
-    const showReceivablesAlert =
-      !!(
-        canViewReceivables &&
-        outstandingReceivables &&
-        outstandingReceivables.total_amount > 0
-      );
-    const showLowStockAlert = canViewItems && lowStockItems.length > 0;
-    const hasStatsSection =
-      canViewSalesDashboard || showReceivablesAlert || showLowStockAlert;
-    if (!hasStatsSection) {
+    const unpaidAmount = outstandingReceivables?.total_amount ?? 0;
+    const unpaidCount = outstandingReceivables?.count ?? 0;
+    const todayRevenue = kpiMetrics?.today_revenue ?? 0;
+    const salesChange = kpiMetrics?.revenue_growth ?? 0;
+    const hasPositiveTrend = salesChange >= 0;
+
+    const showUnpaid = canViewReceivables;
+
+    if (!canViewSalesDashboard && !showUnpaid) {
       return null;
     }
 
-    const salesChange = kpiMetrics?.revenue_growth ?? 0;
-    const hasPositiveTrend = salesChange >= 0;
-    const showKpiBlock = canViewSalesDashboard && !kpiLoading && !!kpiMetrics;
-    const showAlerts = showReceivablesAlert || showLowStockAlert;
-    const alertRows: React.ReactNode[] = [];
-
-    if (showReceivablesAlert) {
-      alertRows.push(
-        renderSnapshotAlertRow('receivables', {
-          icon: icons.wallet,
-          iconBg: 'rgba(255, 161, 51, 0.16)',
-          iconTint: COLORS.warning,
-          title: 'Outstanding receivables',
-          subtitle: `${formatCurrency(outstandingReceivables!.total_amount)} from ${
-            outstandingReceivables!.count
-          } customer${outstandingReceivables!.count !== 1 ? 's' : ''}`,
-          onPress: () => navigation.navigate('Payments' as never),
-          isLast: !showLowStockAlert,
-        }),
-      );
-    }
-
-    if (showLowStockAlert) {
-      alertRows.push(
-        renderSnapshotAlertRow('low-stock', {
-          icon: icons.notification,
-          iconBg: 'rgba(255, 71, 87, 0.12)',
-          iconTint: COLORS.error,
-          title: 'Low stock alert',
-          subtitle: `${lowStockItems.length} item${
-            lowStockItems.length !== 1 ? 's' : ''
-          } need attention`,
-          onPress: () => {
-            setSelectedTab(constants.screens.items);
-            navigation.navigate(
-              'AllItems' as never,
-              { stockFilter: 'low_stock' } as never,
-            );
-          },
-          isLast: true,
-        }),
-      );
-    }
+    const barMax = Math.max(unpaidAmount, todayRevenue, 1);
+    const unpaidFill = Math.min(1, unpaidAmount / barMax);
+    const todayFill = Math.min(1, todayRevenue / barMax);
 
     return (
       <View style={styles.statsSection}>
         <View style={styles.statsSectionHeader}>
-          <Text style={[styles.kpiSectionTitle, t.sectionTitle, FONTS.h3]}>
-            {"Today's snapshot"}
+          <Text style={[styles.insightsSectionTitle, t.sectionTitle]}>
+            Insights
           </Text>
         </View>
 
         {canViewSalesDashboard && kpiLoading ? (
-          <View style={[styles.snapshotCard, t.card, styles.snapshotLoadingCard]}>
+          <View
+            style={[
+              styles.insightsCard,
+              t.card,
+              softCardShadow,
+              styles.snapshotLoadingCard,
+            ]}>
             <ActivityIndicator size="small" color={COLORS.primary2} />
             <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
-              Loading metrics...
+              Loading insights...
             </Text>
           </View>
         ) : (
-          <View style={[styles.snapshotCard, t.card]}>
-            {showKpiBlock && kpiMetrics ? (
-              <>
-                <View style={styles.revenueBlock}>
-                  <Text style={[styles.salesLabel, t.salesLabel]}>
-                    Today's revenue
-                  </Text>
-                  <Text style={[styles.salesAmount, t.salesAmount]}>
-                    {formatCurrency(kpiMetrics.today_revenue)}
-                  </Text>
-                  <Text style={[styles.comparedText, t.comparedText]}>
+          <View style={[styles.insightsCard, t.card, softCardShadow]}>
+            {showUnpaid ? (
+              <TouchableOpacity
+                activeOpacity={0.75}
+                onPress={() => navigation.navigate('Payments' as never)}
+                accessibilityRole="button"
+                accessibilityLabel={`Unpaid ${formatCurrency(unpaidAmount)}`}>
+                <Text style={[styles.insightMetricLabel, t.salesLabel]}>
+                  Unpaid
+                  {unpaidCount > 0 ? ` · ${unpaidCount}` : ''}
+                </Text>
+                <Text style={[styles.insightMetricValue, t.salesAmount]}>
+                  {formatCurrency(unpaidAmount)}
+                </Text>
+                <View
+                  style={[
+                    styles.insightBarTrack,
+                    { backgroundColor: colors.screenMuted },
+                  ]}>
+                  <View
+                    style={[
+                      styles.insightBarFill,
+                      {
+                        width: `${Math.max(unpaidFill * 100, unpaidAmount > 0 ? 4 : 0)}%`,
+                        backgroundColor: COLORS.warning,
+                      },
+                    ]}
+                  />
+                </View>
+              </TouchableOpacity>
+            ) : null}
+
+            {showUnpaid && canViewSalesDashboard ? (
+              <View style={styles.insightMetricGap} />
+            ) : null}
+
+            {canViewSalesDashboard ? (
+              <View>
+                <Text style={[styles.insightMetricLabel, t.salesLabel]}>
+                  Today's sales
+                </Text>
+                <Text style={[styles.insightMetricValue, t.salesAmount]}>
+                  {formatCurrency(todayRevenue)}
+                </Text>
+                <View
+                  style={[
+                    styles.insightBarTrack,
+                    { backgroundColor: colors.screenMuted },
+                  ]}>
+                  <View
+                    style={[
+                      styles.insightBarFill,
+                      {
+                        width: `${Math.max(todayFill * 100, todayRevenue > 0 ? 4 : 0)}%`,
+                        backgroundColor: COLORS.primary2,
+                      },
+                    ]}
+                  />
+                </View>
+                {kpiMetrics ? (
+                  <Text style={[styles.comparedText, t.comparedText, styles.insightTrend]}>
                     {salesChange !== 0 ? (
                       <>
                         <Text
                           style={{
                             color: hasPositiveTrend ? COLORS.success : COLORS.error,
-                            fontWeight: '500',
+                            fontWeight: '600',
                           }}>
                           {hasPositiveTrend ? 'Up' : 'Down'}{' '}
                           {Math.abs(salesChange).toFixed(1)}%
@@ -617,63 +597,36 @@ export default function Home() {
                       'No change vs yesterday'
                     )}
                   </Text>
-                </View>
-
-                <View style={[styles.snapshotSectionDivider, t.snapshotDivider]} />
-
-                <View style={styles.snapshotMetricsRow}>
-                  <View style={styles.snapshotMetric}>
-                    {renderSnapshotTintWell(
-                      icons.cart,
-                      'rgba(0, 102, 204, 0.14)',
-                      COLORS.primary2,
-                    )}
-                    <Text style={[styles.statValue, t.statValue]}>
-                      {kpiMetrics.today_orders}
+                ) : null}
+                {kpiMetrics ? (
+                  <View style={styles.insightMetaRow}>
+                    <Text style={[styles.insightMetaText, t.statItemLabel]}>
+                      {kpiMetrics.today_orders} orders
                     </Text>
-                    <Text style={[styles.statItemLabel, t.statItemLabel]}>
-                      Orders today
+                    <Text style={[styles.insightMetaDot, t.statItemLabel]}>·</Text>
+                    <Text style={[styles.insightMetaText, t.statItemLabel]}>
+                      {kpiMetrics.today_products_sold} products
                     </Text>
                   </View>
-
-                  <View style={[styles.snapshotMetricDivider, t.snapshotDivider]} />
-
-                  <View style={styles.snapshotMetric}>
-                    {renderSnapshotTintWell(
-                      icons.product,
-                      'rgba(0, 184, 148, 0.14)',
-                      COLORS.success,
-                    )}
-                    <Text style={[styles.statValue, t.statValue]}>
-                      {kpiMetrics.today_products_sold}
-                    </Text>
-                    <Text style={[styles.statItemLabel, t.statItemLabel]}>
-                      Products sold
-                    </Text>
-                  </View>
-                </View>
-              </>
+                ) : null}
+              </View>
             ) : null}
-
-            {showKpiBlock && showAlerts ? (
-              <View style={[styles.snapshotSectionDivider, t.snapshotDivider]} />
-            ) : null}
-
-            {showAlerts ? alertRows : null}
           </View>
         )}
       </View>
     );
   };
 
-  // Render Draft Sales
-  const renderDraftSales = () => {
-    if (!canViewDrafts) return null;
+  // Open + Draft together (not yet posted)
+  const renderUnpostedSales = () => {
+    if (!canViewUnpostedSales) return null;
 
-    if (draftLoading) {
+    if (unpostedLoading) {
       return (
         <View style={styles.recentSection}>
-          <Text style={[styles.sectionTitle, t.sectionTitle]}>Draft Sales</Text>
+          <Text style={[styles.sectionTitle, t.sectionTitle]}>
+            Unposted Sales
+          </Text>
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="small" color={COLORS.primary2} />
           </View>
@@ -681,11 +634,11 @@ export default function Home() {
       );
     }
 
-    if (draftSales.length === 0) {
+    if (unpostedSales.length === 0) {
       return null;
     }
 
-    const draftsPreview = draftSales.slice(0, 3);
+    const preview = unpostedSales.slice(0, 5);
     return (
       <View style={styles.recentSection}>
         <View style={styles.sectionHeader}>
@@ -693,51 +646,89 @@ export default function Home() {
             style={[styles.sectionTitle, t.sectionTitle]}
             numberOfLines={1}
             ellipsizeMode="tail">
-            Draft Sales
+            Unposted Sales
           </Text>
           <TouchableOpacity
             style={styles.sectionHeaderAction}
-            onPress={() => navigation.navigate('Cart' as never)}>
-            <Text style={[styles.seeAllText, t.seeAll]}>View All</Text>
+            onPress={() =>
+              navigation.navigate(
+                'SalesHistory' as never,
+                {status: 'Unposted', dateFilter: 'alltime'} as never,
+              )
+            }>
+            <Text style={[styles.seeAllText, t.seeAll]}>See All</Text>
           </TouchableOpacity>
         </View>
 
         <View style={[styles.recentTransactions, t.listCard]}>
-          {draftsPreview.map((draft: any, index: number) => (
-            <TouchableOpacity
-              key={draft.id}
-              style={[
-                styles.transactionItem,
-                { borderBottomColor: colors.border },
-                index === draftsPreview.length - 1 ? styles.transactionItemLast : null,
-              ]}
-              onPress={() => navigation.navigate('Cart' as never)}>
-              <View style={styles.transactionLeft}>
-                <View style={[styles.transactionIconContainer, t.iconWell]}>
-                  <Image
-                    source={icons.cart}
-                    style={[styles.transactionIcon, { tintColor: COLORS.warning }]}
-                  />
+          {preview.map((sale: any, index: number) => {
+            const statusLabel =
+              String(sale.status || '').toLowerCase() === 'draft'
+                ? 'Draft'
+                : 'Open';
+            return (
+              <TouchableOpacity
+                key={sale.id}
+                style={[
+                  styles.transactionItem,
+                  {borderBottomColor: colors.border},
+                  index === preview.length - 1
+                    ? styles.transactionItemLast
+                    : null,
+                ]}
+                onPress={() =>
+                  navigation.navigate(
+                    'SalesHistory' as never,
+                    {status: 'Unposted', dateFilter: 'alltime'} as never,
+                  )
+                }>
+                <View style={styles.transactionLeft}>
+                  <View style={[styles.transactionIconContainer, t.iconWell]}>
+                    <Image
+                      source={icons.cart}
+                      style={[
+                        styles.transactionIcon,
+                        {tintColor: COLORS.warning},
+                      ]}
+                    />
+                  </View>
+                  <View style={styles.transactionInfo}>
+                    <Text
+                      style={[styles.transactionNumber, t.transactionNumber]}>
+                      {sale.customer_invoice_no ||
+                        sale.invoice_no ||
+                        `Sale #${sale.id}`}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.transactionCustomer,
+                        t.transactionCustomer,
+                      ]}>
+                      {sale.customer?.name?.trim() ||
+                        sale.customer_name?.trim() ||
+                        'Unposted sale'}
+                    </Text>
+                  </View>
                 </View>
-                <View style={styles.transactionInfo}>
-                  <Text style={[styles.transactionNumber, t.transactionNumber]}>
-                    {draft.invoice_no || `Draft #${draft.id}`}
+                <View style={styles.transactionRight}>
+                  <Text
+                    style={[
+                      styles.transactionAmount,
+                      {color: COLORS.warning},
+                    ]}>
+                    {formatCurrency(sale.total_amount || 0)}
                   </Text>
-                  <Text style={[styles.transactionCustomer, t.transactionCustomer]}>
-                    {draft.customer_name || 'Draft Sale'}
+                  <Text style={[styles.transactionTime, t.transactionTime]}>
+                    {statusLabel} ·{' '}
+                    {formatSalesTransactionListSubtitle(
+                      sale.document_date,
+                      sale.created_at,
+                    )}
                   </Text>
                 </View>
-              </View>
-              <View style={styles.transactionRight}>
-                <Text style={[styles.transactionAmount, { color: COLORS.warning }]}>
-                  {formatCurrency(draft.total_amount || 0)}
-                </Text>
-                <Text style={[styles.transactionTime, t.transactionTime]}>
-                  {new Date(draft.created_at).toLocaleDateString()}
-                </Text>
-              </View>
-            </TouchableOpacity>
-          ))}
+              </TouchableOpacity>
+            );
+          })}
         </View>
       </View>
     );
@@ -931,13 +922,15 @@ export default function Home() {
           />
         }>
         {renderHomeTopBar()}
-        {renderHomeHero()}
         <View style={styles.quickActionsSection}>
-          <Options />
+          <Options
+            unpostedCount={unpostedSales.length}
+            lowStockCount={lowStockItems.length}
+          />
         </View>
         {renderQuickStats()}
         {renderMySalesToday()}
-        {renderDraftSales()}
+        {renderUnpostedSales()}
         {renderTopSellingItems()}
         {renderRecentTransactions()}
       </ScrollView>
@@ -958,7 +951,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: SIZES.padding,
-    marginBottom: 8,
+    marginBottom: 18,
   },
   homeCircleBtn: {
     width: 44,
@@ -972,25 +965,22 @@ const styles = StyleSheet.create({
     height: 22,
     resizeMode: 'contain',
   },
-  homeHero: {
-    paddingHorizontal: SIZES.padding,
-    marginBottom: 20,
+  homeTitleBlock: {
+    flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: 10,
   },
-  homeWelcomeTitle: {
-    ...FONTS.h2,
-    fontSize: 26,
+  homeStoreTitle: {
+    fontSize: 15,
     fontWeight: '700',
-    letterSpacing: -0.5,
+    letterSpacing: 0.6,
+    textAlign: 'center',
   },
-  homeStoreName: {
-    ...FONTS.body3,
-    marginTop: 6,
-    fontWeight: '600',
-  },
-  homeBranchName: {
-    ...FONTS.body4,
+  homeStoreSubtitle: {
     marginTop: 2,
+    fontSize: 12,
     fontWeight: '500',
+    textAlign: 'center',
   },
   quickActionsSection: {
     paddingHorizontal: SIZES.padding,
@@ -1004,12 +994,62 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
   },
+  insightsSectionTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    letterSpacing: -0.3,
+  },
   statsSection: {
     paddingHorizontal: SIZES.padding,
-    paddingTop: 16,
+    paddingTop: 4,
   },
   statsSectionHeader: {
+    marginBottom: 12,
+  },
+  insightsCard: {
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+  },
+  insightMetricLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  insightMetricValue: {
+    fontSize: 28,
+    fontWeight: '700',
+    letterSpacing: -0.5,
     marginBottom: 10,
+  },
+  insightBarTrack: {
+    height: 8,
+    borderRadius: 99,
+    overflow: 'hidden',
+  },
+  insightBarFill: {
+    height: '100%',
+    borderRadius: 99,
+  },
+  insightMetricGap: {
+    height: 22,
+  },
+  insightTrend: {
+    marginTop: 10,
+  },
+  insightMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    gap: 6,
+  },
+  insightMetaText: {
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  insightMetaDot: {
+    fontSize: 13,
   },
   snapshotCard: {
     borderRadius: 12,

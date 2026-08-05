@@ -2,6 +2,30 @@
   "migIndex": 1,
   "data": [
     {
+      "path": "src/assets/fonts/Outfit-Bold.ttf",
+      "sha1": "1e879a65667b3e1c9fc089e584e33aef8a677b4b"
+    },
+    {
+      "path": "src/assets/fonts/Outfit-ExtraBold.ttf",
+      "sha1": "7cb6783e369ab5adc2098293df63c5b3a6c498fe"
+    },
+    {
+      "path": "src/assets/fonts/Outfit-Light.ttf",
+      "sha1": "889d6f0b4358565d3d4f0a33fa064d9270407c09"
+    },
+    {
+      "path": "src/assets/fonts/Outfit-Medium.ttf",
+      "sha1": "605fd0991d653a837e7c744f8884767a3e98a4f4"
+    },
+    {
+      "path": "src/assets/fonts/Outfit-Regular.ttf",
+      "sha1": "f30cedac96a0a9ca13fdca585841a667a573a2de"
+    },
+    {
+      "path": "src/assets/fonts/Outfit-SemiBold.ttf",
+      "sha1": "7fa99cf85541ca03bab5d5bda7f2509740b73393"
+    },
+    {
       "path": "src/assets/fonts/Poppins-Black.ttf",
       "sha1": "048555c4d0c3a6022b480be4596b1c95d605d32b"
     },

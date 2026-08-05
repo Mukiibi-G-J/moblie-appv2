@@ -4,12 +4,15 @@ import {UserGroupListResponse} from '../@types/userManagement';
 
 export const UserGroupService = {
   async getUserGroups(): Promise<UserGroupListResponse> {
-    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const api = createAxiosInstance(tenant);
-    const response = await api.get('/api/user-groups/');
-    if (response?.data?.results && Array.isArray(response.data.results)) {
-      return response.data;
-    }
-    return {count: 0, next: null, previous: null, results: []};
+    const {fetchPageDataPaginated, PAGE_IDS} = await import(
+      './pageDataService'
+    );
+    const {mapPageDataUserGroup} = await import('./pageDataMappers');
+    return fetchPageDataPaginated({
+      pageId: PAGE_IDS.UserGroupsList,
+      page: 1,
+      pageSize: 500,
+      mapRow: mapPageDataUserGroup,
+    });
   },
 };

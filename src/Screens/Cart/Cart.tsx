@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
+import {pickDefaultCashPaymentMethod} from '../../utils/paymentMethodDefaults';
 import {
   View,
   Text,
@@ -18,6 +19,7 @@ import {
   PermissionsAndroid,
   Dimensions,
   InteractionManager,
+  DeviceEventEmitter,
 } from 'react-native';
 import { Camera, CameraType } from 'react-native-camera-kit';
 import {GestureHandlerRootView} from 'react-native-gesture-handler';
@@ -32,6 +34,9 @@ import {
   Customer,
   PaymentMethod,
   fetchAllItemLedgerEntries,
+  fetchItemTrackingByNo,
+  fetchItemUnitsOfMeasure,
+  ItemUnitOfMeasure,
 } from '../../services/app.services';
 import {searchItems as catalogSearchItems} from '../../services/itemCatalogService';
 import {useOfflineOptional} from '../../context/OfflineContext';
@@ -42,6 +47,7 @@ import {
   OFFLINE_LOT_PICKER_MESSAGE,
 } from '../../utils/posConnectivity';
 import Toast from 'react-native-toast-message';
+import AppToastHost from '../../Components/AppToastHost';
 import ReactNativeModal from 'react-native-modal';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -64,6 +70,9 @@ import {
 import TodayMySalesBar from '../../Components/TodayMySalesBar';
 import { useAppContext } from '../../context/Store';
 import { usePermissions } from '../../hooks/usePermissions';
+import { useSaleCustomersQuery } from '../../hooks/useSaleCustomersQuery';
+import { useInvalidateSales } from '../../hooks/useSalesQuery';
+import { useInvalidateItems } from '../../hooks/useItemsQuery';
 import { PAGE_NAMES } from '../../constants/pageNames';
 import { useCart } from '../../context/CartStore';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
@@ -79,24 +88,36 @@ import SalesCompletionModal from '../../Components/SalesCompletionModal';
 import { useSearchMode } from '../../context/SearchModeStore';
 import { safeGoBack } from '../../hooks/NavigationService';
 import TrackingSelectionModal from '../../Components/TrackingSelectionModal';
+import UOMSelectionModal from '../../Components/UOMSelectionModal';
 import SalesItemBrowser from '../../Components/SalesItemBrowser';
 import { SwipeableCartLine } from '../../Components/SwipeableCartLine';
 import {
+  buildAvailableSerialOptions,
   buildFifoTrackingOptions,
+  itemRequiresSerial,
+  itemRequiresTracking,
   shouldEnforceTrackingSelection,
   trackingDetailsFromOption,
   validateCartTracking,
 } from '../../utils/salesTracking';
 import type { TrackingLotOption } from '../../utils/salesTracking';
+import {
+  POS_LOAD_UNPOSTED_EVENT,
+  takePendingPosLoad,
+  type PosLoadUnpostedPayload,
+} from '../../utils/posInvoiceLoad';
+import {showUserError, showUserSuccess} from '../../utils/userFeedback';
+import {
+  displayPriceForUom,
+  resolvePosUnitPrice,
+  resolvePricesForUoms,
+  withCartUomDefaults,
+} from '../../utils/posUom';
 import { playBarcodeBeep } from '../../utils/barcodeFeedback';
 // import {SaleResult} from '../../services/SalesService';
 // PrinterTestButton import removed - keeping test code in PrintService
 
 const SCANNER_VIEWPORT_HEIGHT = Math.round(SIZES.height * 0.18);
-/** Left-swipe this far (as a fraction of screen width) before the line is removed — avoids deletes on a short swipe. ~½ screen matches a deliberate “swipe to middle” gesture. */
-const FULL_SWIPE_DELETE_THRESHOLD = Math.round(
-  Dimensions.get('window').width * 0.5,
-);
 
 /** Caps customer list height so the sheet hugs content for short lists (avoids empty space from a tall minHeight). */
 const SALE_CUSTOMER_PICKER_LIST_MAX_HEIGHT = Math.round(
@@ -223,7 +244,7 @@ const Cart = ({
       dateLbl: { color: colors.textPrimary },
       globalDateBtn: { backgroundColor: colors.screenMuted },
       datePickTxt: { color: colors.textPrimary },
-      footerWrap: { backgroundColor: colors.surface },
+      footerWrap: { backgroundColor: 'transparent' },
       draftsLoad: { backgroundColor: colors.surface },
       draftsLoadTxt: { color: colors.textSecondary },
       draftsBtn: {
@@ -308,8 +329,19 @@ const Cart = ({
     [],
   );
   const [loadingTrackingOptions, setLoadingTrackingOptions] = useState(false);
-  const [saleCustomers, setSaleCustomers] = useState < Customer[] > ([]);
-  const [loadingSaleCustomers, setLoadingSaleCustomers] = useState(false);
+  const [uomModalVisible, setUomModalVisible] = useState(false);
+  const [uomOptions, setUomOptions] = useState<ItemUnitOfMeasure[]>([]);
+  const [uomResolvedPrices, setUomResolvedPrices] = useState<
+    Record<string, number>
+  >({});
+  const [loadingUomOptions, setLoadingUomOptions] = useState(false);
+  const {
+    data: saleCustomers = [],
+    isLoading: loadingSaleCustomers,
+    refetch: refetchSaleCustomers,
+  } = useSaleCustomersQuery();
+  const invalidateSales = useInvalidateSales();
+  const invalidateItems = useInvalidateItems();
   const [selectedSaleCustomer, setSelectedSaleCustomer] = useState < Customer | null > (
     null,
   );
@@ -407,13 +439,30 @@ const Cart = ({
     };
   }, []);
 
-  // Load drafts when screen is focused
+  // Load drafts when screen is focused; customers come from React Query cache.
   useEffect(() => {
     if (isFocused) {
       loadDrafts();
-      loadSaleCustomers();
+      refetchSaleCustomers();
     }
-  }, [isFocused]);
+  }, [isFocused, refetchSaleCustomers]);
+
+  useEffect(() => {
+    if (!saleCustomers.length) {
+      return;
+    }
+    const generalCustomer =
+      saleCustomers.find(customer => {
+        const name = customer.name?.trim().toLowerCase() || '';
+        const no = customer.no?.trim().toLowerCase() || '';
+        return (
+          name === 'general' ||
+          name === 'general customer' ||
+          no.includes('gen')
+        );
+      }) || null;
+    setSelectedSaleCustomer(previous => previous ?? generalCustomer);
+  }, [saleCustomers]);
 
   const openDraftsHub = useCallback(() => {
     setDraftsModalVisible(true);
@@ -425,32 +474,6 @@ const Cart = ({
       setShowSalesModal(false);
     }
   }, [showSalesModal, canInsertSale]);
-
-  const loadSaleCustomers = async () => {
-    try {
-      setLoadingSaleCustomers(true);
-      const customersData = await fetchCustomers();
-      setSaleCustomers(customersData);
-
-      const generalCustomer =
-        customersData.find(customer => {
-          const name = customer.name?.trim().toLowerCase() || '';
-          const no = customer.no?.trim().toLowerCase() || '';
-          return (
-            name === 'general' ||
-            name === 'general customer' ||
-            no.includes('gen')
-          );
-        }) || null;
-
-      setSelectedSaleCustomer(previous => previous ?? generalCustomer);
-    } catch (error) {
-      console.error('Failed to load sale customers:', error);
-      setSaleCustomers([]);
-    } finally {
-      setLoadingSaleCustomers(false);
-    }
-  };
 
   // Handle modal visibility with keyboard
   useEffect(() => {
@@ -522,22 +545,70 @@ const Cart = ({
       existItem?.selectedTrackingCode ?? item.selectedTrackingCode ?? null;
     const trackingDetails = existItem?.trackingDetails ?? item.trackingDetails;
 
-    const nextCartItem: CartItem = {
+    const unitOfMeasure =
+      existItem?.unit_of_measure ?? item.unit_of_measure ?? 'PCS';
+    const quantityPerUnit =
+      existItem?.quantity_per_unit ?? item.quantity_per_unit ?? 1;
+    const catalogPrice = Number(item.unit_price) || 0;
+
+    // Preserve UOM / sell price when increasing qty on an existing line.
+    // New lines: stamp catalog price first, then resolve Sales Price List (web parity).
+    const nextCartItem: CartItem = withCartUomDefaults({
       ...item,
       quantity,
       date_sold: currentDate,
       tracking_code: trackingConfig,
       selectedTrackingCode,
       trackingDetails,
-    };
+      unit_of_measure: unitOfMeasure,
+      unit_of_measure_description:
+        existItem?.unit_of_measure_description ??
+        item.unit_of_measure_description,
+      quantity_per_unit: quantityPerUnit,
+      original_price:
+        existItem?.original_price ??
+        item.original_price ??
+        catalogPrice,
+      unit_price: existItem?.unit_price ?? catalogPrice,
+    });
 
     dispatch({
       type: 'CART_ADD_ITEM',
       payload: nextCartItem,
     });
 
+    if (!existItem) {
+      const itemNo = item.no || item.system_id;
+      void resolvePosUnitPrice({
+        itemNo,
+        itemSystemId: item.system_id,
+        unitOfMeasure,
+        customerNo: selectedSaleCustomer?.no,
+        quantity,
+        fallbackBasePrice: catalogPrice,
+      }).then(resolvedPrice => {
+        if (!Number.isFinite(resolvedPrice)) {
+          return;
+        }
+        const latest = cartItemsRef.current.find(
+          (x: CartItem) => x.system_id === item.system_id,
+        );
+        if (!latest) {
+          return;
+        }
+        dispatch({
+          type: 'CART_UPDATE_ITEM',
+          payload: withCartUomDefaults({
+            ...latest,
+            unit_price: resolvedPrice,
+            original_price: resolvedPrice,
+          }),
+        });
+      });
+    }
+
     InteractionManager.runAfterInteractions(() => {
-      void preloadTrackingForItem(nextCartItem);
+      void enrichAndPreloadTracking(nextCartItem);
     });
 
     setSearchQuery('');
@@ -738,53 +809,153 @@ const Cart = ({
       });
       return;
     }
-    setEditingCartItem({ ...item });
+    const opened = withCartUomDefaults({...item});
+    setEditingCartItem(opened);
     setCartItemEditorVisible(true);
+    void enrichCartItemTracking(opened);
   };
   
   const closeCartItemEditor = () => {
     setCartItemEditorVisible(false);
     setEditingCartItem(null);
+    setUomModalVisible(false);
+    setUomOptions([]);
+    setUomResolvedPrices({});
   };
-  
-  const changeEditingCartItemQuantity = (delta: number) => {
-    if (!canModifySale) {
+
+  const openUomModal = async () => {
+    if (!canModifySale || !editingCartItem) {
       return;
     }
-    setEditingCartItem(previous => {
-      if (!previous) {
-        return previous;
-      }
-  
-      const currentQty = Number(previous.quantity) || 1;
-      const maxQty = posItemMaxSaleQuantity(previous, currentQty);
-      const nextQty = Math.min(maxQty, Math.max(1, currentQty + delta));
-  
-      if (nextQty === currentQty) {
-        return previous;
-      }
-  
-      return {
-        ...previous,
-        quantity: nextQty,
-      };
-    });
+    const itemNo = editingCartItem.no || editingCartItem.system_id;
+    if (!itemNo) {
+      Toast.show({
+        type: 'error',
+        text1: 'Missing item number',
+        text2: 'Cannot load units of measure for this line.',
+        visibilityTime: 2500,
+        position: 'top',
+      });
+      return;
+    }
+
+    setUomModalVisible(true);
+    setLoadingUomOptions(true);
+    setUomResolvedPrices({});
+    try {
+      const rows = await fetchItemUnitsOfMeasure(String(itemNo));
+      setUomOptions(rows);
+      const fallbackBase =
+        editingCartItem.original_price != null &&
+        Number.isFinite(Number(editingCartItem.original_price))
+          ? Number(editingCartItem.original_price)
+          : Number(editingCartItem.unit_price) || 0;
+      const prices = await resolvePricesForUoms({
+        itemNo: String(itemNo),
+        customerNo: selectedSaleCustomer?.no,
+        quantity: editingCartItem.quantity,
+        uoms: rows,
+        fallbackBasePrice: fallbackBase,
+      });
+      setUomResolvedPrices(prices);
+    } catch (error) {
+      console.error('Failed to load item UOMs:', error);
+      setUomOptions([]);
+      setUomResolvedPrices({});
+      Toast.show({
+        type: 'error',
+        text1: 'Could not load units',
+        text2: 'Check connection and try again.',
+        visibilityTime: 2500,
+        position: 'top',
+      });
+    } finally {
+      setLoadingUomOptions(false);
+    }
   };
-  
-  const saveCartItemEditor = () => {
+
+  const handleUomSelected = (uom: ItemUnitOfMeasure) => {
     if (!editingCartItem || !canModifySale) {
       return;
     }
-  
-    dispatch({ type: 'CART_UPDATE_ITEM', payload: editingCartItem });
-    closeCartItemEditor();
+    const quantityPerUnit = uom.quantity_per_unit || 1;
+    const fallbackBase =
+      Number(editingCartItem.original_price) ||
+      Number(editingCartItem.unit_price) ||
+      0;
+    const optimisticPrice =
+      uomResolvedPrices[uom.unit_of_measure] ??
+      displayPriceForUom(fallbackBase, uom);
+
+    // Match web: unit_price and original_price both become the resolved UOM sell price.
+    const updated: CartItem = withCartUomDefaults({
+      ...editingCartItem,
+      original_price: optimisticPrice,
+      unit_of_measure: uom.unit_of_measure,
+      unit_of_measure_description: uom.unit_of_measure_description,
+      quantity_per_unit: quantityPerUnit,
+      unit_price: optimisticPrice,
+    });
+    setEditingCartItem(updated);
+    dispatch({type: 'CART_UPDATE_ITEM', payload: updated});
+    setUomModalVisible(false);
+
+    const itemNo = editingCartItem.no || editingCartItem.system_id;
+    void resolvePosUnitPrice({
+      itemNo,
+      itemSystemId: editingCartItem.system_id,
+      unitOfMeasure: uom.unit_of_measure,
+      itemUnitOfMeasureId: uom.id,
+      customerNo: selectedSaleCustomer?.no,
+      quantity: editingCartItem.quantity,
+      fallbackBasePrice: optimisticPrice,
+      fallbackUom: uom,
+    }).then(resolvedPrice => {
+      if (!Number.isFinite(resolvedPrice) || resolvedPrice === optimisticPrice) {
+        return;
+      }
+      const confirmed: CartItem = withCartUomDefaults({
+        ...updated,
+        unit_price: resolvedPrice,
+        original_price: resolvedPrice,
+      });
+      setEditingCartItem(previous =>
+        previous?.system_id === confirmed.system_id &&
+        previous?.unit_of_measure === confirmed.unit_of_measure
+          ? confirmed
+          : previous,
+      );
+      dispatch({type: 'CART_UPDATE_ITEM', payload: confirmed});
+    });
   };
-  
+
+  /** Quantity changes apply to the cart immediately (no Save tap), matching web POS. */
+  const changeEditingCartItemQuantity = (delta: number) => {
+    if (!canModifySale || !editingCartItem) {
+      return;
+    }
+
+    const currentQty = Number(editingCartItem.quantity) || 1;
+    const maxQty = posItemMaxSaleQuantity(editingCartItem, currentQty);
+    const nextQty = Math.min(maxQty, Math.max(1, currentQty + delta));
+
+    if (nextQty === currentQty) {
+      return;
+    }
+
+    const updated: CartItem = {
+      ...editingCartItem,
+      quantity: nextQty,
+    };
+    setEditingCartItem(updated);
+    dispatch({ type: 'CART_UPDATE_ITEM', payload: updated });
+  };
+
   const removeEditingCartItem = () => {
     if (!editingCartItem || !canModifySale) {
       return;
     }
-  
+
     dispatch({
       type: 'REMOVE_FROM_CART',
       payload: { system_id: editingCartItem.system_id },
@@ -796,56 +967,107 @@ const Cart = ({
     setIsModalVisible(!isModalVisible);
   }
   
-  const getTrackingCacheKey = (item: CartItem) =>
-    String(item.no || item.system_id);
-  
+  const getTrackingCacheKey = (item: CartItem, mode?: 'lot' | 'serial') => {
+    const base = String(item.no || item.system_id);
+    if (mode) {
+      return `${base}:${mode}`;
+    }
+    if (itemRequiresSerial(item)) {
+      return `${base}:serial`;
+    }
+    return `${base}:lot`;
+  };
+
+  /** Fetch tracking_code from REST when page-data catalog omitted it. */
+  const enrichCartItemTracking = async (item: CartItem): Promise<CartItem> => {
+    if (itemRequiresTracking(item)) {
+      return item;
+    }
+    const itemNo = String(item.no || '').trim();
+    if (!itemNo || !isPosOnline) {
+      return item;
+    }
+    try {
+      const tracking = await fetchItemTrackingByNo(itemNo);
+      if (!tracking) {
+        return item;
+      }
+      const latest =
+        cartItemsRef.current.find(c => c.system_id === item.system_id) || item;
+      const updated: CartItem = {...latest, tracking_code: tracking};
+      dispatch({type: 'CART_UPDATE_ITEM', payload: updated});
+      if (
+        cartItemEditorVisible &&
+        editingCartItem &&
+        editingCartItem.system_id === item.system_id
+      ) {
+        setEditingCartItem(updated);
+      }
+      return updated;
+    } catch (error) {
+      console.warn('enrichCartItemTracking failed:', error);
+      return item;
+    }
+  };
+
+  const enrichAndPreloadTracking = async (item: CartItem) => {
+    const enriched = await enrichCartItemTracking(item);
+    await preloadTrackingForItem(enriched);
+  };
+
   const preloadTrackingForItem = async (item: CartItem) => {
     if (!shouldEnforceTrackingSelection(item)) {
       return;
     }
-  
-    const cacheKey = getTrackingCacheKey(item);
+    // Serials need explicit pick (qty match) — do not auto-select.
+    if (itemRequiresSerial(item)) {
+      return;
+    }
+
+    const cacheKey = getTrackingCacheKey(item, 'lot');
     if (
       trackingOptionsCacheRef.current[cacheKey] ||
       trackingPrefetchingKeysRef.current.has(cacheKey)
     ) {
       return;
     }
-  
+
     trackingPrefetchingKeysRef.current.add(cacheKey);
-  
+
     try {
-      const raw = await fetchAllItemLedgerEntries(cacheKey);
+      const raw = await fetchAllItemLedgerEntries(
+        String(item.no || item.system_id),
+      );
       const fifo = buildFifoTrackingOptions(raw);
       trackingOptionsCacheRef.current[cacheKey] = fifo;
-  
+
       if (fifo.length === 0) {
         return;
       }
-  
+
       const currentCartItem = cartItemsRef.current.find(
         cartItem => cartItem.system_id === item.system_id,
       );
-  
+
       if (
         !currentCartItem ||
         (currentCartItem.selectedTrackingCode || '').trim()
       ) {
         return;
       }
-  
+
       const preferredLot = fifo[0];
       const updatedCartItem: CartItem = {
         ...currentCartItem,
         selectedTrackingCode: preferredLot.lot_no,
-        trackingDetails: trackingDetailsFromOption(preferredLot),
+        trackingDetails: trackingDetailsFromOption(preferredLot, 'lot'),
       };
-  
+
       dispatch({
         type: 'CART_UPDATE_ITEM',
         payload: updatedCartItem,
       });
-  
+
       if (
         cartItemEditorVisible &&
         editingCartItem &&
@@ -904,30 +1126,53 @@ const Cart = ({
       return;
     }
 
-    setTrackingModalItem(item);
+    const enriched = await enrichCartItemTracking(item);
+    if (!itemRequiresTracking(enriched)) {
+      Toast.show({
+        type: 'info',
+        text1: 'No tracking required',
+        text2: 'This item is not set up for lot or serial tracking.',
+        visibilityTime: 3500,
+        position: 'top',
+      });
+      return;
+    }
+
+    const mode: 'lot' | 'serial' = itemRequiresSerial(enriched)
+      ? 'serial'
+      : 'lot';
+
+    setTrackingModalItem(enriched);
     setTrackingModalVisible(true);
-  
-    const cacheKey = getTrackingCacheKey(item);
+
+    const cacheKey = getTrackingCacheKey(enriched, mode);
     const cachedOptions = trackingOptionsCacheRef.current[cacheKey];
     if (cachedOptions) {
       setTrackingOptions(cachedOptions);
       setLoadingTrackingOptions(false);
       return;
     }
-  
+
     setTrackingOptions([]);
     setLoadingTrackingOptions(true);
     try {
-      const raw = await fetchAllItemLedgerEntries(cacheKey);
-      const fifo = buildFifoTrackingOptions(raw);
-      trackingOptionsCacheRef.current[cacheKey] = fifo;
-      setTrackingOptions(fifo);
-      if (fifo.length === 0) {
+      const raw = await fetchAllItemLedgerEntries(
+        String(enriched.no || enriched.system_id),
+      );
+      const options =
+        mode === 'serial'
+          ? buildAvailableSerialOptions(raw)
+          : buildFifoTrackingOptions(raw);
+      trackingOptionsCacheRef.current[cacheKey] = options;
+      setTrackingOptions(options);
+      if (options.length === 0) {
         Toast.show({
           type: 'info',
-          text1: 'No lots available',
+          text1: mode === 'serial' ? 'No serials available' : 'No lots available',
           text2:
-            'No ledger lots with quantity for this item, or stock was received without lot numbers.',
+            mode === 'serial'
+              ? 'No ledger serials with quantity for this item.'
+              : 'No ledger lots with quantity for this item, or stock was received without lot numbers.',
           visibilityTime: 4000,
           position: 'top',
         });
@@ -936,7 +1181,7 @@ const Cart = ({
       console.error('Failed to load item ledger entries:', e);
       Toast.show({
         type: 'error',
-        text1: 'Could not load lots',
+        text1: mode === 'serial' ? 'Could not load serials' : 'Could not load lots',
         text2: 'Check your connection and try again.',
         visibilityTime: 3500,
         position: 'top',
@@ -946,30 +1191,50 @@ const Cart = ({
       setLoadingTrackingOptions(false);
     }
   };
-  
+
+  const applyTrackingUpdate = (updated: CartItem) => {
+    dispatch({type: 'CART_UPDATE_ITEM', payload: updated});
+    if (
+      cartItemEditorVisible &&
+      editingCartItem &&
+      editingCartItem.system_id === updated.system_id
+    ) {
+      setEditingCartItem(updated);
+    }
+    setTrackingModalVisible(false);
+    setTrackingModalItem(null);
+  };
+
   const handleTrackingLotSelected = (option: TrackingLotOption) => {
     const target = trackingModalItem;
     if (!target) {
       return;
     }
-    const updated: CartItem = {
+    applyTrackingUpdate({
       ...target,
       selectedTrackingCode: option.lot_no,
-      trackingDetails: trackingDetailsFromOption(option),
-    };
-  
-    if (
-      cartItemEditorVisible &&
-      editingCartItem &&
-      editingCartItem.system_id === target.system_id
-    ) {
-      setEditingCartItem(updated);
-    } else {
-      dispatch({ type: 'CART_UPDATE_ITEM', payload: updated });
+      selectedSerialNos: undefined,
+      trackingDetails: trackingDetailsFromOption(option, 'lot'),
+    });
+  };
+
+  const handleSerialsConfirmed = (serialNos: string[]) => {
+    const target = trackingModalItem;
+    if (!target) {
+      return;
     }
-  
-    setTrackingModalVisible(false);
-    setTrackingModalItem(null);
+    const nextQty = Math.max(1, serialNos.length);
+    applyTrackingUpdate({
+      ...target,
+      quantity: nextQty,
+      selectedSerialNos: serialNos,
+      // Keep a readable label in the editor row.
+      selectedTrackingCode: serialNos.join(', '),
+      trackingDetails: {
+        serialNo: serialNos[0] || null,
+        code: serialNos[0] || null,
+      },
+    });
   };
   
   const handleSaleSuccess = (_result: any) => {
@@ -982,6 +1247,8 @@ const Cart = ({
     // Refresh drafts after successful sale
     loadDrafts();
     setTodayMySalesRefreshKey(k => k + 1);
+    invalidateSales();
+    invalidateItems();
   
     // Tab Make Sale lives inside MainLayout (isTabMode). Navigating to stack "Cart"
     // mounts a second, full-screen Cart — wrong screen. Stay on the current tab.
@@ -1046,8 +1313,9 @@ const Cart = ({
     try {
       setIsSavingDraft(true);
   
-      // Get default customer (General)
-      const customersData = await fetchCustomers();
+      // Prefer cached POS customers; fetch only if cache is empty.
+      const customersData =
+        saleCustomers.length > 0 ? saleCustomers : await fetchCustomers();
       const generalCustomer = customersData.find(
         customer =>
           customer.name.toLowerCase().includes('general') ||
@@ -1090,19 +1358,30 @@ const Cart = ({
         document_date: globalSellingDate.toISOString().split('T')[0],
         status: 'Draft' as const,
         total_amount: totalAmount,
-        payment_method: paymentMethodsData[0]?.id,
-        lines: cartItems.map((item, index) => ({
-          id: index + 1,
-          item: item.no || item.system_id,
-          item_no: item.no || item.system_id,
-          item_name: item.item_name,
-          quantity: item.quantity.toString(),
-          unit_price: item.unit_price.toString(),
-          total_amount: (item.unit_price * Number(item.quantity)).toString(),
-          unit_of_measure: item.unit_of_measure || 'PCS',
-          tracking_code: item.selectedTrackingCode || '',
-          description: '',
-        })),
+        payment_method:
+          pickDefaultCashPaymentMethod(paymentMethodsData)?.id ??
+          paymentMethodsData[0]?.id,
+        lines: cartItems.map((item, index) => {
+          // Cart unit_price is already the UOM sell price (price list / resolve).
+          // Match web POS: send as-is — do not divide by quantity_per_unit.
+          return {
+            id: index + 1,
+            item: item.no || item.system_id,
+            item_no: item.no || item.system_id,
+            item_name: item.item_name,
+            quantity: item.quantity.toString(),
+            unit_price: String(item.unit_price),
+            total_amount: (item.unit_price * Number(item.quantity)).toString(),
+            unit_of_measure: item.unit_of_measure || 'PCS',
+            tracking_code: item.tracking_code?.require_serial_no
+              ? ''
+              : item.selectedTrackingCode || '',
+            serial_nos: Array.isArray(item.selectedSerialNos)
+              ? item.selectedSerialNos
+              : [],
+            description: '',
+          };
+        }),
       };
   
       let response;
@@ -1180,115 +1459,234 @@ const Cart = ({
     }
   };
   
-  // Select draft and load into cart
-  const handleSelectDraft = async (draft: any) => {
-    if (!canMutateCart) {
-      Toast.show({
-        type: 'info',
-        text1: 'Permission denied',
-        text2: 'You cannot load drafts into the sale.',
-        visibilityTime: 3500,
-        position: 'top',
-      });
-      return;
-    }
-    try {
-      setLoadingDraftIntoCart(true);
-  
-      // Get full draft details with lines
-      const fullDraft = await getSalesInvoice(draft.id);
-  
-      // Clear current cart
-      dispatch({ type: 'CLEAR_CART' });
-  
-      // Fetch current inventory for each item in the draft
-      const draftItemsWithInventory = await Promise.all(
-        (fullDraft.lines || []).map(async (line: any) => {
-          const itemNo = line.item_no || line.item;
-          const systemId = line.item_system_id || itemNo;
-  
-          // Try to fetch current item details to get inventory
-          let inventory = 0;
-          let itemDetails: any = null;
-  
-          try {
-            // Search for the item to get current inventory
-            const searchResults = await catalogSearchItems(itemNo);
-            itemDetails = searchResults.find(
-              (item: CartItem) =>
-                item.no === itemNo ||
-                item.system_id === systemId ||
-                item.bar_code_no === itemNo,
-            );
-  
-            if (itemDetails) {
-              inventory = itemDetails.inventory || 0;
-            }
-          } catch (error) {
-            console.warn(`Failed to fetch inventory for item ${itemNo}:`, error);
-            // Continue with inventory = 0 if fetch fails
-          }
-  
-          return {
-            system_id: systemId || `draft-${line.id}`,
-            no: itemNo,
-            item_name: line.item_name,
-            barcode: itemDetails?.bar_code_no || '',
-            quantity: parseInt(line.quantity) || 1,
-            unit_price: parseFloat(line.unit_price) || 0,
-            original_price: parseFloat(line.unit_price) || 0,
-            total: parseFloat(line.total_amount) || 0,
-            inventory: inventory,
-            unit_of_measure: line.unit_of_measure || 'PCS',
-            quantity_per_unit: itemDetails?.quantity_per_unit || 1,
-            type: itemDetails?.type,
-            selectedTrackingCode: line.tracking_code || '',
-            tracking_code: itemDetails?.tracking_code ?? null,
-            date_sold: fullDraft.document_date || new Date().toISOString(),
-            item_images: itemDetails?.item_images || [],
-          };
-        }),
-      );
-  
-      // Add items to cart
-      draftItemsWithInventory.forEach((item: CartItem) => {
-        dispatch({
-          type: 'CART_ADD_ITEM',
-          payload: item,
-        });
-      });
-  
-      // Set global selling date
-      if (fullDraft.document_date) {
-        setGlobalSellingDate(new Date(fullDraft.document_date));
+  /**
+   * Load an Open/Draft invoice into the POS cart.
+   * When deleteAfterLoad is true (Edit in POS), the original invoice is removed
+   * so the user can edit lots/qty/lines and complete a fresh sale.
+   */
+  const loadInvoiceIntoCart = useCallback(
+    async (
+      invoiceId: number,
+      options?: {
+        deleteAfterLoad?: boolean;
+        /** Keep draft linkage so Save draft updates the same invoice. */
+        keepAsDraft?: boolean;
+        closeDraftsHub?: boolean;
+      },
+    ) => {
+      if (!canMutateCart) {
+        showUserError(
+          'Permission denied',
+          'You cannot load sales into the POS cart.',
+        );
+        return false;
       }
-  
-      // Store the draft ID and system_id so we can update it later instead of creating new
-      setCurrentDraftId(draft.id);
-      setCurrentDraftSystemId(fullDraft.system_id || null);
-  
-      Toast.show({
-        type: 'success',
-        text1: 'Draft Loaded',
-        text2: 'Draft has been loaded into sale. You can add more items and save to update.',
-        visibilityTime: 3000,
-        position: 'top',
-      });
-  
-      setDraftsModalVisible(false);
-    } catch (error: any) {
-      console.error('Failed to load draft:', error);
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: 'Failed to load draft',
-        visibilityTime: 3000,
-        position: 'top',
-      });
-    } finally {
-      setLoadingDraftIntoCart(false);
-    }
+
+      try {
+        setLoadingDraftIntoCart(true);
+        const fullInvoice = await getSalesInvoice(invoiceId);
+        const status = String(fullInvoice?.status || '').toLowerCase();
+        if (status !== 'draft' && status !== 'open') {
+          showUserError(
+            'Cannot load sale',
+            `Only Open or Draft invoices can be loaded. This one is ${
+              fullInvoice?.status || 'unknown'
+            }.`,
+          );
+          return false;
+        }
+
+        await dispatch({type: 'CLEAR_CART'});
+
+        const lines = Array.isArray(fullInvoice.lines) ? fullInvoice.lines : [];
+        if (lines.length === 0) {
+          showUserError(
+            'Empty invoice',
+            'This sale has no lines to load into POS.',
+          );
+          return false;
+        }
+
+        const cartLines = await Promise.all(
+          lines.map(async (line: any, index: number) => {
+            const itemNo = line.item_no || line.item;
+            const systemId =
+              line.item_system_id || itemNo || `line-${line.id || index}`;
+
+            let inventory = 0;
+            let itemDetails: any = null;
+            try {
+              const searchResults = await catalogSearchItems(String(itemNo));
+              itemDetails = searchResults.find(
+                (item: CartItem) =>
+                  item.no === itemNo ||
+                  item.system_id === systemId ||
+                  item.bar_code_no === itemNo,
+              );
+              if (itemDetails) {
+                inventory = itemDetails.inventory || 0;
+              }
+            } catch (error) {
+              console.warn(
+                `Failed to fetch inventory for item ${itemNo}:`,
+                error,
+              );
+            }
+
+            const qpu =
+              Number(line.quantity_per_unit) > 0
+                ? Number(line.quantity_per_unit)
+                : Number(itemDetails?.quantity_per_unit) > 0
+                  ? Number(itemDetails.quantity_per_unit)
+                  : 1;
+            const unitPrice = parseFloat(String(line.unit_price)) || 0;
+            const qty = parseInt(String(line.quantity), 10) || 1;
+            return {
+              system_id: String(systemId),
+              no: String(itemNo || ''),
+              item_name: line.item_name || 'Item',
+              barcode: itemDetails?.bar_code_no || '',
+              quantity: qty,
+              unit_price: unitPrice,
+              original_price: unitPrice,
+              total: parseFloat(String(line.total_amount)) || unitPrice * qty,
+              inventory,
+              unit_of_measure: line.unit_of_measure || 'PCS',
+              quantity_per_unit: qpu,
+              type: itemDetails?.type,
+            selectedTrackingCode: line.tracking_code || '',
+            selectedSerialNos: Array.isArray(line.serial_nos)
+              ? line.serial_nos
+              : undefined,
+            tracking_code: itemDetails?.tracking_code ?? null,
+            date_sold:
+                fullInvoice.document_date || new Date().toISOString(),
+              item_images: itemDetails?.item_images || [],
+            } as CartItem;
+          }),
+        );
+
+        for (const item of cartLines) {
+          await dispatch({type: 'CART_ADD_ITEM', payload: item});
+          // Ensure lot/serial picker can open (page-data often omits tracking_code).
+          void enrichAndPreloadTracking(item);
+        }
+
+        if (fullInvoice.document_date) {
+          setGlobalSellingDate(new Date(fullInvoice.document_date));
+        }
+
+        const customerId = Number(fullInvoice.customer);
+        const customerName = String(fullInvoice.customer_name || '').trim();
+        if (Number.isFinite(customerId) && customerId > 0) {
+          const match = saleCustomers.find(c => c.id === customerId);
+          setSelectedSaleCustomer(
+            match ||
+              ({
+                id: customerId,
+                name: customerName || 'Customer',
+                no: String(fullInvoice.customer_no || ''),
+              } as Customer),
+          );
+        }
+
+        if (options?.keepAsDraft && status === 'draft') {
+          setCurrentDraftId(invoiceId);
+          setCurrentDraftSystemId(fullInvoice.system_id || null);
+        } else {
+          // Fresh POS edit — do not keep updating the old Open/Draft invoice.
+          setCurrentDraftId(null);
+          setCurrentDraftSystemId(null);
+        }
+
+        if (options?.deleteAfterLoad) {
+          if (!canRemoveSale) {
+            showUserError(
+              'Loaded — delete blocked',
+              'Sale is in POS, but you do not have permission to delete the original unposted invoice. Remove it from Unposted Sales if needed.',
+            );
+          } else {
+            try {
+              await updateSalesInvoice(invoiceId, {
+                deleted: true,
+                system_id: fullInvoice.system_id,
+                id: invoiceId,
+              });
+              setDrafts(prev => prev.filter(d => d.id !== invoiceId));
+              await invalidateSales();
+            } catch (deleteError) {
+              console.error('Failed to delete unposted after POS load:', deleteError);
+              showUserError(
+                'Loaded — delete failed',
+                'Sale is in POS, but the original unposted invoice could not be removed. Delete it from Unposted Sales to avoid a duplicate.',
+              );
+            }
+          }
+        }
+
+        showUserSuccess(
+          options?.deleteAfterLoad ? 'Loaded into POS' : 'Draft loaded',
+          options?.deleteAfterLoad
+            ? 'Edit lot, quantity, or lines, then complete the sale.'
+            : 'Draft loaded. You can add items and save to update.',
+        );
+
+        if (options?.closeDraftsHub) {
+          setDraftsModalVisible(false);
+        }
+        return true;
+      } catch (error: any) {
+        console.error('Failed to load invoice into cart:', error);
+        showUserError(
+          'Could not load sale',
+          error?.response?.data?.detail ||
+            error?.message ||
+            'Failed to load this sale into POS.',
+        );
+        return false;
+      } finally {
+        setLoadingDraftIntoCart(false);
+      }
+    },
+    [
+      canMutateCart,
+      canRemoveSale,
+      dispatch,
+      invalidateSales,
+      saleCustomers,
+    ],
+  );
+
+  const handleSelectDraft = async (draft: any) => {
+    await loadInvoiceIntoCart(draft.id, {
+      keepAsDraft: true,
+      closeDraftsHub: true,
+      deleteAfterLoad: false,
+    });
   };
+
+  // Unposted Sales → Edit in POS
+  useEffect(() => {
+    const runLoad = (payload: PosLoadUnpostedPayload | null) => {
+      if (!payload?.invoiceId) {
+        return;
+      }
+      void loadInvoiceIntoCart(payload.invoiceId, {
+        deleteAfterLoad: payload.deleteAfterLoad !== false,
+        keepAsDraft: false,
+      });
+    };
+
+    runLoad(takePendingPosLoad());
+    const sub = DeviceEventEmitter.addListener(
+      POS_LOAD_UNPOSTED_EVENT,
+      (payload: PosLoadUnpostedPayload) => {
+        takePendingPosLoad();
+        runLoad(payload);
+      },
+    );
+    return () => sub.remove();
+  }, [loadInvoiceIntoCart]);
   
   // Delete draft
   const handleDeleteDraft = async (draft: any) => {
@@ -1397,6 +1795,7 @@ const Cart = ({
           onPress={() => setReviewSaleVisible(true)}
           isLoading={isPlacingOrder}
           checkoutBlocked={!canInsertSale}
+          embeddedInTabBar={isTabMode}
         />
       </View>
     );
@@ -1454,6 +1853,49 @@ const Cart = ({
               setSelectedSaleCustomer(item);
               setCustomerPickerVisible(false);
               setCustomerPickerQuery('');
+              // Customer-specific price lists: re-resolve open cart lines (web parity).
+              const lines = cartItemsRef.current;
+              if (lines.length > 0) {
+                void Promise.all(
+                  lines.map(async line => {
+                    const resolved = await resolvePosUnitPrice({
+                      itemNo: line.no || line.system_id,
+                      itemSystemId: line.system_id,
+                      unitOfMeasure: line.unit_of_measure || 'PCS',
+                      customerNo: item.no,
+                      quantity: line.quantity,
+                      fallbackBasePrice: Number(line.unit_price) || 0,
+                    });
+                    if (!Number.isFinite(resolved)) {
+                      return null;
+                    }
+                    return withCartUomDefaults({
+                      ...line,
+                      unit_price: resolved,
+                      original_price: resolved,
+                    });
+                  }),
+                ).then(updatedLines => {
+                  updatedLines.forEach(updated => {
+                    if (updated) {
+                      dispatch({type: 'CART_UPDATE_ITEM', payload: updated});
+                    }
+                  });
+                  if (
+                    editingCartItem &&
+                    updatedLines.some(
+                      u => u && u.system_id === editingCartItem.system_id,
+                    )
+                  ) {
+                    const match = updatedLines.find(
+                      u => u && u.system_id === editingCartItem.system_id,
+                    );
+                    if (match) {
+                      setEditingCartItem(match);
+                    }
+                  }
+                });
+              }
             }}
             activeOpacity={0.75}>
             <View style={styles.saleCustomerAvatar}>
@@ -1566,6 +2008,10 @@ const Cart = ({
             setCustomerPickerVisible(false);
             return true;
           }
+          if (uomModalVisible) {
+            setUomModalVisible(false);
+            return true;
+          }
           if (trackingModalVisible) {
             setTrackingModalVisible(false);
             setTrackingModalItem(null);
@@ -1667,52 +2113,73 @@ const Cart = ({
                 windowSize={7}
                 updateCellsBatchingPeriod={50}
                 renderItem={({ item }: { item: CartItem }) => {
+                  const removeLine = () => {
+                    if (!canModifySale) {
+                      return;
+                    }
+                    dispatch({
+                      type: 'REMOVE_FROM_CART',
+                      payload: { system_id: String(item.system_id) },
+                    });
+                  };
                   const lineContent = (
                     <View style={[styles.squareCartItem, ct.squareCartItem]}>
-                      <View style={styles.squareCartTextWrap}>
-                        <Text
-                          style={[styles.squareCartItemName, ct.squareCartName]}
-                          numberOfLines={1}>
-                          {item.item_name}
-                          {(Number(item.quantity) || 1) > 1
-                            ? ` x ${Number(item.quantity) || 1}`
-                            : ''}
-                        </Text>
-                      </View>
-
-                      <View style={styles.squareCartRight}>
+                      <Pressable
+                        {...ICON_BUTTON_QUICK_PRESS}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Edit ${item.item_name}`}
+                        onPress={() => openCartItemEditor(item)}
+                        style={({pressed}) => [
+                          styles.squareCartMainPress,
+                          pressed && {opacity: 0.78},
+                        ]}>
+                        <View style={styles.squareCartTextWrap}>
+                          <Text
+                            style={[styles.squareCartItemName, ct.squareCartName]}
+                            numberOfLines={1}>
+                            {item.item_name}
+                            {(Number(item.quantity) || 1) > 1
+                              ? ` x ${Number(item.quantity) || 1}`
+                              : ''}
+                          </Text>
+                        </View>
                         <Text style={[styles.squareCartAmount, ct.squareCartAmt]}>
                           {formatCurrencyCompact(
                             (Number(item.unit_price) || 0) *
                               (Number(item.quantity) || 1),
                           )}
                         </Text>
-                      </View>
+                      </Pressable>
+
+                      {canModifySale ? (
+                        <QuickIconPressable
+                          onPress={removeLine}
+                          hitSlop={ICON_BUTTON_HIT_SLOP}
+                          accessibilityLabel={`Remove ${item.item_name}`}
+                          style={styles.squareCartDeleteBtn}>
+                          <Image
+                            source={icons.delete_icon}
+                            style={[
+                              styles.squareCartDeleteIcon,
+                              { tintColor: COLORS.error },
+                            ]}
+                            resizeMode="contain"
+                          />
+                        </QuickIconPressable>
+                      ) : null}
                     </View>
                   );
                   return canModifySale ? (
                     <SwipeableCartLine
-                      fullDeleteThreshold={FULL_SWIPE_DELETE_THRESHOLD}
                       deleteBackgroundColor={COLORS.primary}
                       surfaceColor={colors.surface}
                       borderBottomColor={colors.border}
                       deleteTextStyle={[styles.deleteSwipeText, { color: COLORS.white }]}
-                      onPress={() => openCartItemEditor(item)}
-                      onDelete={() =>
-                        dispatch({
-                          type: 'REMOVE_FROM_CART',
-                          payload: { system_id: String(item.system_id) },
-                        })
-                      }>
+                      onDelete={removeLine}>
                       {lineContent}
                     </SwipeableCartLine>
                   ) : (
-                    <Pressable
-                      {...ICON_BUTTON_QUICK_PRESS}
-                      onPress={() => openCartItemEditor(item)}
-                      style={({pressed}) => [pressed && {opacity: 0.78}]}>
-                      {lineContent}
-                    </Pressable>
+                    lineContent
                   );
                 }}
                 contentContainerStyle={styles.squareCartListContent}
@@ -1720,7 +2187,10 @@ const Cart = ({
                   <View style={styles.emptyCartContainer}>
                     <Image source={icons.emptycart} style={styles.emptyCartImage} />
                     <Text style={[styles.emptyCartText, ct.emptyCartTxt]}>
-                      No items in sale. Start adding items to make a sale.
+                      No items in sale
+                    </Text>
+                    <Text style={[styles.emptyCartSubtext, ct.emptyCartTxt]}>
+                      Start adding items to make a sale.
                     </Text>
                   </View>
                 }
@@ -1861,24 +2331,51 @@ const Cart = ({
                         )}`
                         : 'Edit item'}
                     </Text>
-  
-                    <TouchableOpacity
-                      style={styles.cartEditorSaveButton}
-                      onPress={saveCartItemEditor}
-                      activeOpacity={0.85}>
-                      <Text style={styles.cartEditorSaveText}>Save</Text>
-                    </TouchableOpacity>
+
+                    {/* Spacer balances the close button; quantity/tracking auto-save. */}
+                    <View style={styles.cartEditorHeaderSpacer} />
                   </View>
   
                   <View style={[styles.cartEditorBody, ct.cartEditorBody]}>
-                    {editingCartItem?.unit_of_measure ? (
-                      <View style={[styles.cartEditorInfoCard, ct.cartEditorInfo]}>
-                        <Text style={styles.cartEditorInfoLabel}>UNIT OF MEASURE</Text>
-                        <Text style={[styles.cartEditorInfoValue, ct.cartEditorInfoVal]}>
-                          {editingCartItem.unit_of_measure}
-                        </Text>
+                    <TouchableOpacity
+                      style={[styles.cartEditorInfoCard, ct.cartEditorInfo]}
+                      onPress={openUomModal}
+                      disabled={!canModifySale}
+                      activeOpacity={0.78}
+                      accessibilityRole="button"
+                      accessibilityLabel="Change unit of measure">
+                      <Text style={styles.cartEditorInfoLabel}>UNIT OF MEASURE</Text>
+                      <View style={styles.cartEditorUomValueRow}>
+                        <View style={styles.cartEditorUomTextWrap}>
+                          <Text
+                            style={[styles.cartEditorInfoValue, ct.cartEditorInfoVal]}
+                            numberOfLines={1}>
+                            {editingCartItem?.unit_of_measure || 'Select unit'}
+                          </Text>
+                          {(editingCartItem?.quantity_per_unit || 1) > 1 ? (
+                            <Text
+                              style={[
+                                styles.cartEditorUomHint,
+                                ct.cartEditorTrackHint,
+                              ]}>
+                              {editingCartItem?.quantity_per_unit} per unit
+                            </Text>
+                          ) : (
+                            <Text
+                              style={[
+                                styles.cartEditorUomHint,
+                                ct.cartEditorTrackHint,
+                              ]}>
+                              Tap to change unit / price
+                            </Text>
+                          )}
+                        </View>
+                        <Image
+                          source={icons.down_arrow}
+                          style={styles.cartEditorTrackingChevron}
+                        />
                       </View>
-                    ) : null}
+                    </TouchableOpacity>
   
                     <Text style={styles.cartEditorSectionLabel}>QUANTITY</Text>
   
@@ -1927,9 +2424,13 @@ const Cart = ({
                       </Pressable>
                     </View>
   
-                    {editingCartItem?.tracking_code ? (
+                    {editingCartItem && itemRequiresTracking(editingCartItem) ? (
                       <View style={styles.cartEditorTrackingSection}>
-                        <Text style={styles.cartEditorSectionLabel}>TRACKING CODE</Text>
+                        <Text style={styles.cartEditorSectionLabel}>
+                          {itemRequiresSerial(editingCartItem)
+                            ? 'SERIAL NUMBERS'
+                            : 'LOT NUMBER'}
+                        </Text>
                         <TouchableOpacity
                           style={[styles.cartEditorTrackingRow, ct.cartEditorTrack]}
                           onPress={() =>
@@ -1939,13 +2440,49 @@ const Cart = ({
                           <View style={styles.cartEditorTrackingTextWrap}>
                             <Text
                               style={styles.cartEditorTrackingValue}
-                              numberOfLines={1}>
-                              {(editingCartItem.selectedTrackingCode || '').trim() ||
-                                'Select tracking code'}
+                              numberOfLines={2}>
+                              {itemRequiresSerial(editingCartItem)
+                                ? (editingCartItem.selectedSerialNos || []).length
+                                  ? (editingCartItem.selectedSerialNos || []).join(
+                                      ', ',
+                                    )
+                                  : 'Select serial numbers'
+                                : (editingCartItem.selectedTrackingCode || '').trim() ||
+                                  'Select lot number'}
                             </Text>
                             <Text
                               style={[styles.cartEditorTrackingHint, ct.cartEditorTrackHint]}>
-                              Choose the lot to use for this sale
+                              {itemRequiresSerial(editingCartItem)
+                                ? `Choose ${editingCartItem.quantity} serial${
+                                    editingCartItem.quantity === 1 ? '' : 's'
+                                  } (same as web POS)`
+                                : 'Choose the lot to use for this sale'}
+                            </Text>
+                          </View>
+                          <Image
+                            source={icons.down_arrow}
+                            style={styles.cartEditorTrackingChevron}
+                          />
+                        </TouchableOpacity>
+                      </View>
+                    ) : editingCartItem ? (
+                      <View style={styles.cartEditorTrackingSection}>
+                        <TouchableOpacity
+                          style={[styles.cartEditorTrackingRow, ct.cartEditorTrack]}
+                          onPress={() =>
+                            editingCartItem && openTrackingModal(editingCartItem)
+                          }
+                          activeOpacity={0.78}>
+                          <View style={styles.cartEditorTrackingTextWrap}>
+                            <Text style={styles.cartEditorTrackingValue}>
+                              Check lot / serial
+                            </Text>
+                            <Text
+                              style={[
+                                styles.cartEditorTrackingHint,
+                                ct.cartEditorTrackHint,
+                              ]}>
+                              Tap to load tracking setup for this item
                             </Text>
                           </View>
                           <Image
@@ -1975,10 +2512,19 @@ const Cart = ({
           <TrackingSelectionModal
             embedded
             visible={trackingModalVisible}
+            mode={
+              trackingModalItem && itemRequiresSerial(trackingModalItem)
+                ? 'serial'
+                : 'lot'
+            }
+            requiredCount={trackingModalItem?.quantity || 1}
+            selectedSerialNos={trackingModalItem?.selectedSerialNos}
             title={
               trackingModalItem
-                ? `Select lot — ${trackingModalItem.item_name}`
-                : 'Select lot'
+                ? itemRequiresSerial(trackingModalItem)
+                  ? `Select serials — ${trackingModalItem.item_name}`
+                  : `Select lot — ${trackingModalItem.item_name}`
+                : 'Select tracking'
             }
             loading={loadingTrackingOptions}
             options={trackingOptions}
@@ -1987,6 +2533,28 @@ const Cart = ({
               setTrackingModalItem(null);
             }}
             onSelect={handleTrackingLotSelected}
+            onConfirmSerials={handleSerialsConfirmed}
+          />
+
+          <UOMSelectionModal
+            embedded
+            visible={uomModalVisible}
+            title={
+              editingCartItem
+                ? `Unit — ${editingCartItem.item_name}`
+                : 'Unit of measure'
+            }
+            loading={loadingUomOptions}
+            options={uomOptions}
+            selectedCode={editingCartItem?.unit_of_measure}
+            baseUnitPrice={
+              editingCartItem?.original_price != null
+                ? Number(editingCartItem.original_price)
+                : Number(editingCartItem?.unit_price) || 0
+            }
+            resolvedPrices={uomResolvedPrices}
+            onClose={() => setUomModalVisible(false)}
+            onSelect={handleUomSelected}
           />
   
           {customerPickerVisible ? (
@@ -2365,17 +2933,18 @@ const Cart = ({
             />
           ) : null}
 
-          {isTabMode ? (
-            <PosConnectivityBadge
-              onPress={() => navigation.navigate('SyncQueue' as never)}
-            />
-          ) : null}
-
-          {showTodayMySales || (canUseDrafts && isTabMode) ? (
+          {isTabMode || showTodayMySales ? (
             <View style={styles.posToolbarRow}>
+              {isTabMode ? (
+                <PosConnectivityBadge
+                  compact
+                  onPress={() => navigation.navigate('SyncQueue' as never)}
+                />
+              ) : null}
               <View style={styles.posToolbarMain}>
                 {showTodayMySales ? (
                   <TodayMySalesBar
+                    compact
                     userId={Number(auth?.user_id) || null}
                     refreshKey={todayMySalesRefreshKey}
                     onOpenHistory={
@@ -2386,7 +2955,7 @@ const Cart = ({
                   />
                 ) : null}
               </View>
-              {isTabMode ? renderDraftsAccessButton() : null}
+              {isTabMode && canUseDrafts ? renderDraftsAccessButton() : null}
             </View>
           ) : null}
   
@@ -2521,7 +3090,7 @@ const Cart = ({
             initialSelectedCustomer={selectedSaleCustomer}
           />
   
-          <Toast />
+          <AppToastHost />
           {/* Customer picker must mount after the current-sale modal so its Modal stacks on top on Android/iOS */}
           {renderReviewSaleSheet()}
           {renderCustomerPicker()}
@@ -2883,14 +3452,17 @@ const styles = StyleSheet.create({
   },
   posToolbarRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    paddingRight: SIZES.padding,
+    alignItems: 'flex-start',
+    justifyContent: 'flex-end',
+    paddingHorizontal: SIZES.padding,
+    paddingBottom: 8,
     gap: 8,
     minHeight: 40,
   },
   posToolbarMain: {
     flex: 1,
     minWidth: 0,
+    alignItems: 'flex-end',
   },
   headerActionsRow: {
     flexDirection: 'row',
@@ -2898,12 +3470,13 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   draftsAccessButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    marginTop: 0,
   },
   draftsAccessIcon: {
     width: 20,
@@ -3042,13 +3615,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 18,
-    paddingVertical: 20,
+    paddingVertical: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.lightGray1,
+    gap: 4,
+  },
+  squareCartMainPress: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    minWidth: 0,
+    gap: 12,
   },
   squareCartTextWrap: {
     flex: 1,
-    paddingRight: 16,
+    minWidth: 0,
+    paddingRight: 8,
   },
   squareCartItemName: {
     ...FONTS.body3,
@@ -3069,6 +3651,17 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     fontSize: 15,
     lineHeight: 20,
+  },
+  squareCartDeleteBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  squareCartDeleteIcon: {
+    width: 18,
+    height: 18,
   },
   cartItemWrapper: {
     marginHorizontal: 12,
@@ -3176,18 +3769,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     paddingRight: 12,
   },
-  cartEditorSaveButton: {
-    minWidth: 74,
+  cartEditorHeaderSpacer: {
+    width: 56,
     height: 56,
-    backgroundColor: COLORS.primary2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 14,
-  },
-  cartEditorSaveText: {
-    ...FONTS.body3,
-    color: COLORS.white,
-    fontWeight: '700',
   },
   cartEditorBody: {
     flex: 1,
@@ -3215,6 +3799,21 @@ const styles = StyleSheet.create({
     color: COLORS.darkGray,
     fontWeight: '600',
     marginTop: 6,
+  },
+  cartEditorUomValueRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  cartEditorUomTextWrap: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 8,
+  },
+  cartEditorUomHint: {
+    ...FONTS.body5,
+    color: COLORS.gray,
+    marginTop: 2,
   },
   cartEditorSectionLabel: {
     ...FONTS.body4,
@@ -3359,11 +3958,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 32,
+    paddingHorizontal: 28,
   },
   emptyCartText: {
     ...FONTS.h3,
     color: COLORS.gray,
     marginTop: 16,
+    textAlign: 'center',
+    width: '100%',
+  },
+  emptyCartSubtext: {
+    ...FONTS.body4,
+    color: COLORS.gray,
+    marginTop: 8,
+    textAlign: 'center',
+    width: '100%',
+    lineHeight: 20,
   },
   emptyCartImage: {
     width: 120,
@@ -3373,7 +3983,7 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   footerContainer: {
-    backgroundColor: COLORS.white,
+    backgroundColor: 'transparent',
     paddingTop: 0,
     paddingBottom: 0,
   },

@@ -1,7 +1,7 @@
 import {Platform} from 'react-native';
 
 // Set USE_TEST_ENV to true to use test environment
-export const USE_TEST_ENV = false;
+export const USE_TEST_ENV = true;
 
 /**
  * Test-only master switch for simulated offline (requires USE_TEST_ENV = true).
@@ -10,7 +10,7 @@ export const USE_TEST_ENV = false;
  */
 export const SIMULATE_OFFLINE_POS = false;
 
-export const TEST_API_PORT = 8000;
+export const TEST_API_PORT = 8003;
 
 /** Your PC WiFi IPv4 — run `ipconfig` on Windows and pick the WiFi adapter address. */
 export const TEST_API_LAN_HOST = '192.168.1.107';

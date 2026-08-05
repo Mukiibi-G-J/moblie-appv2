@@ -16,17 +16,17 @@ import type {AxiosRequestConfig} from 'axios';
 // New function to search for items
 export const searchItems = async (searchQuery: string): Promise<CartItem[]> => {
   try {
-    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const axiosInstance = createAxiosInstance(tenant) || undefined;
-    const response = await axiosInstance.get(
-      `/api/items/?q=${encodeURIComponent(searchQuery)}`,
-    );
-    if (response?.data?.results && Array.isArray(response.data.results)) {
-      return response.data.results;
-    }
-    return [];
+    const {fetchPageDataAll, PAGE_IDS} = await import('./pageDataService');
+    const {mapPageDataItem} = await import('./pageDataMappers');
+    const rows = await fetchPageDataAll({
+      pageId: PAGE_IDS.ItemList,
+      search: searchQuery,
+      limit: 50,
+      mapRow: mapPageDataItem,
+    });
+    return rows as unknown as CartItem[];
   } catch (error) {
-    throw error; // Handle errors
+    throw error;
   }
 };
 
@@ -48,31 +48,92 @@ export type ItemDetailByNo = {
 export const fetchItemByNo = async (
   itemNo: string,
 ): Promise<ItemDetailByNo | null> => {
-  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-  const axiosInstance = createAxiosInstance(tenant) || undefined;
-  const response = await axiosInstance.get('/api/items/', {
-    params: {no: itemNo},
-  });
-  const results = response?.data?.results;
-  if (!Array.isArray(results) || results.length === 0) {
-    return null;
+  try {
+    const {fetchPageDataAll, PAGE_IDS} = await import('./pageDataService');
+    const {mapPageDataItem} = await import('./pageDataMappers');
+    const rows = await fetchPageDataAll({
+      pageId: PAGE_IDS.ItemList,
+      search: itemNo,
+      limit: 20,
+      filters: {no: itemNo},
+      mapRow: mapPageDataItem,
+    });
+    const row =
+      rows.find(r => String(r.no).toLowerCase() === itemNo.toLowerCase()) ||
+      rows[0];
+    if (!row) {
+      return null;
+    }
+    const id = row.id;
+    if (id == null) {
+      return null;
+    }
+    const mappedTracking = (row as any).tracking_code ?? null;
+    if (mappedTracking) {
+      return {
+        id: Number(id),
+        no: row.no ?? itemNo,
+        item_name: row.item_name ?? '',
+        tracking_code: mappedTracking,
+      };
+    }
+    // Page-data often omits nested tracking — enrich from REST like web POS.
+    const enriched = await fetchItemTrackingByNo(itemNo);
+    return {
+      id: Number(id),
+      no: row.no ?? itemNo,
+      item_name: row.item_name ?? '',
+      tracking_code: enriched,
+    };
+  } catch {
+    // Fallback: classic REST still returns tracking_code for purchase specs.
+    const enriched = await fetchItemDetailByNoRest(itemNo);
+    return enriched;
   }
-  const row = results[0];
-  const id = row.id ?? row.item_id;
-  if (id == null) {
-    return null;
-  }
-  let tracking = row.tracking_code ?? null;
-  if (Array.isArray(tracking)) {
-    tracking = tracking.length > 0 ? tracking[0] : null;
-  }
-  return {
-    id: Number(id),
-    no: row.no ?? itemNo,
-    item_name: row.item_name ?? '',
-    tracking_code: tracking,
-  };
 };
+
+/** REST item detail — reliable source for tracking_code (web POS parity). */
+export async function fetchItemDetailByNoRest(
+  itemNo: string,
+): Promise<ItemDetailByNo | null> {
+  try {
+    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+    const axios = createAxiosInstance(tenant) || undefined;
+    const response = await axios.get('/api/items/', {
+      params: {no: itemNo},
+    });
+    const results = response?.data?.results;
+    if (!Array.isArray(results) || results.length === 0) {
+      return null;
+    }
+    const row = results[0];
+    const id = row.id ?? row.item_id;
+    if (id == null) {
+      return null;
+    }
+    let tracking = row.tracking_code ?? null;
+    if (Array.isArray(tracking)) {
+      tracking = tracking.length > 0 ? tracking[0] : null;
+    }
+    return {
+      id: Number(id),
+      no: row.no ?? itemNo,
+      item_name: row.item_name ?? '',
+      tracking_code: tracking,
+    };
+  } catch (error) {
+    console.warn('fetchItemDetailByNoRest failed:', error);
+    return null;
+  }
+}
+
+/** Only the tracking_code object for a catalog item (null if none / offline). */
+export async function fetchItemTrackingByNo(
+  itemNo: string,
+): Promise<ItemDetailByNo['tracking_code']> {
+  const detail = await fetchItemDetailByNoRest(itemNo);
+  return detail?.tracking_code ?? null;
+}
 
 export type PurchaseTrackingSpecification = {
   id?: number;
@@ -187,11 +248,13 @@ export type ItemLedgerApiPage = {
 
 export type ItemLedgerEntryRow = {
   lot_no?: string;
+  serial_no?: string;
   remaining_quantity?: number;
   document_no?: string;
   entry_type?: string;
   document_type?: string;
   expiry_date?: string;
+  open?: boolean;
 };
 
 export const getItemLedgerEntries = async (
@@ -252,42 +315,59 @@ export const fetchPurchasesData = async (filters?: {
   search?: string;
 }): Promise<{ results: any[]; count: number }> => {
   try {
-    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const axiosInstance = createAxiosInstance(tenant) || undefined;
+    const {fetchPageDataPaginated, PAGE_IDS} = await import(
+      './pageDataService'
+    );
+    const {mapPageDataPurchase} = await import('./pageDataMappers');
 
-    const params: any = {};
-
-    if (filters?.status) {
-      params.status = filters.status;
+    const status = filters?.status;
+    // "all" spans open + posted tables — keep classic REST for that case.
+    if (!status || status === 'all') {
+      const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+      const axiosInstance = createAxiosInstance(tenant) || undefined;
+      const params: any = {};
+      if (filters?.startDate) params.document_date__gte = filters.startDate;
+      if (filters?.endDate) params.document_date__lte = filters.endDate;
+      if (filters?.vendor) params.vendor = filters.vendor;
+      if (filters?.page) params.page = filters.page;
+      if (filters?.pageSize) params.page_size = filters.pageSize;
+      if (filters?.search) params.search = filters.search;
+      const response = await axiosInstance.get('/api/purchases/', {params});
+      if (response?.data?.results && Array.isArray(response.data.results)) {
+        return {
+          results: response.data.results,
+          count: response.data.count || 0,
+        };
+      }
+      if (Array.isArray(response.data)) {
+        return {results: response.data, count: response.data.length};
+      }
+      return {results: [], count: 0};
     }
+
+    const pageId =
+      status === 'Posted'
+        ? PAGE_IDS.PostedPurchaseInvoiceList
+        : PAGE_IDS.PurchaseInvoiceList;
+    const pageFilters: Record<string, string | number> = {};
     if (filters?.startDate) {
-      params.document_date__gte = filters.startDate;
+      pageFilters.posting_date_from = filters.startDate;
     }
     if (filters?.endDate) {
-      params.document_date__lte = filters.endDate;
+      pageFilters.posting_date_to = filters.endDate;
     }
     if (filters?.vendor) {
-      params.vendor = filters.vendor;
+      pageFilters.vendor = filters.vendor;
     }
-    if (filters?.page) {
-      params.page = filters.page;
-    }
-    if (filters?.pageSize) {
-      params.page_size = filters.pageSize;
-    }
-    if (filters?.search) {
-      params.search = filters.search;
-    }
-
-    const response = await axiosInstance.get('/api/purchases/', {params});
-
-    if (response?.data?.results && Array.isArray(response.data.results)) {
-      return { results: response.data.results, count: response.data.count || 0 };
-    } else if (Array.isArray(response.data)) {
-      return { results: response.data, count: response.data.length };
-    }
-    
-    return { results: [], count: 0 };
+    const data = await fetchPageDataPaginated({
+      pageId,
+      page: filters?.page ?? 1,
+      pageSize: filters?.pageSize ?? 50,
+      search: filters?.search,
+      filters: pageFilters,
+      mapRow: mapPageDataPurchase,
+    });
+    return {results: data.results, count: data.count};
   } catch (error: any) {
     console.error('fetchPurchasesData: Error fetching purchases:', error);
     throw error;
@@ -485,23 +565,14 @@ export const postPurchase = async (purchaseId: number | string): Promise<any> =>
 // Get vendors list
 export const fetchVendors = async (search?: string): Promise<any[]> => {
   try {
-    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const axiosInstance = createAxiosInstance(tenant) || undefined;
-
-    const params: any = {};
-    if (search) {
-      params.search = search;
-    }
-
-    const response = await axiosInstance.get('/api/vendors/', {params});
-
-    if (response?.data?.results && Array.isArray(response.data.results)) {
-      return response.data.results;
-    } else if (Array.isArray(response.data)) {
-      return response.data;
-    }
-    
-    return [];
+    const {fetchPageDataAll, PAGE_IDS} = await import('./pageDataService');
+    const {mapPageDataVendor} = await import('./pageDataMappers');
+    return await fetchPageDataAll({
+      pageId: PAGE_IDS.VendorList,
+      search,
+      limit: 200,
+      mapRow: mapPageDataVendor,
+    });
   } catch (error: any) {
     console.error('fetchVendors: Error fetching vendors:', error);
     throw error;
@@ -527,14 +598,26 @@ function buildSalesHistoryQueryParams(
 ) {
   const params: Record<string, string | number> = {};
 
-  if (filters?.status) {
+  // Unposted is client-side (Open + Draft); never send that status to the API.
+  if (filters?.status && filters.status !== 'Unposted') {
     params.status = filters.status;
   }
   if (filters?.startDate) {
+    // Legacy (document_date) + V2 Posted Sales History (posting_date).
     params.date_range_after = filters.startDate;
+    params.posting_date__gte = filters.startDate;
   }
   if (filters?.endDate) {
     params.date_range_before = filters.endDate;
+    params.posting_date__lte = filters.endDate;
+  }
+  // Single-day shortcut used by webV2 summary when from === to.
+  if (
+    filters?.startDate &&
+    filters?.endDate &&
+    filters.startDate === filters.endDate
+  ) {
+    params.posting_date = filters.startDate;
   }
   if (filters?.paymentMethod) {
     params.payment_method = filters.paymentMethod;
@@ -594,6 +677,8 @@ export const fetchMyUserSetup = async (): Promise<MyUserSetupLite | null> => {
 
 export type SalesHistorySummary = {
   total_sales: number;
+  /** WebV2 POS prefers net_sales when present. */
+  net_sales: number;
   total_products: number;
   total_invoices: number;
 };
@@ -607,8 +692,8 @@ export type SalesUserSummaryRow = {
 };
 
 /**
- * GET /api/sales/summary/ — same filters as list (no pagination), matches web SalesServices.getSalesSummary.
- * May 403 if user lacks Sales History summary permission (object 10004); returns null on any error.
+ * GET /api/sales/summary/ — same as web SalesServices.getSalesSummary / webV2 salesService.getSalesSummary.
+ * Posted sales archive only (not Open invoices).
  */
 export const fetchSalesSummary = async (
   filters?: Omit<SalesHistoryListFilters, 'page' | 'pageSize'>,
@@ -622,8 +707,11 @@ export const fetchSalesSummary = async (
     if (!d || typeof d !== 'object') {
       return null;
     }
+    const totalSales = Number(d.total_sales ?? 0);
+    const netSales = Number(d.net_sales ?? totalSales);
     return {
-      total_sales: Number(d.total_sales ?? 0),
+      total_sales: totalSales,
+      net_sales: netSales,
       total_products: Number(d.total_products ?? 0),
       total_invoices: Number(d.total_invoices ?? 0),
     };
@@ -645,7 +733,8 @@ export function getLocalDateYmd(d: Date = new Date()): string {
 }
 
 /**
- * Posted sales totals for one user today (web POS: SalesDesktop refreshTodayMySales).
+ * Posted sales totals for one user today.
+ * WebV2 POS: GET /api/sales/summary/?posting_date=today&user=<id>
  */
 export const fetchTodayMySalesForUser = async (
   userId: number,
@@ -654,12 +743,21 @@ export const fetchTodayMySalesForUser = async (
     return null;
   }
   const today = getLocalDateYmd();
-  const users = await fetchSalesUserSummary({
+  const summary = await fetchSalesSummary({
     startDate: today,
     endDate: today,
-    status: 'Posted',
+    user: userId,
   });
-  return users.find(u => u.user_id === userId) ?? null;
+  if (!summary) {
+    return null;
+  }
+  return {
+    user_id: userId,
+    user_name: '',
+    total_sales: summary.net_sales ?? summary.total_sales,
+    total_products: summary.total_products,
+    total_invoices: summary.total_invoices,
+  };
 };
 
 export const fetchSalesUserSummary = async (
@@ -690,6 +788,120 @@ export const fetchSalesUserSummary = async (
   }
 };
 
+function normalizeSalesListResponse(data: any) {
+  if (data?.results && Array.isArray(data.results)) {
+    return {
+      results: data.results,
+      count: data.count || data.results.length,
+      next: data.next ?? null,
+      previous: data.previous ?? null,
+    };
+  }
+  if (Array.isArray(data)) {
+    return {
+      results: data,
+      count: data.length,
+      next: null,
+      previous: null,
+    };
+  }
+  return {results: [], count: 0, next: null, previous: null};
+}
+
+const EMPTY_SALES_PAGE = {
+  results: [] as any[],
+  count: 0,
+  next: null as string | null,
+  previous: null as string | null,
+};
+
+/** DRF returns 404 {"detail":"Invalid page."} past the last page. */
+function isInvalidPageError(error: unknown): boolean {
+  if (error === 'Invalid page.') {
+    return true;
+  }
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+  const err = error as {
+    message?: string;
+    response?: {status?: number; data?: {detail?: string; error?: string}};
+  };
+  if (err.message === 'Invalid page.') {
+    return true;
+  }
+  const data = err.response?.data;
+  return data?.detail === 'Invalid page.' || data?.error === 'Invalid page.';
+}
+
+async function getSalesListPageOrEmpty(
+  axiosInstance: ReturnType<typeof createAxiosInstance>,
+  params: Record<string, string | number>,
+  requestConfig?: AxiosRequestConfig,
+) {
+  try {
+    return await axiosInstance.get('/api/sales/', {
+      params,
+      ...(requestConfig ?? {}),
+    });
+  } catch (error) {
+    // One of Open/Draft often exhausts before the other when merged.
+    if (isInvalidPageError(error)) {
+      return {data: EMPTY_SALES_PAGE};
+    }
+    throw error;
+  }
+}
+
+/** Open + Draft in one list (no ?user= — no CLE ownership yet). */
+async function fetchUnpostedSalesPage(
+  filters?: SalesHistoryListFilters,
+  requestConfig?: AxiosRequestConfig,
+) {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant) || undefined;
+  const page = filters?.page || 1;
+  const pageSize = filters?.pageSize || 20;
+  const half = Math.max(5, Math.ceil(pageSize / 2));
+  const base = {
+    ...buildSalesHistoryQueryParams(
+      {...filters, status: undefined, user: undefined},
+      {omitPagination: true},
+    ),
+    page,
+    page_size: half,
+    ordering: '-created_at',
+  };
+
+  const [openRes, draftRes] = await Promise.all([
+    getSalesListPageOrEmpty(
+      axiosInstance,
+      {...base, status: 'Open'},
+      requestConfig,
+    ),
+    getSalesListPageOrEmpty(
+      axiosInstance,
+      {...base, status: 'Draft'},
+      requestConfig,
+    ),
+  ]);
+
+  const open = normalizeSalesListResponse(openRes?.data);
+  const draft = normalizeSalesListResponse(draftRes?.data);
+  const results = [...open.results, ...draft.results].sort((a: any, b: any) => {
+    const ta = new Date(a?.created_at || a?.document_date || 0).getTime();
+    const tb = new Date(b?.created_at || b?.document_date || 0).getTime();
+    return tb - ta;
+  });
+
+  return {
+    results,
+    count: (open.count || 0) + (draft.count || 0),
+    next: open.next || draft.next || null,
+    previous: open.previous || draft.previous || null,
+  };
+}
+
 // New function to fetch sales data
 // Matches the web frontend implementation in SalesHistory.tsx
 export const fetchSalesData = async (
@@ -697,6 +909,10 @@ export const fetchSalesData = async (
   requestConfig?: AxiosRequestConfig,
 ) => {
   try {
+    if (filters?.status === 'Unposted') {
+      return await fetchUnpostedSalesPage(filters, requestConfig);
+    }
+
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
     const axiosInstance = createAxiosInstance(tenant) || undefined;
 
@@ -717,37 +933,27 @@ export const fetchSalesData = async (
       count: response.data?.count,
     });
 
-    // Handle paginated response format: {results: [...], count: N, next: ..., previous: ...}
-    if (response?.data?.results && Array.isArray(response.data.results)) {
-      console.log('fetchSalesData: Returning paginated response, count:', response.data.count);
-      return {
-        results: response.data.results,
-        count: response.data.count || response.data.results.length,
-        next: response.data.next,
-        previous: response.data.previous,
-      };
-    } else if (Array.isArray(response.data)) {
-      console.log('fetchSalesData: Returning direct array, count:', response.data.length);
-      return {
-        results: response.data,
-        count: response.data.length,
-        next: null,
-        previous: null,
-      };
-    }
-    
-    console.log('fetchSalesData: No valid data found, returning empty array');
-    return {
-      results: [],
-      count: 0,
-      next: null,
-      previous: null,
-    };
+    const normalized = normalizeSalesListResponse(response?.data);
+    console.log(
+      'fetchSalesData: Returning list response, count:',
+      normalized.count,
+    );
+    return normalized;
   } catch (error: any) {
+    // Interceptor may reject bare `detail` strings (e.g. "Invalid page.").
+    const detail =
+      typeof error === 'string'
+        ? error
+        : error?.customMessage ||
+          error?.message ||
+          error?.response?.data?.detail ||
+          error?.response?.data?.error;
     console.error('fetchSalesData: Error fetching sales data:', {
-      message: error.message,
-      response: error.response?.data,
-      status: error.response?.status,
+      detail,
+      message: typeof error === 'string' ? error : error?.message,
+      response: error?.response?.data,
+      status: error?.response?.status,
+      raw: typeof error === 'string' ? error : undefined,
     });
     throw error;
   }
@@ -784,13 +990,54 @@ export const createSales = async (salesData: SalesPostData[]) => {
   }
 };
 
+/** Pull a readable message from DRF / Axios error payloads. */
+export const getSalesApiErrorMessage = (
+  error: any,
+  fallback = 'Request failed',
+): string => {
+  const data = error?.response?.data;
+  if (typeof data === 'string' && data.trim()) {
+    return data.trim();
+  }
+  if (data && typeof data === 'object') {
+    const detail = data.detail;
+    const err = data.error;
+    if (typeof detail === 'string' && detail.trim()) {
+      return detail.trim();
+    }
+    if (typeof err === 'string' && err.trim()) {
+      // Prefer detail when both exist (post_invoice shape).
+      if (typeof detail === 'string' && detail.trim()) {
+        return detail.trim();
+      }
+      return err.trim();
+    }
+    if (Array.isArray(detail) && detail.length) {
+      return detail.map(String).join(' ');
+    }
+    if (typeof data.message === 'string' && data.message.trim()) {
+      return data.message.trim();
+    }
+  }
+  if (typeof error?.message === 'string' && error.message.trim()) {
+    return error.message.trim();
+  }
+  return fallback;
+};
+
+export const isAlreadyPostedSalesError = (error: any): boolean => {
+  const msg = getSalesApiErrorMessage(error, '').toLowerCase();
+  return msg.includes('already posted');
+};
+
 export const postSalesInvoice = async (salesId: number) => {
   try {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
     const axiosInstance = createAxiosInstance(tenant) || undefined;
 
-    // Use the correct endpoint from frontend
-    const endpoint = `/api/sales/${salesId}/post_sale/`;
+    // Use post_invoice (proper status checks + processor errors), not post_sale
+    // admin alias which historically returned 200 even when posting failed.
+    const endpoint = `/api/sales/${salesId}/post_invoice/`;
 
     console.log(`DEBUG: Posting sales invoice at: ${endpoint}`);
     const response = await axiosInstance.post(endpoint);
@@ -802,6 +1049,10 @@ export const postSalesInvoice = async (salesId: number) => {
   }
 };
 
+/**
+ * Create a sales invoice only. Callers that need posting must call
+ * postSalesInvoice and handle failures (do not swallow post errors here).
+ */
 export const createSalesInvoice = async (
   salesInvoiceData: SalesInvoiceData,
 ) => {
@@ -810,27 +1061,6 @@ export const createSalesInvoice = async (
     const axiosInstance = createAxiosInstance(tenant) || undefined;
     console.log('DEBUG: Sending sales invoice data:', salesInvoiceData);
     const response = await axiosInstance.post('/api/sales/', salesInvoiceData);
-
-    // Only auto-post if status is not "Draft"
-    if (response.data && response.data.id && salesInvoiceData.status !== 'Draft') {
-      try {
-        const postResult = await postSalesInvoice(response.data.id);
-        if (
-          postResult &&
-          typeof postResult === 'object' &&
-          'success' in postResult &&
-          postResult.success
-        ) {
-          console.log('DEBUG: Sales invoice posted successfully');
-        } else {
-          console.log('DEBUG: Sales invoice created but posting not available');
-        }
-      } catch (postError) {
-        console.error('DEBUG: Error posting sales invoice:', postError);
-        // Continue with the response even if posting fails
-      }
-    }
-
     return response;
   } catch (error) {
     throw error;
@@ -861,6 +1091,63 @@ export const fetchDraftSales = async () => {
     }
     return [];
   }
+};
+
+/**
+ * Unposted sales (Open + Draft) in one list.
+ * Do not send ?user= — these invoices have no customer ledger ownership yet.
+ */
+export const fetchUnpostedSales = async (pageSize: number = 20) => {
+  try {
+    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+    const axiosInstance = createAxiosInstance(tenant) || undefined;
+    const half = Math.max(5, Math.ceil(pageSize / 2));
+
+    const [openRes, draftRes] = await Promise.all([
+      axiosInstance.get('/api/sales/', {
+        params: {
+          status: 'Open',
+          page: 1,
+          page_size: half,
+          ordering: '-created_at',
+        },
+      }),
+      axiosInstance.get('/api/sales/', {
+        params: {
+          status: 'Draft',
+          page: 1,
+          page_size: half,
+          ordering: '-created_at',
+        },
+      }),
+    ]);
+
+    const open = Array.isArray(openRes?.data?.results)
+      ? openRes.data.results
+      : [];
+    const drafts = Array.isArray(draftRes?.data?.results)
+      ? draftRes.data.results
+      : [];
+
+    return [...open, ...drafts]
+      .sort((a: any, b: any) => {
+        const ta = new Date(a?.created_at || a?.document_date || 0).getTime();
+        const tb = new Date(b?.created_at || b?.document_date || 0).getTime();
+        return tb - ta;
+      })
+      .slice(0, pageSize);
+  } catch (error: any) {
+    if (!isSubscriptionExpiredError(error)) {
+      console.error('Error fetching unposted sales:', error);
+    }
+    return [];
+  }
+};
+
+/** @deprecated Use fetchUnpostedSales */
+export const fetchOpenSales = async (pageSize: number = 10) => {
+  const rows = await fetchUnpostedSales(pageSize);
+  return rows.filter((r: any) => r?.status === 'Open');
 };
 
 // Get a single sales invoice by ID
@@ -940,46 +1227,54 @@ export type ItemListFilters = {
   inventoryStatus?: 'IN_STOCK' | 'OUT_OF_STOCK';
 };
 
-export function isInvalidPageError(error: unknown): boolean {
-  if (!error || typeof error !== 'object' || !('response' in error)) {
-    return false;
-  }
-  const data = (error as {response?: {data?: {detail?: string; error?: string}}})
-    .response?.data;
-  return data?.detail === 'Invalid page.' || data?.error === 'Invalid page.';
-}
+export {isInvalidPageError};
 
 export const fetchItems = async (
   page: number = 1,
   searchQuery: string = '',
-  categoryId?: number,
+  categoryId?: number | string,
   filters?: ItemListFilters,
 ) => {
   try {
-    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const axiosInstance = createAxiosInstance(tenant) || undefined;
-    const params: any = {
+    // Stock filters are classic-API specific.
+    if (filters?.lowStock || filters?.inventoryStatus) {
+      const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+      const axiosInstance = createAxiosInstance(tenant) || undefined;
+      const params: any = {
         page,
         page_size: 20,
         q: searchQuery.trim(),
-    };
-
-    // Add category filter if provided
-    if (categoryId) {
-      params.category_id = categoryId;
+      };
+      if (categoryId) {
+        params.category_id = categoryId;
+      }
+      if (filters?.lowStock) {
+        params.low_stock = true;
+      }
+      if (filters?.inventoryStatus) {
+        params.inventory_status = filters.inventoryStatus;
+      }
+      const response = await axiosInstance.get(`/api/items/`, {params});
+      return response.data;
     }
 
-    if (filters?.lowStock) {
-      params.low_stock = true;
+    const {fetchPageDataPaginated, PAGE_IDS} = await import(
+      './pageDataService'
+    );
+    const {mapPageDataItem} = await import('./pageDataMappers');
+    const pageFilters: Record<string, string | number> = {};
+    if (categoryId != null && categoryId !== '') {
+      // ItemCategory relation filter — code or id depending on tenant data.
+      pageFilters.item_category = String(categoryId);
     }
-    if (filters?.inventoryStatus) {
-      params.inventory_status = filters.inventoryStatus;
-    }
-
-    const response = await axiosInstance.get(`/api/items/`, {
-      params,
+    return await fetchPageDataPaginated({
+      pageId: PAGE_IDS.ItemList,
+      page,
+      pageSize: 20,
+      search: searchQuery,
+      filters: pageFilters,
+      mapRow: mapPageDataItem,
     });
-    return response.data;
   } catch (error) {
     if (!isInvalidPageError(error)) {
       console.error('Error fetching items:', error);
@@ -991,16 +1286,12 @@ export const fetchItems = async (
 // Add this new API call for categories
 export const fetchCategories = async () => {
   try {
-    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const axiosInstance = createAxiosInstance(tenant) || undefined;
-    const response = await axiosInstance.get('/api/categories/');
-    // Handle both array and paginated response
-    if (Array.isArray(response.data)) {
-      return response.data;
-    } else if (response.data?.results && Array.isArray(response.data.results)) {
-      return response.data.results;
-    }
-    return [];
+    const {fetchPageDataAll, PAGE_IDS} = await import('./pageDataService');
+    const {mapPageDataCategory} = await import('./pageDataMappers');
+    return await fetchPageDataAll({
+      pageId: PAGE_IDS.ItemCategoryList,
+      mapRow: mapPageDataCategory,
+    });
   } catch (error) {
     console.error('Error fetching categories:', error);
     throw error;
@@ -1025,16 +1316,20 @@ export const getItemCategories = async (params?: {
   pageSize?: number;
 }): Promise<ItemCategory[]> => {
   try {
-    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const axiosInstance = createAxiosInstance(tenant) || undefined;
-    const response = await axiosInstance.get('/api/categories/', {params});
-    // Handle both array and paginated response
-    if (Array.isArray(response.data)) {
-      return response.data;
-    } else if (response.data?.results && Array.isArray(response.data.results)) {
-      return response.data.results;
+    const {fetchPageDataAll, PAGE_IDS} = await import('./pageDataService');
+    const {mapPageDataCategory} = await import('./pageDataMappers');
+    const filters: Record<string, string> = {};
+    if (params?.parent_id) {
+      filters.parent = params.parent_id;
     }
-    return [];
+    const rows = await fetchPageDataAll({
+      pageId: PAGE_IDS.ItemCategoryList,
+      search: params?.search,
+      limit: params?.pageSize ?? 500,
+      filters,
+      mapRow: mapPageDataCategory,
+    });
+    return rows as ItemCategory[];
   } catch (error) {
     console.error('Error fetching item categories:', error);
     throw error;
@@ -1815,34 +2110,34 @@ export const fetchItemJournal = async (
   searchQuery: string = '',
   extra?: Omit<FetchItemJournalParams, 'page' | 'q'>,
 ): Promise<ItemJournalListResponse> => {
-  const api = await getAxiosInstance();
-  const params: Record<string, string | number> = {
+  const {fetchPageDataPaginated, PAGE_IDS} = await import('./pageDataService');
+  const {mapPageDataItemJournal} = await import('./pageDataMappers');
+
+  let pageId = PAGE_IDS.InventoryAdjustmentJournalList;
+  if (extra?.adjustment_type === 'opening_balance') {
+    pageId = PAGE_IDS.OpeningBalanceJournalList;
+  } else if (extra?.entry_type === 'stock_taking' || (extra as any)?.stock_taking) {
+    pageId =
+      extra?.status === 'Posted'
+        ? PAGE_IDS.PostedStockTakingList
+        : PAGE_IDS.StockTakingJournalList;
+  } else if (extra?.status === 'Posted') {
+    pageId = PAGE_IDS.PostedInventoryAdjustmentList;
+  }
+
+  const filters: Record<string, string> = {};
+  if (extra?.entry_type && extra.entry_type !== 'stock_taking') {
+    filters.entry_type = extra.entry_type;
+  }
+
+  return fetchPageDataPaginated({
+    pageId,
     page,
-    q: searchQuery.trim(),
-  };
-  if (extra?.status) {
-    params.status = extra.status;
-  }
-  if (extra?.entry_type) {
-    params.entry_type = extra.entry_type;
-  }
-  if (extra?.adjustment_type) {
-    params.adjustment_type = extra.adjustment_type;
-  }
-  const response = await api.get<ItemJournalListResponse | unknown[]>(
-    '/api/item-journals/',
-    {params},
-  );
-  const data = response.data;
-  if (Array.isArray(data)) {
-    return {
-      count: data.length,
-      next: null,
-      previous: null,
-      results: data,
-    };
-  }
-  return data as ItemJournalListResponse;
+    pageSize: 50,
+    search: searchQuery,
+    filters,
+    mapRow: mapPageDataItemJournal,
+  });
 };
 
 /** Create or update a journal line (parity with web upsert). */
@@ -1880,16 +2175,12 @@ export type ItemUnitOfMeasure = {
 };
 
 export const fetchUnitsOfMeasure = async (): Promise<UnitOfMeasure[]> => {
-  const api = await getAxiosInstance();
-  const response = await api.get('/api/units-of-measure/');
-  const data = response.data;
-  if (data?.results && Array.isArray(data.results)) {
-    return data.results;
-  }
-  if (Array.isArray(data)) {
-    return data;
-  }
-  return [];
+  const {fetchPageDataAll, PAGE_IDS} = await import('./pageDataService');
+  const {mapPageDataUnitOfMeasure} = await import('./pageDataMappers');
+  return fetchPageDataAll({
+    pageId: PAGE_IDS.UnitOfMeasureList,
+    mapRow: mapPageDataUnitOfMeasure,
+  });
 };
 
 export const createUnitOfMeasure = async (payload: {
@@ -1916,18 +2207,56 @@ export const deleteUnitOfMeasure = async (code: string) => {
 export const fetchItemUnitsOfMeasure = async (
   itemNo: string,
 ): Promise<ItemUnitOfMeasure[]> => {
-  const api = await getAxiosInstance();
-  const response = await api.get('/api/item-units-of-measure/', {
-    params: {item: itemNo},
+  const {fetchPageDataAll, PAGE_IDS} = await import('./pageDataService');
+  const rows = await fetchPageDataAll({
+    pageId: PAGE_IDS.ItemUnitOfMeasureList,
+    limit: 200,
+    filters: {item: itemNo},
   });
-  const data = response.data;
-  if (data?.results && Array.isArray(data.results)) {
-    return data.results;
-  }
-  if (Array.isArray(data)) {
-    return data;
-  }
-  return [];
+  return rows.map(row => ({
+    id: Number(row.id) || 0,
+    system_id: String(row.SystemId ?? row.system_id ?? ''),
+    item: String(row.item ?? itemNo),
+    unit_of_measure: String(row.unit_of_measure ?? ''),
+    unit_of_measure_description: String(
+      row.unit_of_measure_description ?? row.unit_of_measure ?? '',
+    ),
+    quantity_per_unit: Number(row.quantity_per_unit) || 1,
+    default: Boolean(row.default),
+    price:
+      row.price != null && row.price !== '' ? Number(row.price) : null,
+    effective_price:
+      row.effective_price != null ? Number(row.effective_price) : undefined,
+  }));
+};
+
+/** Same as web POS: GET /api/sales/resolve-unit-price/ (Sales Price List → IUOM → item card). */
+export type ResolveSalesUnitPriceParams = {
+  item_no?: string;
+  item_system_id?: string;
+  unit_of_measure?: string;
+  item_unit_of_measure_id?: number;
+  customer_no?: string;
+  quantity?: number;
+};
+
+export type ResolveSalesUnitPriceResult = {
+  item_no: string;
+  unit_of_measure: string | null;
+  item_unit_of_measure_id: number | null;
+  quantity: number | string;
+  unit_price: string;
+};
+
+export const resolveSalesUnitPrice = async (
+  params: ResolveSalesUnitPriceParams,
+): Promise<ResolveSalesUnitPriceResult> => {
+  const api = await getAxiosInstance();
+  const response = await api.get<ResolveSalesUnitPriceResult>(
+    '/api/sales/resolve-unit-price/',
+    {params},
+  );
+  return response.data;
 };
 
 export const createItemUnitOfMeasure = async (payload: {
@@ -1984,13 +2313,19 @@ export interface PaymentMethod {
  */
 export const fetchCustomers = async (): Promise<Customer[]> => {
   try {
-    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const api = createAxiosInstance(tenant) || axiosInstance;
-    const response = await api.get('/api/customers/');
-    if (response?.data?.results && Array.isArray(response.data.results)) {
-      return response.data.results;
-    }
-    return [];
+    const {fetchPageDataAll, PAGE_IDS} = await import('./pageDataService');
+    const {mapPageDataCustomer} = await import('./pageDataMappers');
+    const rows = await fetchPageDataAll({
+      pageId: PAGE_IDS.CustomerList,
+      limit: 200,
+      mapRow: mapPageDataCustomer,
+    });
+    return rows.map(c => ({
+      id: c.id,
+      no: c.no,
+      name: c.name,
+      system_id: c.system_id,
+    }));
   } catch (error: any) {
     console.error('Error fetching customers:', error);
     return [];
@@ -2002,13 +2337,12 @@ export const fetchCustomers = async (): Promise<Customer[]> => {
  */
 export const fetchPaymentMethods = async (): Promise<PaymentMethod[]> => {
   try {
-    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const api = createAxiosInstance(tenant) || axiosInstance;
-    const response = await api.get('/api/financials/payment-methods/');
-    if (response?.data && Array.isArray(response.data)) {
-      return response.data;
-    }
-    return [];
+    const {fetchPageDataAll, PAGE_IDS} = await import('./pageDataService');
+    const {mapPageDataPaymentMethod} = await import('./pageDataMappers');
+    return await fetchPageDataAll({
+      pageId: PAGE_IDS.PaymentMethodList,
+      mapRow: mapPageDataPaymentMethod,
+    });
   } catch (error: any) {
     console.error('Error fetching payment methods:', error);
     return [];
@@ -2074,6 +2408,49 @@ export function mapHomeSnapshotToKPI(
   };
 }
 
+function summaryAmount(s: SalesHistorySummary | null): number {
+  if (!s) return 0;
+  return Number(s.net_sales ?? s.total_sales ?? 0);
+}
+
+/**
+ * Home KPIs from GET /api/sales/summary/ (same API as web POS / Sales History).
+ * Uses posting_date for today/yesterday — Posted archive only.
+ */
+export const fetchHomeKpisFromSalesSummary = async (): Promise<KPIMetrics | null> => {
+  const today = getLocalDateYmd();
+  const y = new Date();
+  y.setDate(y.getDate() - 1);
+  const yesterday = getLocalDateYmd(y);
+
+  const [todaySum, yesterdaySum] = await Promise.all([
+    fetchSalesSummary({startDate: today, endDate: today}),
+    fetchSalesSummary({startDate: yesterday, endDate: yesterday}),
+  ]);
+
+  // Both null → permission/network failure (don't show fake zeros as success).
+  if (!todaySum && !yesterdaySum) {
+    return null;
+  }
+
+  const todayRevenue = summaryAmount(todaySum);
+  const yesterdayRevenue = summaryAmount(yesterdaySum);
+  const todayOrders = Number(todaySum?.total_invoices ?? 0);
+  const yesterdayOrders = Number(yesterdaySum?.total_invoices ?? 0);
+
+  return {
+    today_revenue: todayRevenue,
+    yesterday_revenue: yesterdayRevenue,
+    revenue_growth: growthPercent(todayRevenue, yesterdayRevenue),
+    today_orders: todayOrders,
+    yesterday_orders: yesterdayOrders,
+    order_growth: growthPercent(todayOrders, yesterdayOrders),
+    today_products_sold: Number(todaySum?.total_products ?? 0),
+    total_products: 0,
+  };
+};
+
+/** @deprecated Prefer fetchHomeKpisFromSalesSummary — kept for top-sellers helper only. */
 export const fetchHomeSnapshot = async (
   topItemsLimit: number = 5,
 ): Promise<HomeSnapshotResponse | null> => {
@@ -2095,9 +2472,7 @@ export const fetchHomeSnapshot = async (
 };
 
 export const fetchKPIMetrics = async (): Promise<KPIMetrics | null> => {
-  const snapshot = await fetchHomeSnapshot();
-  if (!snapshot) return null;
-  return mapHomeSnapshotToKPI(snapshot);
+  return fetchHomeKpisFromSalesSummary();
 };
 
 export type RecentTransactionsFetchOptions = {

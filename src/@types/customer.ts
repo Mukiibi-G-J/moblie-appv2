@@ -16,7 +16,7 @@ export interface Customer {
   customer_posting_group_name?: string;
   general_business_posting_group?: number;
   general_business_posting_group_name?: string;
-  customer_type?: 'GENERAL' | 'CORPORATE' | 'INDIVIDUAL';
+  customer_type?: 'General' | 'Individual';
   user?: number;
   user_name?: string;
   created_at?: string;
@@ -53,7 +53,7 @@ export interface CustomerFormValues {
   payment_method?: number | null;
   customer_posting_group?: number | null;
   general_business_posting_group?: number | null;
-  customer_type?: 'GENERAL' | 'CORPORATE' | 'INDIVIDUAL';
+  customer_type?: 'General' | 'Individual';
 }
 
 export interface CustomerListParams {
@@ -61,7 +61,7 @@ export interface CustomerListParams {
   page_size?: number;
   search?: string;
   ordering?: string;
-  customer_type?: 'GENERAL' | 'CORPORATE' | 'INDIVIDUAL';
+  customer_type?: 'General' | 'Individual';
 }
 
 export interface PaginatedCustomerResponse {

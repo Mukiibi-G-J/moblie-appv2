@@ -36,6 +36,10 @@ import {
   DEFAULT_LOCAL_CURRENCY_CODE,
 } from '../utils/currency';
 import {readCachedAvatarUrl, USER_AVATAR_STORAGE_KEY} from '../services/profile.service';
+import {
+  clearQueryCache,
+  invalidateQueryCache,
+} from '../query/queryClient';
 
 export interface AppContextType {
   auth: AuthState;
@@ -173,6 +177,7 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
 
     // Clear branch session in-memory (storage is cleared in logout())
     setBranchSessionState(getEmptyBranchSession());
+    clearQueryCache();
   }, []);
 
   const hydrateBranchSession = useCallback(async () => {
@@ -236,6 +241,8 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
       active_branch: branch,
       active_branch_id: id,
     }));
+    // Branch-scoped lists must refetch for the new branch.
+    invalidateQueryCache();
   }, []);
 
   const setBranchSelectionPending = useCallback(async (pending: boolean) => {
@@ -605,6 +612,7 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
     // Clear auth state
     setAuth(getEmptyAuthState());
     setBranchSessionState(getEmptyBranchSession());
+    clearQueryCache();
 
     // Clear stored data
     await AsyncStorage.removeItem('accessToken');

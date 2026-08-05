@@ -1,7 +1,7 @@
 import PrinterSunmi from "react-native-printer-sunmi";
 import {
   prepareCompanyLogoForPrint,
-  RECEIPT_LOGO_WIDTH_PX,
+  fitReceiptLogoSize,
 } from "../../utils/companyLogoUrl";
 import { effectiveReceiptCols, padReceiptColumns } from "./formatters";
 import type { ReceiptDocument, ReceiptDocumentNode } from "./types";
@@ -33,6 +33,7 @@ export async function printSunmiDocument(document: ReceiptDocument): Promise<voi
     document.paperProfile?.charsPerLine ?? 32,
     document.paperProfile?.widthMm ?? 58,
   );
+  const maxLogoW = document.paperProfile?.logoWidthPx ?? undefined;
 
   for (const node of document.nodes) {
     switch (node.type) {
@@ -43,12 +44,18 @@ export async function printSunmiDocument(document: ReceiptDocument): Promise<voi
             const path = prepared.localPath.startsWith("file://")
               ? prepared.localPath
               : `file://${prepared.localPath}`;
+            const { width, height } = fitReceiptLogoSize(
+              prepared.width,
+              prepared.height,
+              maxLogoW,
+            );
             PrinterSunmi.initLine({ align: "CENTER" });
             PrinterSunmi.printBitmap(path, {
-              width: document.paperProfile?.logoWidthPx ?? RECEIPT_LOGO_WIDTH_PX,
+              width,
+              height,
               align: "CENTER",
             });
-            PrinterSunmi.printDividingLine("EMPTY", 2);
+            PrinterSunmi.printDividingLine("EMPTY", 1);
           }
         }
         break;

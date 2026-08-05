@@ -3,7 +3,7 @@ import {
   View,
   StyleSheet,
   Text,
-  Dimensions,
+  Pressable,
   Platform,
   StyleProp,
   TextStyle,
@@ -17,11 +17,12 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 
-const SCREEN_WIDTH = Dimensions.get('window').width;
-/** Width of the revealed “Delete” strip (matches previous SwipeListView rightOpenValue). */
+/** Width of the revealed “Delete” strip. */
 export const SWIPE_DELETE_STRIP_WIDTH = 104;
 
 const SPRING = {damping: 24, stiffness: 440, mass: 0.45};
+/** Snap open when released past this fraction of the delete strip. */
+const OPEN_SNAP_RATIO = 0.45;
 
 const androidDeleteTextFix = Platform.select({
   android: {includeFontPadding: false, textAlignVertical: 'center' as const},
@@ -31,8 +32,11 @@ const androidDeleteTextFix = Platform.select({
 type Props = {
   children: React.ReactNode;
   onDelete: () => void;
-  /** Positive distance (px): releasing at or past this left offset removes the line. */
-  fullDeleteThreshold: number;
+  /**
+   * @deprecated Kept for call-site compatibility. Full-swipe no longer auto-deletes —
+   * users swipe to reveal Delete, then tap it (same idea as web Remove).
+   */
+  fullDeleteThreshold?: number;
   deleteBackgroundColor: string;
   deleteTextStyle?: StyleProp<TextStyle>;
   deleteLabel?: string;
@@ -40,14 +44,13 @@ type Props = {
   surfaceColor: string;
   foregroundStyle?: StyleProp<ViewStyle>;
   borderBottomColor: string;
-  /** Row tap (e.g. open editor). Composed with pan so taps are not eaten by the swipe handler on Android. */
+  /** Row tap (e.g. open editor). Composed with pan so taps are not eaten by the swipe handler. */
   onPress?: () => void;
 };
 
 export function SwipeableCartLine({
   children,
   onDelete,
-  fullDeleteThreshold,
   deleteBackgroundColor,
   deleteTextStyle,
   deleteLabel = 'Delete',
@@ -58,19 +61,30 @@ export function SwipeableCartLine({
 }: Props) {
   const translateX = useSharedValue(0);
   const startX = useSharedValue(0);
+  const isOpen = useSharedValue(false);
 
   const triggerDelete = useCallback(() => {
+    translateX.value = withSpring(0, SPRING);
+    isOpen.value = false;
     onDelete();
   }, [onDelete]);
 
+  const closeRow = useCallback(() => {
+    translateX.value = withSpring(0, SPRING);
+    isOpen.value = false;
+  }, []);
+
   const runRowPress = useCallback(() => {
+    if (isOpen.value) {
+      closeRow();
+      return;
+    }
     onPress?.();
-  }, [onPress]);
+  }, [closeRow, onPress]);
 
   const panGesture = useMemo(
     () =>
       Gesture.Pan()
-        /** Wider dead zone so taps win via Exclusive(tap, pan) before pan activates. */
         .activeOffsetX([-24, 24])
         .failOffsetY([-20, 20])
         .onStart(() => {
@@ -78,23 +92,23 @@ export function SwipeableCartLine({
         })
         .onUpdate(e => {
           const next = startX.value + e.translationX;
-          translateX.value = Math.min(0, Math.max(next, -SCREEN_WIDTH));
+          translateX.value = Math.min(0, Math.max(next, -SWIPE_DELETE_STRIP_WIDTH));
         })
         .onEnd(e => {
           const x = translateX.value;
           const vx = e.velocityX;
-          const pastCommit =
-            x <= -fullDeleteThreshold ||
-            (x < -SWIPE_DELETE_STRIP_WIDTH * 0.85 && vx < -900);
+          const shouldOpen =
+            x <= -SWIPE_DELETE_STRIP_WIDTH * OPEN_SNAP_RATIO || vx < -650;
 
-          if (pastCommit) {
-            runOnJS(triggerDelete)();
-            translateX.value = 0;
+          if (shouldOpen) {
+            translateX.value = withSpring(-SWIPE_DELETE_STRIP_WIDTH, SPRING);
+            isOpen.value = true;
           } else {
             translateX.value = withSpring(0, SPRING);
+            isOpen.value = false;
           }
         }),
-    [fullDeleteThreshold, triggerDelete],
+    [],
   );
 
   const gesture = useMemo(() => {
@@ -106,7 +120,6 @@ export function SwipeableCartLine({
       .onEnd(() => {
         runOnJS(runRowPress)();
       });
-    /** Tap has priority: quick tap opens editor; horizontal swipe still goes to pan after tap fails distance. */
     return Gesture.Exclusive(tapGesture, panGesture);
   }, [onPress, panGesture, runRowPress]);
 
@@ -124,14 +137,20 @@ export function SwipeableCartLine({
         },
       ]}>
       <View
-        style={[styles.deleteTrack, {backgroundColor: deleteBackgroundColor}]}
-        pointerEvents="none">
-        <View style={styles.deleteStrip}>
+        style={[styles.deleteTrack, {backgroundColor: deleteBackgroundColor}]}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={deleteLabel}
+          onPress={triggerDelete}
+          style={({pressed}) => [
+            styles.deleteStrip,
+            pressed && styles.deleteStripPressed,
+          ]}>
           <Text
             style={[styles.deleteTextBase, androidDeleteTextFix, deleteTextStyle]}>
             {deleteLabel}
           </Text>
-        </View>
+        </Pressable>
       </View>
       <GestureDetector gesture={gesture}>
         <Animated.View
@@ -170,6 +189,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 10,
     paddingVertical: 4,
+  },
+  deleteStripPressed: {
+    opacity: 0.85,
   },
   deleteTextBase: {
     fontSize: 13,

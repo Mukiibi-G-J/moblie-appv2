@@ -15,6 +15,7 @@ import Toast from 'react-native-toast-message';
 import {FONTS} from '../../constants';
 import type {PaymentMethod} from '../../services/app.services';
 import {fetchPaymentMethods} from '../../services/app.services';
+import {pickDefaultCashPaymentMethod} from '../../utils/paymentMethodDefaults';
 
 export type RestaurantCloseCheckoutChrome = {
   surface: string;
@@ -68,8 +69,10 @@ export default function RestaurantCloseCheckoutSheet(props: Props) {
         const list = await fetchPaymentMethods();
         if (!cancelled) {
           setMethods(Array.isArray(list) ? list : []);
-          const firstId = Array.isArray(list) && list[0]?.id != null ? list[0].id : null;
-          setPmId(firstId != null ? Number(firstId) : null);
+          const cash = pickDefaultCashPaymentMethod(
+            Array.isArray(list) ? list : [],
+          );
+          setPmId(cash?.id != null ? Number(cash.id) : null);
           if (!list?.length) {
             Toast.show({
               type: 'error',

@@ -26,14 +26,18 @@ export const BankAccountServices = {
   async getBankAccounts(
     params?: BankAccountListParams,
   ): Promise<PaginatedBankAccountResponse> {
-    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const axiosInstance = createAxiosInstance(tenant);
     try {
-      const response = await axiosInstance.get('/api/bank-accounts/', {params});
-      if (response?.data?.results && Array.isArray(response.data.results)) {
-        return response.data;
-      }
-      return {count: 0, next: null, previous: null, results: []};
+      const {fetchPageDataPaginated, PAGE_IDS} = await import(
+        './pageDataService'
+      );
+      const {mapPageDataBankAccount} = await import('./pageDataMappers');
+      return await fetchPageDataPaginated({
+        pageId: PAGE_IDS.BankAccountList,
+        page: params?.page ?? 1,
+        pageSize: params?.page_size ?? 50,
+        search: params?.search,
+        mapRow: mapPageDataBankAccount,
+      });
     } catch (error) {
       console.error('Error fetching bank accounts:', error);
       throw error;
@@ -71,16 +75,35 @@ export const BankAccountServices = {
   async getBankAccountLedgerEntries(
     params?: BankAccountLedgerParams,
   ): Promise<PaginatedBankAccountLedgerResponse> {
-    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const axiosInstance = createAxiosInstance(tenant);
-    const response = await axiosInstance.get(
-      '/api/bank-account-ledger-entries/',
-      {params},
-    );
-    if (response?.data?.results && Array.isArray(response.data.results)) {
-      return response.data;
+    try {
+      const {fetchPageDataPaginated, PAGE_IDS} = await import(
+        './pageDataService'
+      );
+      const {mapPageDataBankLedger} = await import('./pageDataMappers');
+      const filters: Record<string, string | number> = {};
+      if ((params as any)?.bank_account || (params as any)?.bank_account_no) {
+        filters.bank_account_no = String(
+          (params as any).bank_account || (params as any).bank_account_no,
+        );
+      }
+      if ((params as any)?.posting_date__gte) {
+        filters.posting_date_from = String((params as any).posting_date__gte);
+      }
+      if ((params as any)?.posting_date__lte) {
+        filters.posting_date_to = String((params as any).posting_date__lte);
+      }
+      return await fetchPageDataPaginated({
+        pageId: PAGE_IDS.BankAccountLedgerEntryList,
+        page: params?.page ?? 1,
+        pageSize: params?.page_size ?? 50,
+        search: (params as any)?.search,
+        filters,
+        mapRow: mapPageDataBankLedger,
+      });
+    } catch (error) {
+      console.error('Error fetching bank ledger:', error);
+      throw error;
     }
-    return {count: 0, next: null, previous: null, results: []};
   },
 
   async getPostingGroups(): Promise<any[]> {

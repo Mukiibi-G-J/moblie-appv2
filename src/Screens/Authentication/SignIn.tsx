@@ -18,6 +18,7 @@ import utils from '../../utils/utils';
 import { KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { AppContextType, useAppContext } from '../../context/Store';
 import Toast from 'react-native-toast-message';
+import AppToastHost from '../../Components/AppToastHost';
 import {
   getEmail,
   getTenant,
@@ -389,7 +390,7 @@ const SignIn = ({ navigation }: { navigation: any }) => {
         message={alertMessage}
         onClose={() => setShowAlert(false)}
       />
-      <Toast />
+      <AppToastHost />
     </KeyboardAvoidingView>
   );
 };

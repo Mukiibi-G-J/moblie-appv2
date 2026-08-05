@@ -1,23 +1,30 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
   ActivityIndicator,
+  AppState,
   Image,
+  Linking,
   Platform,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
 import {useNavigation, useRoute} from '@react-navigation/native';
 import {Picker} from '@react-native-picker/picker';
 import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
+import axios from 'axios';
 import {
-  AddOn,
-  getAddOns,
-  getMobileMoneyInstructions,
+  BillingCycle,
+  CollectionMethod,
+  getCollectionStatus,
+  getCurrentSubscription,
   getPricingPlans,
+  initiateSubscriptionCollection,
+  normalizeUgPhone,
   PricingPlan,
 } from '../../services/SubscriptionService';
 import {
@@ -25,15 +32,60 @@ import {
   FONTS,
   SIZES,
   icons,
-  images,
   ICON_BUTTON_ACTIVE_OPACITY,
 } from '../../constants';
 import {QuickIconPressable} from '../../Components';
 import {useTheme} from '../../context/ThemeContext';
-import {useAppContext} from '../../context/Store';
+import {useAppContext, useAuth} from '../../context/Store';
 import {safeGoBack} from '../../hooks/NavigationService';
+import type {SubscriptionExpiryKind} from '../../utils/subscriptionExpired';
+import {USE_TEST_ENV} from '../../config/api.config';
 
-type BillingCycle = 'monthly' | 'yearly';
+type Phase = 'form' | 'waiting' | 'success' | 'failed';
+
+function formatCurrency(amount: number) {
+  return `UGX ${Math.round(amount || 0).toLocaleString('en-UG')}`;
+}
+
+/** Map backend Subscription.plan labels to pricing-plan display names (web parity). */
+function planToPricingName(plan: string | null | undefined): string | null {
+  if (!plan) return null;
+  const p = plan.trim();
+  if (
+    p === 'Starter' ||
+    p === 'Free Trial' ||
+    p === 'Standard Plan' ||
+    p === 'Starter Pack'
+  ) {
+    return 'Starter';
+  }
+  if (p === 'Business' || p === 'Multi-Branch Plan') {
+    return 'Business';
+  }
+  if (p === 'Pro' || p === 'Premium Plan with EFRIS') {
+    return 'Pro';
+  }
+  return p;
+}
+
+function findPlanForSubscription(
+  plans: PricingPlan[],
+  subscriptionPlan?: string | null,
+): PricingPlan | null {
+  if (!plans.length) return null;
+  const target = planToPricingName(subscriptionPlan);
+  if (target) {
+    const exact = plans.find(
+      p => (p.name || '').trim().toLowerCase() === target.toLowerCase(),
+    );
+    if (exact) return exact;
+    const partial = plans.find(p =>
+      (p.name || '').toLowerCase().includes(target.toLowerCase()),
+    );
+    if (partial) return partial;
+  }
+  return null;
+}
 
 export default function SubscriptionPage() {
   const navigation = useNavigation<any>();
@@ -41,21 +93,36 @@ export default function SubscriptionPage() {
   const insets = useSafeAreaInsets();
   const {colors, isDark} = useTheme();
   const {logout} = useAppContext();
+  const {auth} = useAuth();
 
   const fromExpiredModal = !!route.params?.fromExpiredModal;
+  const fromBillingRenewal = !!route.params?.fromBillingRenewal;
+  const expiryKind: SubscriptionExpiryKind =
+    route.params?.expiryKind === 'trial' ? 'trial' : 'subscription';
+  const lockDate: string | null = route.params?.lockDate ?? null;
+  const isTrialExpiry = expiryKind === 'trial';
 
   const [isLoading, setIsLoading] = useState(true);
   const [plans, setPlans] = useState<PricingPlan[]>([]);
-  const [addOns, setAddOnsState] = useState<AddOn[]>([]);
-
   const [billingCycle, setBillingCycle] = useState<BillingCycle>('monthly');
   const [selectedPlanId, setSelectedPlanId] = useState<number | null>(null);
-  const [selectedAddOnIds, setSelectedAddOnIds] = useState<number[]>([]);
-  const [months, setMonths] = useState<number>(1);
+  const [months, setMonths] = useState(1);
+  const [method, setMethod] = useState<CollectionMethod>('mobile_money');
+  const [phone, setPhone] = useState('');
+  const [testAmountUgx, setTestAmountUgx] = useState(500);
+
+  const [phase, setPhase] = useState<Phase>('form');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reference, setReference] = useState('');
+  const [amountLabel, setAmountLabel] = useState<string | null>(null);
+  const [productLabel, setProductLabel] = useState<string | null>(null);
 
   const [expiredModalVisible, setExpiredModalVisible] = useState(
     fromExpiredModal,
   );
+
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const t = useMemo(
     () => ({
@@ -99,12 +166,6 @@ export default function SubscriptionPage() {
         backgroundColor: colors.card,
         color: colors.textPrimary,
       },
-      addOnRowActive: {
-        borderColor: COLORS.success,
-        backgroundColor: colors.screenMuted,
-      },
-      addOnName: {color: colors.textPrimary},
-      addOnPrice: {color: COLORS.success},
       footerTotal: {
         backgroundColor: colors.card,
         borderColor: colors.border,
@@ -117,7 +178,12 @@ export default function SubscriptionPage() {
       },
       modalTitle: {color: colors.textPrimary},
       modalText: {color: colors.textSecondary},
-      modalIconWrap: {backgroundColor: colors.screenMuted},
+      input: {
+        backgroundColor: colors.card,
+        borderColor: colors.border,
+        color: colors.textPrimary,
+      },
+      bodyText: {color: colors.textSecondary},
     }),
     [colors],
   );
@@ -126,35 +192,28 @@ export default function SubscriptionPage() {
     let cancelled = false;
     const load = async () => {
       try {
-        const instructions = await getMobileMoneyInstructions();
-        if (
-          instructions?.has_pending_verification &&
-          instructions.pending_payment_reference
-        ) {
-          navigation.reset({
-            index: 0,
-            routes: [
-              {
-                name: 'SubscriptionMobileMoney',
-                params: {
-                  fromExpired: 1,
-                  submitted: true,
-                  reference: instructions.pending_payment_reference,
-                },
-              },
-            ],
-          });
-          return;
-        }
-
-        const [plansResp, addOnsResp] = await Promise.all([
+        const [plansResp, currentSub] = await Promise.all([
           getPricingPlans(),
-          getAddOns(),
+          getCurrentSubscription(),
         ]);
         if (cancelled) return;
 
         setPlans(plansResp);
-        setAddOnsState(addOnsResp);
+
+        const matched = findPlanForSubscription(plansResp, currentSub?.plan);
+        if (matched) {
+          setSelectedPlanId(matched.id);
+        } else if (plansResp.length) {
+          const popular = plansResp.find(p => p.is_popular) ?? plansResp[0];
+          setSelectedPlanId(popular.id);
+        }
+
+        const cycle = (currentSub?.billing_cycle || '').toLowerCase();
+        if (cycle === 'yearly' || cycle === 'annual') {
+          setBillingCycle('yearly');
+        } else if (cycle === 'monthly') {
+          setBillingCycle('monthly');
+        }
       } finally {
         if (!cancelled) setIsLoading(false);
       }
@@ -163,7 +222,7 @@ export default function SubscriptionPage() {
     return () => {
       cancelled = true;
     };
-  }, [navigation]);
+  }, []);
 
   useEffect(() => {
     setExpiredModalVisible(fromExpiredModal);
@@ -173,75 +232,171 @@ export default function SubscriptionPage() {
     return plans.find(p => p.id === selectedPlanId) ?? null;
   }, [plans, selectedPlanId]);
 
-  const planPrice = useMemo(() => {
-    if (!selectedPlan) return 0;
-    if (billingCycle === 'monthly') {
-      return (
-        selectedPlan.monthly_price ??
-        selectedPlan.price ??
-        selectedPlan.yearly_price ??
-        0
-      );
-    }
-    return (
-      selectedPlan.yearly_price ??
-      selectedPlan.price ??
-      selectedPlan.monthly_price ??
-      0
-    );
-  }, [billingCycle, selectedPlan]);
-
-  const addOnTotal = useMemo(() => {
-    const byId = new Map<number, AddOn>(addOns.map(a => [a.id, a]));
-    return selectedAddOnIds.reduce((sum, id) => {
-      const addon = byId.get(id);
-      if (!addon) return sum;
-      const price =
-        billingCycle === 'monthly'
-          ? addon.monthly_price ?? addon.price ?? 0
-          : addon.yearly_price ?? addon.price ?? 0;
-      return sum + price;
-    }, 0);
-  }, [addOns, billingCycle, selectedAddOnIds]);
-
   const totalAmount = useMemo(() => {
-    return Math.round(planPrice * months + addOnTotal || 0);
-  }, [addOnTotal, months, planPrice]);
+    if (!selectedPlan) return 0;
+    const unit =
+      billingCycle === 'yearly'
+        ? selectedPlan.yearly_price ??
+          selectedPlan.annual_price ??
+          selectedPlan.price ??
+          0
+        : selectedPlan.monthly_price ??
+          selectedPlan.price ??
+          selectedPlan.yearly_price ??
+          0;
+    return unit * months;
+  }, [billingCycle, months, selectedPlan]);
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-UG', {
-      style: 'currency',
-      currency: 'UGX',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(amount);
-  };
+  const finishSuccess = useCallback(() => {
+    setPhase('success');
+  }, []);
 
-  const toggleAddOn = (addOnId: number) => {
-    setSelectedAddOnIds(prev => {
-      if (prev.includes(addOnId)) return prev.filter(id => id !== addOnId);
-      return [...prev, addOnId];
+  useEffect(() => {
+    if (phase !== 'waiting' || !reference) return;
+
+    let cancelled = false;
+    let consecutiveErrors = 0;
+
+    const poll = async () => {
+      try {
+        const status = await getCollectionStatus(reference);
+        if (cancelled) return;
+        consecutiveErrors = 0;
+        setAmountLabel(formatCurrency(Number(status.amount)));
+        setProductLabel(status.product);
+        if (status.status === 'paid') {
+          finishSuccess();
+          return;
+        }
+        if (status.status === 'failed' || status.status === 'cancelled') {
+          setPhase('failed');
+          setError(
+            status.failure_message ||
+              'Payment was declined or failed. You can try again.',
+          );
+          return;
+        }
+        const marz = String(status.marz_status || '').toLowerCase();
+        if (
+          ['failed', 'error', 'declined', 'unsuccessful', 'rejected'].includes(
+            marz,
+          )
+        ) {
+          setPhase('failed');
+          setError(
+            status.failure_message ||
+              'Payment was declined or failed. You can try again.',
+          );
+          return;
+        }
+      } catch {
+        consecutiveErrors += 1;
+        if (consecutiveErrors >= 8) {
+          setPhase('failed');
+          setError(
+            'Could not confirm payment status. If money was deducted, wait a moment and try again; otherwise retry payment.',
+          );
+          return;
+        }
+      }
+      if (!cancelled) {
+        pollRef.current = setTimeout(poll, 3000);
+      }
+    };
+
+    void poll();
+    return () => {
+      cancelled = true;
+      if (pollRef.current) clearTimeout(pollRef.current);
+    };
+  }, [phase, reference, finishSuccess]);
+
+  // Resume polling when user returns from card browser
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', state => {
+      if (state === 'active' && phase === 'waiting' && reference) {
+        // Poll loop already running; no-op — status will refresh on next tick
+      }
     });
-  };
+    return () => sub.remove();
+  }, [phase, reference]);
 
-  const proceedToMobileMoney = () => {
-    if (!selectedPlan || !selectedPlanId) return;
+  const handlePay = async () => {
+    setError(null);
+    if (!selectedPlanId) {
+      setError('Select a plan.');
+      return;
+    }
+    if (method === 'mobile_money') {
+      const normalized = normalizeUgPhone(phone);
+      if (!/^\+256[7]\d{8}$/.test(normalized)) {
+        setError(
+          'Enter the mobile money phone number that will receive the prompt (e.g. 07XXXXXXXX).',
+        );
+        return;
+      }
+    }
 
-    navigation.navigate('SubscriptionMobileMoney', {
-      fromExpired: fromExpiredModal ? 1 : 0,
-      submitted: false,
-      selectedPlanId,
-      selectedPlanName: selectedPlan.name,
-      amount: totalAmount,
-      billingCycle,
-      months,
-    });
+    setSubmitting(true);
+    try {
+      const tenant = auth?.schema_name || '';
+      const returnUrl = tenant
+        ? `https://${tenant}.zentroapp.app/subscription`
+        : 'https://zentroapp.app/subscription';
+
+      const res = await initiateSubscriptionCollection({
+        plan_id: selectedPlanId,
+        months,
+        billing_cycle: billingCycle,
+        method,
+        phone_number:
+          method === 'mobile_money' ? normalizeUgPhone(phone) : undefined,
+        return_url: method === 'card' ? returnUrl : undefined,
+        test_amount_ugx: USE_TEST_ENV ? testAmountUgx : undefined,
+      });
+
+      setReference(res.reference);
+      const displayAmount =
+        res.test_mode && res.charged_amount != null
+          ? Number(res.charged_amount)
+          : Number(res.amount);
+      setAmountLabel(formatCurrency(displayAmount));
+      setProductLabel(res.product);
+
+      if (res.status === 'paid') {
+        finishSuccess();
+        return;
+      }
+
+      if (method === 'card' && res.redirect_url) {
+        setPhase('waiting');
+        await Linking.openURL(res.redirect_url);
+        return;
+      }
+
+      setPhase('waiting');
+    } catch (err) {
+      let message = 'Could not start payment. Please try again.';
+      if (axios.isAxiosError(err)) {
+        const data = err.response?.data as {error?: string} | undefined;
+        if (data?.error) message = data.error;
+      }
+      setError(message);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleLogout = async () => {
     await logout();
     navigation.reset({index: 0, routes: [{name: 'SignIn'}]});
   };
+
+  const goHome = () => {
+    navigation.reset({index: 0, routes: [{name: 'Home'}]});
+  };
+
+  const lockedEntry = fromExpiredModal || fromBillingRenewal;
 
   const renderTopBar = () => (
     <View
@@ -258,7 +413,7 @@ export default function SubscriptionPage() {
         },
         t.headerBorder,
       ]}>
-      {fromExpiredModal ? (
+      {lockedEntry ? (
         <View style={styles.headerTrailingSpacer} />
       ) : (
         <QuickIconPressable
@@ -271,9 +426,9 @@ export default function SubscriptionPage() {
           />
         </QuickIconPressable>
       )}
-      <Text style={[styles.topTitle, t.topTitle]}>Choose plan</Text>
+      <Text style={[styles.topTitle, t.topTitle]}>Pay subscription</Text>
       <View style={styles.headerTrailing}>
-        {fromExpiredModal ? (
+        {lockedEntry ? (
           <QuickIconPressable
             style={[styles.headerRoundButton, t.headerRoundButton]}
             onPress={() => void handleLogout()}
@@ -290,6 +445,101 @@ export default function SubscriptionPage() {
     </View>
   );
 
+  if (phase === 'success') {
+    return (
+      <SafeAreaView style={[styles.screen, t.screen]} edges={['left', 'right', 'bottom']}>
+        {renderTopBar()}
+        <View style={styles.centerPhase}>
+          <View style={[styles.phaseCard, t.card]}>
+            <Text style={styles.successIcon}>✓</Text>
+            <Text style={[styles.phaseTitle, t.modalTitle]}>Payment successful</Text>
+            <Text style={[styles.phaseBody, t.bodyText]}>
+              {productLabel
+                ? `${productLabel} is now active`
+                : 'Your subscription is now active'}
+              {amountLabel ? ` (${amountLabel}).` : '.'} Access updates
+              automatically — no manual approval needed.
+            </Text>
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={goHome}
+              activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}>
+              <Text style={styles.primaryButtonText}>Go to home</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (phase === 'failed') {
+    return (
+      <SafeAreaView style={[styles.screen, t.screen]} edges={['left', 'right', 'bottom']}>
+        {renderTopBar()}
+        <View style={styles.centerPhase}>
+          <View style={[styles.phaseCard, t.card]}>
+            <View style={styles.failBadge}>
+              <Text style={styles.failBadgeText}>!</Text>
+            </View>
+            <Text style={[styles.phaseTitle, t.modalTitle]}>Payment failed</Text>
+            <Text style={[styles.phaseBody, t.bodyText]}>
+              {error || 'Payment was declined or failed. You can try again.'}
+            </Text>
+            {amountLabel ? (
+              <Text style={[styles.phaseAmount, t.modalTitle]}>{amountLabel}</Text>
+            ) : null}
+            {reference ? (
+              <Text style={[styles.phaseRef, t.bodyText]}>Ref: {reference}</Text>
+            ) : null}
+            <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={() => {
+                setPhase('form');
+                setError(null);
+                setReference('');
+              }}
+              activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}>
+              <Text style={styles.primaryButtonText}>Try again</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (phase === 'waiting') {
+    return (
+      <SafeAreaView style={[styles.screen, t.screen]} edges={['left', 'right', 'bottom']}>
+        {renderTopBar()}
+        <View style={styles.centerPhase}>
+          <View style={[styles.phaseCard, t.card]}>
+            <ActivityIndicator size="large" color={COLORS.primary2} />
+            <Text style={[styles.phaseTitle, t.modalTitle]}>Waiting for payment</Text>
+            <Text style={[styles.phaseBody, t.bodyText]}>
+              {method === 'card'
+                ? 'Finish card payment in the browser. This screen updates automatically when payment is confirmed.'
+                : 'Approve the mobile money prompt on your phone. This screen updates when payment finishes.'}
+            </Text>
+            {amountLabel ? (
+              <Text style={[styles.phaseAmount, t.modalTitle]}>{amountLabel}</Text>
+            ) : null}
+            {reference ? (
+              <Text style={[styles.phaseRef, t.bodyText]}>Ref: {reference}</Text>
+            ) : null}
+            <TouchableOpacity
+              onPress={() => {
+                setPhase('form');
+                setError(null);
+              }}
+              activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}>
+              <Text style={styles.linkBtn}>Cancel and try again</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={[styles.screen, t.screen]} edges={['left', 'right', 'bottom']}>
       {renderTopBar()}
@@ -297,10 +547,45 @@ export default function SubscriptionPage() {
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.container}
+        keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}>
         <Text style={[styles.pageSubtitle, t.pageSubtitle]}>
-          14-day free trial · No upfront payment · Monthly from UGX 50,000
+          {fromExpiredModal
+            ? isTrialExpiry
+              ? 'Select a plan and pay with mobile money or card. Activation is automatic after payment.'
+              : 'Renew your plan with mobile money or card — activation is automatic after payment.'
+            : 'Extend your current plan. Pay with mobile money or card — activation is automatic after payment.'}
         </Text>
+
+        {USE_TEST_ENV ? (
+          <View style={styles.devBanner}>
+            <Text style={styles.devBannerText}>
+              Development: Marz charges a small test amount. History still records
+              the full plan price.
+            </Text>
+            <Text style={styles.devBannerLabel}>Test charge (UGX)</Text>
+            <View style={styles.devChipRow}>
+              {[500, 1000, 30000].map(amount => (
+                <TouchableOpacity
+                  key={amount}
+                  style={[
+                    styles.devChip,
+                    testAmountUgx === amount && styles.devChipActive,
+                  ]}
+                  onPress={() => setTestAmountUgx(amount)}
+                  activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}>
+                  <Text
+                    style={[
+                      styles.devChipText,
+                      testAmountUgx === amount && styles.devChipTextActive,
+                    ]}>
+                    {amount.toLocaleString('en-UG')}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        ) : null}
 
         {isLoading ? (
           <View style={styles.loading}>
@@ -311,61 +596,7 @@ export default function SubscriptionPage() {
           </View>
         ) : (
           <>
-            <Text style={[styles.sectionTitle, t.sectionTitle]}>
-              Billing cycle
-            </Text>
-            <View style={styles.toggleRow}>
-              <TouchableOpacity
-                style={[
-                  styles.toggleBtn,
-                  t.toggleBtn,
-                  billingCycle === 'monthly' && [
-                    styles.toggleBtnActive,
-                    t.toggleBtnActive,
-                  ],
-                ]}
-                onPress={() => setBillingCycle('monthly')}
-                activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}>
-                <Text
-                  style={[
-                    styles.toggleBtnText,
-                    t.toggleBtnText,
-                    billingCycle === 'monthly' && [
-                      styles.toggleBtnTextActive,
-                      t.toggleBtnTextActive,
-                    ],
-                  ]}>
-                  Monthly
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.toggleBtn,
-                  t.toggleBtn,
-                  billingCycle === 'yearly' && [
-                    styles.toggleBtnActive,
-                    t.toggleBtnActive,
-                  ],
-                ]}
-                onPress={() => setBillingCycle('yearly')}
-                activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}>
-                <Text
-                  style={[
-                    styles.toggleBtnText,
-                    t.toggleBtnText,
-                    billingCycle === 'yearly' && [
-                      styles.toggleBtnTextActive,
-                      t.toggleBtnTextActive,
-                    ],
-                  ]}>
-                  Yearly
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            <Text style={[styles.sectionTitle, t.sectionTitle]}>
-              Select a plan
-            </Text>
+            <Text style={[styles.sectionTitle, t.sectionTitle]}>Select a plan</Text>
             <View style={styles.cardList}>
               {plans.length === 0 ? (
                 <Text style={[styles.emptyText, t.emptyText]}>
@@ -374,6 +605,8 @@ export default function SubscriptionPage() {
               ) : (
                 plans.map(plan => {
                   const isSelected = plan.id === selectedPlanId;
+                  const monthly =
+                    plan.monthly_price ?? plan.price ?? plan.yearly_price ?? 0;
                   return (
                     <TouchableOpacity
                       key={plan.id}
@@ -385,15 +618,11 @@ export default function SubscriptionPage() {
                       onPress={() => setSelectedPlanId(plan.id)}
                       activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}>
                       <Text style={[styles.cardTitle, t.cardTitle]}>
-                        {plan.name ?? `Plan ${plan.id}`}
+                        {plan.name}
                       </Text>
                       <Text style={[styles.cardPrice, t.cardPrice]}>
-                        {formatCurrency(
-                          billingCycle === 'monthly'
-                            ? plan.monthly_price ?? plan.price ?? 0
-                            : plan.yearly_price ?? plan.price ?? 0,
-                        )}{' '}
-                        / {billingCycle === 'monthly' ? 'month' : 'year'}
+                        {formatCurrency(monthly)}
+                        <Text style={styles.perMo}> / mo</Text>
                       </Text>
                     </TouchableOpacity>
                   );
@@ -401,81 +630,150 @@ export default function SubscriptionPage() {
               )}
             </View>
 
+            <Text style={[styles.sectionTitle, t.sectionTitle]}>Billing cycle</Text>
+            <View style={styles.toggleRow}>
+              {(['monthly', 'yearly'] as BillingCycle[]).map(cycle => (
+                <TouchableOpacity
+                  key={cycle}
+                  style={[
+                    styles.toggleBtn,
+                    t.toggleBtn,
+                    billingCycle === cycle && [
+                      styles.toggleBtnActive,
+                      t.toggleBtnActive,
+                    ],
+                  ]}
+                  onPress={() => setBillingCycle(cycle)}
+                  activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}>
+                  <Text
+                    style={[
+                      styles.toggleBtnText,
+                      t.toggleBtnText,
+                      billingCycle === cycle && [
+                        styles.toggleBtnTextActive,
+                        t.toggleBtnTextActive,
+                      ],
+                    ]}>
+                    {cycle === 'monthly' ? 'Monthly' : 'Yearly'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
             <Text style={[styles.sectionTitle, t.sectionTitle]}>
-              Upfront months
+              Months upfront (1–24)
             </Text>
             <View style={[styles.pickerWrap, t.pickerWrap]}>
               <Picker
                 selectedValue={months}
-                onValueChange={val => setMonths(Number(val))}
-                mode="dropdown"
+                onValueChange={(v: number) => setMonths(Number(v))}
                 style={[styles.picker, t.picker]}
-                dropdownIconColor={colors.textSecondary}>
-                {Array.from({length: 24}).map((_, idx) => {
-                  const m = idx + 1;
-                  return <Picker.Item key={m} label={`${m}`} value={m} />;
-                })}
+                dropdownIconColor={colors.textPrimary}>
+                {Array.from({length: 24}, (_, i) => i + 1).map(n => (
+                  <Picker.Item key={n} label={String(n)} value={n} />
+                ))}
               </Picker>
             </View>
 
             <Text style={[styles.sectionTitle, t.sectionTitle]}>
-              Add-ons (optional)
+              Payment method
             </Text>
-            <View style={styles.cardList}>
-              {addOns.length === 0 ? (
-                <Text style={[styles.emptyText, t.emptyText]}>
-                  No add-ons available.
+            <View style={styles.toggleRow}>
+              <TouchableOpacity
+                style={[
+                  styles.methodCard,
+                  t.card,
+                  method === 'mobile_money' && [
+                    styles.cardSelected,
+                    t.cardSelected,
+                  ],
+                ]}
+                onPress={() => setMethod('mobile_money')}
+                activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}>
+                <Image
+                  source={icons.wallet as any}
+                  style={[styles.methodIcon, {tintColor: COLORS.primary2}]}
+                />
+                <Text style={[styles.cardTitle, t.cardTitle]}>Mobile money</Text>
+                <Text style={[styles.cardPrice, t.cardPrice]}>
+                  MTN / Airtel USSD prompt
                 </Text>
-              ) : (
-                addOns.map(a => {
-                  const active = selectedAddOnIds.includes(a.id);
-                  return (
-                    <TouchableOpacity
-                      key={a.id}
-                      style={[
-                        styles.addOnRow,
-                        t.card,
-                        active && [styles.addOnRowActive, t.addOnRowActive],
-                      ]}
-                      onPress={() => toggleAddOn(a.id)}
-                      activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}>
-                      <Text style={[styles.addOnName, t.addOnName]}>
-                        {a.name ?? `Add-on ${a.id}`}
-                      </Text>
-                      <Text style={[styles.addOnPrice, t.addOnPrice]}>
-                        +{' '}
-                        {formatCurrency(
-                          billingCycle === 'monthly'
-                            ? a.monthly_price ?? a.price ?? 0
-                            : a.yearly_price ?? a.price ?? 0,
-                        )}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })
-              )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.methodCard,
+                  t.card,
+                  method === 'card' && [styles.cardSelected, t.cardSelected],
+                ]}
+                onPress={() => setMethod('card')}
+                activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}>
+                <Image
+                  source={icons.mastercard as any}
+                  style={styles.methodIcon}
+                />
+                <Text style={[styles.cardTitle, t.cardTitle]}>Card</Text>
+                <Text style={[styles.cardPrice, t.cardPrice]}>
+                  Secure card gateway
+                </Text>
+              </TouchableOpacity>
             </View>
 
+            {method === 'mobile_money' ? (
+              <>
+                <Text style={[styles.sectionTitle, t.sectionTitle]}>
+                  Phone number (receives the prompt)
+                </Text>
+                <TextInput
+                  style={[styles.phoneInput, t.input]}
+                  value={phone}
+                  onChangeText={setPhone}
+                  placeholder="0750123456"
+                  placeholderTextColor={colors.textSecondary}
+                  keyboardType="phone-pad"
+                  autoCorrect={false}
+                />
+              </>
+            ) : null}
+
             <View style={[styles.footerTotal, t.footerTotal]}>
-              <Text style={[styles.footerTotalLabel, t.footerTotalLabel]}>
-                Total to pay
-              </Text>
-              <Text style={[styles.footerTotalValue, t.footerTotalValue]}>
-                {formatCurrency(totalAmount)}
-              </Text>
+              <View>
+                <Text style={[styles.footerTotalLabel, t.footerTotalLabel]}>
+                  {USE_TEST_ENV ? 'Catalog total' : 'Total due'}
+                </Text>
+                <Text style={[styles.footerTotalValue, t.footerTotalValue]}>
+                  {formatCurrency(totalAmount)}
+                </Text>
+                {USE_TEST_ENV ? (
+                  <Text style={styles.testChargeHint}>
+                    Marz charge: {formatCurrency(testAmountUgx)}
+                  </Text>
+                ) : null}
+              </View>
             </View>
+
+            {error ? (
+              <View style={styles.errorBox}>
+                <Text style={styles.errorText}>{error}</Text>
+              </View>
+            ) : null}
 
             <TouchableOpacity
               style={[
                 styles.primaryButton,
-                !selectedPlanId && styles.primaryButtonDisabled,
+                (!selectedPlanId || submitting) && styles.primaryButtonDisabled,
               ]}
-              disabled={!selectedPlanId}
-              onPress={proceedToMobileMoney}
+              disabled={!selectedPlanId || submitting}
+              onPress={() => void handlePay()}
               activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}>
-              <Text style={styles.primaryButtonText}>
-                Proceed to Mobile Money
-              </Text>
+              {submitting ? (
+                <ActivityIndicator color={COLORS.white} />
+              ) : (
+                <Text style={styles.primaryButtonText}>
+                  {method === 'card'
+                    ? 'Continue to card payment'
+                    : 'Pay with mobile money'}
+                </Text>
+              )}
             </TouchableOpacity>
           </>
         )}
@@ -492,26 +790,45 @@ export default function SubscriptionPage() {
             },
           ]}>
           <View style={[styles.modalCard, t.modalCard]}>
-            <View style={[styles.modalIconWrap, t.modalIconWrap]}>
-              <Image
-                source={images.logo_icon}
-                style={styles.modalLogo}
-                resizeMode="contain"
-              />
+            <Text style={[styles.modalDialogTitle, t.modalText]}>
+              {isTrialExpiry ? 'Trial period ended' : 'Subscription inactive'}
+            </Text>
+            <View style={styles.modalBodyRow}>
+              <View style={styles.modalIconWrapAmber}>
+                <Image
+                  source={icons.wallet as any}
+                  style={styles.modalWalletIcon}
+                  resizeMode="contain"
+                />
+              </View>
+              <View style={styles.modalBodyText}>
+                <Text style={[styles.modalTitle, t.modalTitle]}>
+                  {isTrialExpiry
+                    ? 'Your trial period has ended'
+                    : 'Your subscription needs renewal'}
+                </Text>
+                <Text style={[styles.modalText, t.modalText]}>
+                  {isTrialExpiry
+                    ? 'To continue using Zentro, please subscribe to a plan. You will be taken to the subscription page to choose a plan and proceed with payment.'
+                    : 'Your paid period and grace window have ended. Renew your subscription on the next page to restore full access to Zentro.'}
+                </Text>
+                {!!lockDate && !isTrialExpiry ? (
+                  <Text style={[styles.modalLockNote, t.modalText]}>
+                    Access ended after grace period (lock date: {lockDate}).
+                  </Text>
+                ) : null}
+              </View>
             </View>
-            <Text style={[styles.modalTitle, t.modalTitle]}>
-              Your trial period has ended
-            </Text>
-            <Text style={[styles.modalText, t.modalText]}>
-              To continue using Zentroapp, please subscribe to a plan. Choose a
-              plan below and proceed with mobile money payment.
-            </Text>
-            <TouchableOpacity
-              style={styles.modalPrimary}
-              onPress={() => setExpiredModalVisible(false)}
-              activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}>
-              <Text style={styles.modalPrimaryText}>Proceed to payment</Text>
-            </TouchableOpacity>
+            <View style={[styles.modalFooter, t.headerBorder]}>
+              <TouchableOpacity
+                style={styles.modalPrimary}
+                onPress={() => setExpiredModalVisible(false)}
+                activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}>
+                <Text style={styles.modalPrimaryText}>
+                  {isTrialExpiry ? 'Proceed to payment' : 'Renew subscription'}
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       ) : null}
@@ -520,12 +837,8 @@ export default function SubscriptionPage() {
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-  },
-  scroll: {
-    flex: 1,
-  },
+  screen: {flex: 1},
+  scroll: {flex: 1},
   container: {
     paddingHorizontal: SIZES.padding,
     paddingTop: 12,
@@ -547,10 +860,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  headerRoundIcon: {
-    width: 20,
-    height: 20,
-  },
+  headerRoundIcon: {width: 20, height: 20},
   topTitle: {
     flex: 1,
     textAlign: 'center',
@@ -564,15 +874,12 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     justifyContent: 'center',
   },
-  headerTrailingSpacer: {
-    width: 40,
-    height: 40,
-  },
+  headerTrailingSpacer: {width: 40, height: 40},
   pageSubtitle: {
     ...FONTS.body4,
     fontSize: 14,
     lineHeight: 20,
-    marginBottom: 20,
+    marginBottom: 16,
     textAlign: 'center',
   },
   loading: {
@@ -581,20 +888,14 @@ const styles = StyleSheet.create({
     paddingVertical: 48,
     gap: 10,
   },
-  loadingText: {
-    marginTop: 4,
-  },
+  loadingText: {marginTop: 4},
   sectionTitle: {
     fontSize: 17,
     fontWeight: '700',
     marginTop: 8,
     marginBottom: 10,
   },
-  toggleRow: {
-    flexDirection: 'row',
-    gap: 10,
-    marginBottom: 16,
-  },
+  toggleRow: {flexDirection: 'row', gap: 10, marginBottom: 16},
   toggleBtn: {
     flex: 1,
     borderRadius: 12,
@@ -603,78 +904,50 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   toggleBtnActive: {},
-  toggleBtnText: {
-    fontWeight: '600',
-    fontSize: 15,
-  },
-  toggleBtnTextActive: {
-    fontWeight: '700',
-  },
-  cardList: {
-    gap: 10,
-    marginBottom: 8,
-  },
-  card: {
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-  },
+  toggleBtnText: {fontWeight: '600', fontSize: 15},
+  toggleBtnTextActive: {fontWeight: '700'},
+  cardList: {gap: 10, marginBottom: 8},
+  card: {borderRadius: 12, padding: 16, borderWidth: 1},
   cardSelected: {},
-  cardTitle: {
-    fontWeight: '700',
-    fontSize: 16,
-    marginBottom: 4,
-  },
-  cardPrice: {
-    fontSize: 14,
-  },
-  emptyText: {
-    textAlign: 'center',
-    paddingVertical: 12,
-  },
+  cardTitle: {fontWeight: '700', fontSize: 16, marginBottom: 4},
+  cardPrice: {fontSize: 14},
+  perMo: {fontSize: 12},
+  emptyText: {textAlign: 'center', paddingVertical: 12},
   pickerWrap: {
     borderRadius: 12,
     borderWidth: 1,
     overflow: 'hidden',
     marginBottom: 8,
   },
-  picker: {
-    width: '100%',
-  },
-  addOnRow: {
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  addOnRowActive: {},
-  addOnName: {
-    fontWeight: '600',
-    fontSize: 15,
+  picker: {width: '100%'},
+  methodCard: {
     flex: 1,
-    paddingRight: 12,
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
   },
-  addOnPrice: {
-    fontWeight: '700',
-    fontSize: 14,
+  methodIcon: {width: 28, height: 28, marginBottom: 8},
+  phoneInput: {
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: Platform.OS === 'ios' ? 14 : 10,
+    fontSize: 16,
+    marginBottom: 8,
   },
   footerTotal: {
     marginTop: 16,
     borderRadius: 12,
     padding: 16,
     borderWidth: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
   },
-  footerTotalLabel: {
-    fontSize: 14,
-  },
-  footerTotalValue: {
-    fontWeight: '700',
-    fontSize: 17,
+  footerTotalLabel: {fontSize: 12, textTransform: 'uppercase'},
+  footerTotalValue: {fontWeight: '700', fontSize: 20, marginTop: 4},
+  testChargeHint: {
+    marginTop: 4,
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#92400E',
   },
   primaryButton: {
     marginTop: 16,
@@ -685,13 +958,95 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 24,
   },
-  primaryButtonDisabled: {
-    opacity: 0.5,
-  },
+  primaryButtonDisabled: {opacity: 0.5},
   primaryButtonText: {
     color: COLORS.white,
     fontWeight: '700',
     fontSize: 16,
+  },
+  errorBox: {
+    marginTop: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    backgroundColor: '#FEF2F2',
+    padding: 12,
+  },
+  errorText: {color: '#991B1B', fontSize: 14, fontWeight: '500'},
+  devBanner: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+    backgroundColor: '#FFFBEB',
+    padding: 12,
+    marginBottom: 12,
+  },
+  devBannerText: {fontSize: 12, color: '#78350F', marginBottom: 8, lineHeight: 17},
+  devBannerLabel: {fontSize: 12, fontWeight: '700', color: '#78350F', marginBottom: 6},
+  devChipRow: {flexDirection: 'row', gap: 8},
+  devChip: {
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: COLORS.white,
+  },
+  devChipActive: {backgroundColor: '#F59E0B'},
+  devChipText: {fontSize: 12, fontWeight: '700', color: '#78350F'},
+  devChipTextActive: {color: COLORS.white},
+  centerPhase: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  phaseCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 24,
+    alignItems: 'center',
+  },
+  phaseTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    marginTop: 16,
+    textAlign: 'center',
+  },
+  phaseBody: {
+    marginTop: 10,
+    fontSize: 14,
+    lineHeight: 21,
+    textAlign: 'center',
+  },
+  phaseAmount: {
+    marginTop: 16,
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  phaseRef: {
+    marginTop: 8,
+    fontSize: 11,
+    textAlign: 'center',
+  },
+  successIcon: {
+    fontSize: 40,
+    color: '#059669',
+    fontWeight: '700',
+  },
+  failBadge: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#FEE2E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  failBadgeText: {fontSize: 24, fontWeight: '800', color: '#DC2626'},
+  linkBtn: {
+    marginTop: 20,
+    color: COLORS.primary2,
+    fontWeight: '600',
+    fontSize: 14,
   },
   expiredOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -701,46 +1056,58 @@ const styles = StyleSheet.create({
   },
   modalCard: {
     width: '100%',
-    maxWidth: 360,
-    padding: 24,
+    maxWidth: 400,
+    padding: 20,
     borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
   },
-  modalIconWrap: {
-    alignSelf: 'center',
-    width: 64,
-    height: 64,
-    borderRadius: 32,
+  modalDialogTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    marginBottom: 14,
+    textAlign: 'left',
+  },
+  modalBodyRow: {flexDirection: 'row', alignItems: 'flex-start'},
+  modalIconWrapAmber: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 16,
+    backgroundColor: '#FEF3C7',
   },
-  modalLogo: {
-    width: 36,
-    height: 36,
-  },
+  modalWalletIcon: {width: 24, height: 24, tintColor: '#D97706'},
+  modalBodyText: {flex: 1, marginLeft: 14},
   modalTitle: {
-    fontSize: 20,
+    fontSize: 17,
     fontWeight: '700',
-    marginBottom: 10,
-    textAlign: 'center',
+    marginBottom: 8,
+    textAlign: 'left',
   },
   modalText: {
-    marginBottom: 20,
-    textAlign: 'center',
-    lineHeight: 22,
-    fontSize: 15,
+    marginBottom: 8,
+    textAlign: 'left',
+    lineHeight: 21,
+    fontSize: 14,
+  },
+  modalLockNote: {fontSize: 12, lineHeight: 18, marginBottom: 0, opacity: 0.85},
+  modalFooter: {
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    alignItems: 'flex-end',
   },
   modalPrimary: {
     backgroundColor: COLORS.primary2,
-    borderRadius: 24,
-    minHeight: 48,
+    borderRadius: 10,
+    minHeight: 44,
+    paddingHorizontal: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
   modalPrimaryText: {
     color: COLORS.white,
     fontWeight: '700',
-    fontSize: 16,
+    fontSize: 15,
   },
 });

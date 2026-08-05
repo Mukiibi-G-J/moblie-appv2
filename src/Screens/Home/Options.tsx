@@ -2,331 +2,450 @@ import React, {useMemo} from 'react';
 import {
   View,
   Text,
-  TouchableOpacity,
+  Pressable,
   Image,
   StyleSheet,
   Platform,
+  ScrollView,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
-import {constants, COLORS, FONTS, icons} from '../../constants';
-import {PAGE_NAMES, RESTAURANT_MODULE_ENTRY_PAGE_NAMES} from '../../constants/pageNames';
+import {constants, COLORS, icons} from '../../constants';
+import {
+  PAGE_NAMES,
+  RESTAURANT_MODULE_ENTRY_PAGE_NAMES,
+} from '../../constants/pageNames';
 import {usePermissions} from '../../hooks/usePermissions';
 import {useTheme} from '../../context/ThemeContext';
 import {useTabContext} from '../../context/Store';
 import {navigate} from '../../hooks/NavigationService';
 
-const COLUMNS = 4;
-
-type ShortcutColor = {
-  bg: string;
-  tint: string;
+type ModuleItem = {
+  code: string;
+  title: string;
+  icon: number;
+  onPress: () => void;
+  visible: boolean;
 };
 
-type ShortcutAction = {
+type FeedCard = {
   key: string;
-  icon: number;
-  label: string;
-  color: ShortcutColor;
+  title: string;
+  body: string;
+  cta: string;
   onPress: () => void;
 };
 
-const SHORTCUT_PALETTE: ShortcutColor[] = [
-  {bg: 'rgba(2, 134, 255, 0.14)', tint: COLORS.primary},
-  {bg: 'rgba(0, 184, 148, 0.14)', tint: COLORS.success},
-  {bg: 'rgba(255, 161, 51, 0.16)', tint: COLORS.warning},
-  {bg: 'rgba(46, 134, 222, 0.14)', tint: COLORS.info},
-  {bg: 'rgba(0, 102, 204, 0.14)', tint: COLORS.primary2},
-  {bg: 'rgba(255, 71, 87, 0.12)', tint: COLORS.error},
-  {bg: 'rgba(0, 163, 255, 0.14)', tint: COLORS.accent},
-  {bg: 'rgba(44, 62, 80, 0.12)', tint: COLORS.secondary},
-];
-
-const SHORTCUT_COLOR_BY_KEY: Partial<Record<string, ShortcutColor>> = {
-  makeSale: {bg: 'rgba(2, 134, 255, 0.16)', tint: COLORS.primary},
-  items: {bg: 'rgba(0, 184, 148, 0.16)', tint: COLORS.success},
-  printLabels: {bg: 'rgba(46, 134, 222, 0.14)', tint: COLORS.info},
-  expenses: {bg: 'rgba(255, 161, 51, 0.16)', tint: COLORS.warning},
-  restaurant: {bg: 'rgba(255, 71, 87, 0.12)', tint: COLORS.error},
-  salesHistory: {bg: 'rgba(0, 163, 255, 0.14)', tint: COLORS.accent},
-  reports: {bg: 'rgba(44, 62, 80, 0.12)', tint: COLORS.secondary},
-  stockAdjustments: {bg: 'rgba(0, 184, 148, 0.12)', tint: COLORS.success},
-  openingBalance: {bg: 'rgba(0, 102, 204, 0.14)', tint: COLORS.primary2},
-  customers: {bg: 'rgba(2, 134, 255, 0.12)', tint: COLORS.primary},
-  suppliers: {bg: 'rgba(255, 161, 51, 0.14)', tint: COLORS.warning},
-  payments: {bg: 'rgba(0, 102, 204, 0.14)', tint: COLORS.primary2},
+const quickPressProps = {
+  delayPressIn: 0 as const,
+  delayHoverIn: 0 as const,
+  unstable_pressDelay: 0 as const,
 };
 
-function chunkByColumns<T>(items: T[], columns: number): T[][] {
-  const rows: T[][] = [];
-  for (let i = 0; i < items.length; i += columns) {
-    rows.push(items.slice(i, i + columns));
-  }
-  return rows;
-}
+type OptionsProps = {
+  /** Open + Draft count combined */
+  unpostedCount?: number;
+  lowStockCount?: number;
+};
 
-function colorForShortcut(key: string, index: number): ShortcutColor {
-  return (
-    SHORTCUT_COLOR_BY_KEY[key] ??
-    SHORTCUT_PALETTE[index % SHORTCUT_PALETTE.length]
-  );
-}
-
-const Options = () => {
+/**
+ * QuickBooks-inspired Home launcher:
+ * - Business Feed (horizontal tip/action cards)
+ * - Shortcuts (role-centre modules as soft tiles)
+ */
+const Options = ({
+  unpostedCount = 0,
+  lowStockCount = 0,
+}: OptionsProps) => {
   const navigation = useNavigation();
   const {setSelectedTab} = useTabContext();
-  const {isModuleVisible, hasAnyPageAccess, canRead} = usePermissions();
-  const {colors} = useTheme();
+  const {isModuleVisible, hasAnyPageAccess} = usePermissions();
+  const {colors, isDark} = useTheme();
 
-  const t = useMemo(
-    () => ({
-      sectionTitle: {color: colors.textPrimary},
-      card: {
-        backgroundColor: colors.card,
-        borderColor: colors.border,
-      },
-      label: {color: colors.textPrimary},
-    }),
-    [colors],
-  );
-
-  const showSalesHistory =
-    isModuleVisible('sales') && hasAnyPageAccess(PAGE_NAMES.SALES_HISTORY);
-  const showPrintLabels =
-    isModuleVisible('items') && canRead(PAGE_NAMES.ITEMS);
   const canMakeSale =
     isModuleVisible('sales') && hasAnyPageAccess(PAGE_NAMES.SALES);
+  const canViewSalesHistory =
+    isModuleVisible('sales') && hasAnyPageAccess(PAGE_NAMES.SALES_HISTORY);
 
-  const showRestaurantQuick =
+  const showRestaurant =
     isModuleVisible('restaurant') &&
     RESTAURANT_MODULE_ENTRY_PAGE_NAMES.some(p => hasAnyPageAccess(p));
 
-  const shortcuts: ShortcutAction[] = useMemo(() => {
-    const defs: Omit<ShortcutAction, 'color'>[] = [];
+  const cardSurface = {
+    backgroundColor: colors.card,
+    borderColor: isDark ? colors.border : 'transparent',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: {width: 0, height: 2},
+        shadowOpacity: isDark ? 0.25 : 0.07,
+        shadowRadius: 8,
+      },
+      android: {elevation: isDark ? 0 : 2},
+      default: {},
+    }),
+  };
+
+  const feedCards: FeedCard[] = useMemo(() => {
+    const cards: FeedCard[] = [];
 
     if (canMakeSale) {
-      defs.push({
-        key: 'makeSale',
-        icon: icons.cart,
-        label: 'Make sale',
+      cards.push({
+        key: 'make-sale',
+        title: 'Ready to sell?',
+        body: 'Open the register and start a new sale for a walk-in or customer.',
+        cta: 'Make sale',
         onPress: () => setSelectedTab(constants.screens.makeSale),
       });
     }
-    if (isModuleVisible('items') && hasAnyPageAccess(PAGE_NAMES.ITEMS)) {
-      defs.push({
-        key: 'items',
-        icon: icons.product,
-        label: 'Items',
-        onPress: () => navigation.navigate('Items' as never),
-      });
-    }
-    if (showPrintLabels) {
-      defs.push({
-        key: 'printLabels',
-        icon: icons.printer,
-        label: 'Print labels',
-        onPress: () => navigation.navigate('PrintLabels' as never),
-      });
-    }
-    if (isModuleVisible('expenses') && hasAnyPageAccess(PAGE_NAMES.EXPENSES)) {
-      defs.push({
-        key: 'expenses',
-        icon: icons.coupon,
-        label: 'Expenses',
-        onPress: () => navigation.navigate('Expenses' as never),
-      });
-    }
-    if (
-      isModuleVisible('payments') &&
-      hasAnyPageAccess(PAGE_NAMES.PAYMENTS)
-    ) {
-      defs.push({
-        key: 'payments',
-        icon: icons.wallet,
-        label: 'Payments',
-        onPress: () => navigate('Payments', undefined),
-      });
-    }
-    if (showRestaurantQuick) {
-      defs.push({
-        key: 'restaurant',
-        icon: icons.tray,
-        label: 'Restaurant',
-        onPress: () => navigate('RestaurantHub', undefined),
-      });
-    }
-    if (showSalesHistory) {
-      defs.push({
-        key: 'salesHistory',
-        icon: icons.reports,
-        label: 'Sales history',
-        onPress: () => navigate('SalesHistory', undefined),
-      });
-    }
-    if (isModuleVisible('reports') && hasAnyPageAccess(PAGE_NAMES.REPORTS)) {
-      defs.push({
-        key: 'reports',
-        icon: icons.reports,
-        label: 'Reports',
-        onPress: () => navigate('Reports', undefined),
-      });
-    }
-    if (
-      isModuleVisible('inventory') &&
-      hasAnyPageAccess(PAGE_NAMES.ITEM_JOURNAL)
-    ) {
-      defs.push({
-        key: 'stockAdjustments',
-        icon: icons.itemJournal,
-        label: 'Stock adj.',
-        onPress: () => navigate('ItemJournal', undefined),
-      });
-      defs.push({
-        key: 'openingBalance',
-        icon: icons.itemJournal,
-        label: 'Opening bal.',
-        onPress: () => navigate('OpeningBalanceJournal', undefined),
-      });
-    }
-    if (
-      isModuleVisible('customers') &&
-      hasAnyPageAccess(PAGE_NAMES.CUSTOMER_MANAGEMENT)
-    ) {
-      defs.push({
-        key: 'customers',
-        icon: icons.profile,
-        label: 'Customers',
-        onPress: () => navigate('Customers', undefined),
-      });
-    }
-    if (
-      isModuleVisible('suppliers') &&
-      hasAnyPageAccess(PAGE_NAMES.SUPPLIERS)
-    ) {
-      defs.push({
-        key: 'suppliers',
-        icon: icons.company,
-        label: 'Suppliers',
-        onPress: () => navigate('Suppliers', undefined),
+
+    if ((canViewSalesHistory || canMakeSale) && unpostedCount > 0) {
+      cards.push({
+        key: 'unposted',
+        title: 'Unposted sales',
+        body: `${unpostedCount} open or draft sale${
+          unpostedCount === 1 ? '' : 's'
+        } waiting to be finished or posted.`,
+        cta: 'View unposted',
+        onPress: () =>
+          navigate('SalesHistory', {
+            status: 'Unposted',
+            dateFilter: 'alltime',
+          }),
       });
     }
 
-    return defs.map((item, index) => ({
-      ...item,
-      color: colorForShortcut(item.key, index),
-    }));
+    if (
+      lowStockCount > 0 &&
+      isModuleVisible('items') &&
+      hasAnyPageAccess(PAGE_NAMES.ITEMS)
+    ) {
+      cards.push({
+        key: 'low-stock',
+        title: 'Stock needs attention',
+        body: `${lowStockCount} item${
+          lowStockCount === 1 ? '' : 's'
+        } are running low. Review inventory soon.`,
+        cta: 'Review stock',
+        onPress: () =>
+          navigation.navigate(
+            'AllItems' as never,
+            {stockFilter: 'low_stock'} as never,
+          ),
+      });
+    }
+
+    if (
+      isModuleVisible('reports') &&
+      hasAnyPageAccess(PAGE_NAMES.REPORTS)
+    ) {
+      cards.push({
+        key: 'reports',
+        title: 'Business trends',
+        body: 'Review sales performance and reports for your store.',
+        cta: 'Take a look',
+        onPress: () => navigate('Reports', undefined),
+      });
+    }
+
+    return cards;
   }, [
     canMakeSale,
-    showPrintLabels,
-    showRestaurantQuick,
-    showSalesHistory,
+    canViewSalesHistory,
+    unpostedCount,
+    lowStockCount,
     isModuleVisible,
     hasAnyPageAccess,
     navigation,
     setSelectedTab,
   ]);
 
-  if (shortcuts.length === 0) {
+  const modules: ModuleItem[] = useMemo(() => {
+    const defs: ModuleItem[] = [
+      {
+        code: 'salesHistory',
+        title: 'History',
+        icon: icons.reports,
+        visible: canViewSalesHistory,
+        onPress: () => navigate('SalesHistory', undefined),
+      },
+      {
+        code: 'unpostedSales',
+        title: unpostedCount > 0 ? `Unposted (${unpostedCount})` : 'Unposted',
+        icon: icons.cart,
+        visible: canViewSalesHistory || canMakeSale,
+        onPress: () =>
+          navigate('SalesHistory', {
+            status: 'Unposted',
+            dateFilter: 'alltime',
+          }),
+      },
+      {
+        code: 'customers',
+        title: 'Customers',
+        icon: icons.profile,
+        visible:
+          isModuleVisible('customers') &&
+          hasAnyPageAccess(PAGE_NAMES.CUSTOMER_MANAGEMENT),
+        onPress: () => navigate('Customers', undefined),
+      },
+      {
+        code: 'items',
+        title: 'Items',
+        icon: icons.product,
+        visible:
+          isModuleVisible('items') && hasAnyPageAccess(PAGE_NAMES.ITEMS),
+        onPress: () => navigation.navigate('Items' as never),
+      },
+      {
+        code: 'purchases',
+        title: 'Purchases',
+        icon: icons.product2,
+        visible:
+          isModuleVisible('purchases') &&
+          hasAnyPageAccess(PAGE_NAMES.PURCHASES),
+        onPress: () => navigate('Purchases', undefined),
+      },
+      {
+        code: 'suppliers',
+        title: 'Suppliers',
+        icon: icons.company,
+        visible:
+          isModuleVisible('suppliers') &&
+          hasAnyPageAccess(PAGE_NAMES.SUPPLIERS),
+        onPress: () => navigate('Suppliers', undefined),
+      },
+      {
+        code: 'payments',
+        title: 'Payments',
+        icon: icons.wallet,
+        visible:
+          isModuleVisible('payments') &&
+          hasAnyPageAccess(PAGE_NAMES.PAYMENTS),
+        onPress: () => navigate('Payments', undefined),
+      },
+      {
+        code: 'expenses',
+        title: 'Expenses',
+        icon: icons.coupon,
+        visible:
+          isModuleVisible('expenses') &&
+          hasAnyPageAccess(PAGE_NAMES.EXPENSES),
+        onPress: () => navigation.navigate('Expenses' as never),
+      },
+      {
+        code: 'reports',
+        title: 'Reports',
+        icon: icons.reports,
+        visible:
+          isModuleVisible('reports') && hasAnyPageAccess(PAGE_NAMES.REPORTS),
+        onPress: () => navigate('Reports', undefined),
+      },
+      {
+        code: 'restaurant',
+        title: 'Restaurant',
+        icon: icons.tray,
+        visible: showRestaurant,
+        onPress: () => navigate('RestaurantHub', undefined),
+      },
+      {
+        code: 'company',
+        title: 'Company',
+        icon: icons.company,
+        visible:
+          isModuleVisible('company') &&
+          hasAnyPageAccess(PAGE_NAMES.COMPANY_MANAGEMENT),
+        onPress: () => navigate('BusinessDetails', undefined),
+      },
+      {
+        code: 'userManagement',
+        title: 'Users',
+        icon: icons.profile,
+        visible:
+          isModuleVisible('userManagement') &&
+          hasAnyPageAccess(PAGE_NAMES.USER_MANAGEMENT),
+        onPress: () => navigate('UserManagement', undefined),
+      },
+    ];
+
+    return defs.filter(m => m.visible);
+  }, [
+    showRestaurant,
+    canViewSalesHistory,
+    canMakeSale,
+    unpostedCount,
+    isModuleVisible,
+    hasAnyPageAccess,
+    navigation,
+  ]);
+
+  if (feedCards.length === 0 && modules.length === 0) {
     return null;
   }
 
-  const rows = chunkByColumns(shortcuts, COLUMNS);
-
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={[styles.headerText, t.sectionTitle, FONTS.h3]}>
-          Quick actions
-        </Text>
-      </View>
-      <View style={[styles.card, t.card]}>
-        {rows.map((row, rowIndex) => (
-          <View
-            key={rowIndex}
-            style={[
-              styles.gridRow,
-              rowIndex < rows.length - 1 ? styles.gridRowSpaced : null,
-            ]}>
-            {row.map(item => (
-              <TouchableOpacity
-                key={item.key}
-                style={styles.shortcut}
-                onPress={item.onPress}
-                activeOpacity={0.7}
+      {feedCards.length > 0 ? (
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, {color: colors.textPrimary}]}>
+            Business feed
+          </Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.feedScroll}
+            decelerationRate="fast"
+            snapToInterval={276}
+            snapToAlignment="start">
+            {feedCards.map(card => (
+              <Pressable
+                key={card.key}
+                {...quickPressProps}
+                onPress={card.onPress}
+                style={({pressed}) => [
+                  styles.feedCard,
+                  cardSurface,
+                  {opacity: pressed ? 0.92 : 1},
+                ]}
                 accessibilityRole="button"
-                accessibilityLabel={item.label}>
+                accessibilityLabel={`${card.title}. ${card.cta}`}>
+                <Text
+                  style={[styles.feedTitle, {color: colors.textPrimary}]}
+                  numberOfLines={1}>
+                  {card.title}
+                </Text>
+                <Text
+                  style={[styles.feedBody, {color: colors.textSecondary}]}
+                  numberOfLines={3}>
+                  {card.body}
+                </Text>
+                <Text style={[styles.feedCta, {color: COLORS.primary2}]}>
+                  {card.cta}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      ) : null}
+
+      {modules.length > 0 ? (
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, {color: colors.textPrimary}]}>
+            Shortcuts
+          </Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.shortcutScroll}>
+            {modules.map(item => (
+              <Pressable
+                key={item.code}
+                {...quickPressProps}
+                onPress={item.onPress}
+                style={({pressed}) => [
+                  styles.shortcutTile,
+                  cardSurface,
+                  {opacity: pressed ? 0.9 : 1},
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel={item.title}>
                 <View
                   style={[
-                    styles.iconContainer,
-                    {backgroundColor: item.color.bg},
+                    styles.shortcutIconWell,
+                    {
+                      backgroundColor: isDark
+                        ? 'rgba(255,255,255,0.08)'
+                        : '#EEF2F6',
+                    },
                   ]}>
                   <Image
                     source={item.icon as any}
-                    style={[styles.icon, {tintColor: item.color.tint}]}
-                    resizeMode="contain"
+                    style={[
+                      styles.shortcutIcon,
+                      {tintColor: COLORS.primary2},
+                    ]}
                   />
                 </View>
-                <Text style={[styles.label, t.label]} numberOfLines={2}>
-                  {item.label}
+                <Text
+                  style={[styles.shortcutLabel, {color: colors.textPrimary}]}
+                  numberOfLines={1}>
+                  {item.title}
                 </Text>
-              </TouchableOpacity>
+              </Pressable>
             ))}
-          </View>
-        ))}
-      </View>
+          </ScrollView>
+        </View>
+      ) : null}
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    marginBottom: 4,
+    gap: 18,
   },
-  header: {
-    marginBottom: 10,
+  section: {
+    gap: 10,
   },
-  headerText: {
-    fontSize: 17,
+  sectionTitle: {
+    fontSize: 16,
     fontWeight: '700',
+    paddingHorizontal: 4,
   },
-  card: {
-    borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 10,
-    borderWidth: 1,
-    ...Platform.select({
-      android: {elevation: 0},
-      default: {},
-    }),
+  feedScroll: {
+    paddingRight: 16,
+    gap: 12,
   },
-  gridRow: {
-    flexDirection: 'row',
-    justifyContent: 'flex-start',
+  feedCard: {
+    width: 260,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 16,
+    minHeight: 132,
+    justifyContent: 'space-between',
   },
-  gridRowSpaced: {
-    marginBottom: 14,
-  },
-  shortcut: {
-    width: `${100 / COLUMNS}%`,
-    alignItems: 'center',
-    paddingHorizontal: 2,
-  },
-  iconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
+  feedTitle: {
+    fontSize: 15,
+    fontWeight: '700',
     marginBottom: 6,
   },
-  icon: {
+  feedBody: {
+    fontSize: 13,
+    lineHeight: 18,
+    flex: 1,
+  },
+  feedCta: {
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 12,
+  },
+  shortcutScroll: {
+    paddingRight: 16,
+    gap: 10,
+  },
+  shortcutTile: {
+    width: 88,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+  },
+  shortcutIconWell: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  shortcutIcon: {
     width: 20,
     height: 20,
   },
-  label: {
-    fontSize: 11,
-    fontWeight: '500',
+  shortcutLabel: {
+    fontSize: 12,
+    fontWeight: '600',
     textAlign: 'center',
-    lineHeight: 14,
   },
 });
 

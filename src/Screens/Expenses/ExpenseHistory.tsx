@@ -21,7 +21,6 @@ import {safeGoBack} from '../../hooks/NavigationService';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import ReactNativeModal from 'react-native-modal';
 import {Expense} from '../../@types/expense';
-import {ExpenseServices} from '../../services/ExpenseServices';
 import ExpenseListItem from './ExpenseListItem';
 import {
   COLORS,
@@ -32,6 +31,10 @@ import {
 } from '../../constants';
 import icons from '../../constants/icons';
 import {usePermissions} from '../../hooks/usePermissions';
+import {
+  useExpensesQuery,
+  useInvalidateExpenses,
+} from '../../hooks/useExpensesQuery';
 import {PAGE_NAMES} from '../../constants/pageNames';
 import {QuickIconPressable} from '../../Components';
 import {useTheme} from '../../context/ThemeContext';
@@ -115,8 +118,6 @@ const ExpenseHistory = () => {
     [colors, isDark],
   );
 
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
@@ -125,12 +126,25 @@ const ExpenseHistory = () => {
   const [dateTo, setDateTo] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] =
     useState<(typeof STATUS_OPTIONS)[number]>('Posted');
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
   const [isDatePickerVisible, setIsDatePickerVisible] = useState(false);
   const [datePickerMode, setDatePickerMode] = useState<'from' | 'to' | null>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const invalidateExpenses = useInvalidateExpenses();
+  const {
+    expenses,
+    isLoading: loading,
+    isFetchingNextPage,
+    hasNextPage: hasMore,
+    refetch: refetchExpenses,
+    fetchNextPage,
+  } = useExpensesQuery({
+    enabled: hasAccess,
+    search: debouncedSearchQuery,
+    status: statusFilter,
+    startDate: dateFrom,
+    endDate: dateTo,
+  });
 
   const {startDate, endDate} = useMemo(() => {
     const today = new Date();
@@ -175,7 +189,6 @@ const ExpenseHistory = () => {
     }
     searchTimeoutRef.current = setTimeout(() => {
       setDebouncedSearchQuery(searchQuery);
-      setPage(1);
     }, 400);
     return () => {
       if (searchTimeoutRef.current) {
@@ -184,67 +197,19 @@ const ExpenseHistory = () => {
     };
   }, [searchQuery]);
 
-  useEffect(() => {
-    if (!hasAccess) {
-      return;
-    }
-    loadExpenses();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, statusFilter, dateFrom, dateTo, debouncedSearchQuery, hasAccess]);
-
-  const loadExpenses = async () => {
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
     try {
-      setLoading(true);
-      const params: any = {
-        page,
-        page_size: 20,
-      };
-      if (debouncedSearchQuery) {
-        params.search = debouncedSearchQuery;
-      }
-      if (statusFilter !== 'All') {
-        params.status = statusFilter;
-      }
-      if (dateFrom) {
-        params.start_date = dateFrom;
-      }
-      if (dateTo) {
-        params.end_date = dateTo;
-      }
-
-      const response = await ExpenseServices.getExpenses(params);
-
-      if (response && response.results && Array.isArray(response.results)) {
-        if (page === 1) {
-          setExpenses(response.results);
-        } else {
-          setExpenses(prev => [...prev, ...response.results]);
-        }
-        setHasMore(!!response.next);
-      } else {
-        setExpenses([]);
-        setHasMore(false);
-      }
-    } catch (error) {
-      console.error('Error loading expense history:', error);
-      setExpenses([]);
-      setHasMore(false);
+      await invalidateExpenses();
+      await refetchExpenses();
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
-  };
-
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    setPage(1);
-    setHasMore(true);
-    loadExpenses();
-  }, []);
+  }, [invalidateExpenses, refetchExpenses]);
 
   const handleLoadMore = () => {
-    if (!loading && hasMore) {
-      setPage(prev => prev + 1);
+    if (!loading && !isFetchingNextPage && hasMore) {
+      fetchNextPage();
     }
   };
 
@@ -287,7 +252,6 @@ const ExpenseHistory = () => {
         setDatePickerMode(null);
         setIsDatePickerVisible(false);
         setDateFilter('alltime');
-        setPage(1);
       }
     }
   };
@@ -324,7 +288,6 @@ const ExpenseHistory = () => {
             ]}
             onPress={() => {
               setDateFilter(filter.id);
-              setPage(1);
             }}>
             <Text
               style={[
@@ -369,7 +332,6 @@ const ExpenseHistory = () => {
               onPress={() => {
                 setDateFilter('last30days');
                 setStatusFilter('Posted');
-                setPage(1);
               }}
               style={[styles.clearFiltersButton, t.clearFiltersBtn]}>
               <Text style={styles.clearFiltersButtonText}>Clear All</Text>
@@ -411,7 +373,6 @@ const ExpenseHistory = () => {
                   ]}
                   onPress={() => {
                     setStatusFilter(status);
-                    setPage(1);
                   }}>
                   <Text
                     style={[
@@ -531,7 +492,7 @@ const ExpenseHistory = () => {
       {renderFilters()}
       {renderSummary()}
 
-      {loading && page === 1 ? (
+      {loading && expenses.length === 0 ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={COLORS.primary} />
           <Text style={[styles.loadingText, t.loadingText]}>Loading expense history...</Text>
@@ -553,7 +514,7 @@ const ExpenseHistory = () => {
           onEndReached={handleLoadMore}
           onEndReachedThreshold={0.5}
           ListFooterComponent={
-            loading && page > 1 ? (
+            isFetchingNextPage ? (
               <View style={styles.footerLoader}>
                 <ActivityIndicator size="small" color={COLORS.primary} />
               </View>

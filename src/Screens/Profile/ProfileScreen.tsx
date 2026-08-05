@@ -3,7 +3,9 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Modal,
   Platform,
+  Pressable,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -25,6 +27,7 @@ import {COLORS, FONTS, SIZES, icons} from '../../constants';
 import {useTheme} from '../../context/ThemeContext';
 import {useAppContext} from '../../context/Store';
 import {safeGoBack} from '../../hooks/NavigationService';
+import {invalidateQueryCache} from '../../query/queryClient';
 import {
   cacheAvatarUrl,
   fetchUserProfile,
@@ -33,6 +36,12 @@ import {
   uploadUserAvatar,
   type UserProfile,
 } from '../../services/profile.service';
+import {
+  loadRoleCentreSettings,
+  switchRoleCentre,
+  type ApplicationProfileOption,
+  type RoleCentreSettings,
+} from '../../services/roleCentre.service';
 import {
   resolveProfileAvatarSrc,
 } from '../../utils/profileAvatar';
@@ -60,6 +69,11 @@ const ProfileScreen = () => {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [roleCentre, setRoleCentre] = useState<RoleCentreSettings | null>(null);
+  const [roleCentreLoading, setRoleCentreLoading] = useState(false);
+  const [roleCentreError, setRoleCentreError] = useState<string | null>(null);
+  const [roleModalVisible, setRoleModalVisible] = useState(false);
+  const [switchingRole, setSwitchingRole] = useState(false);
 
   const headerPaddingTop = Math.max(
     insets.top,
@@ -94,9 +108,72 @@ const ProfileScreen = () => {
     }
   }, [patchAuth]);
 
+  const loadRoleCentre = useCallback(async () => {
+    setRoleCentreLoading(true);
+    setRoleCentreError(null);
+    try {
+      const settings = await loadRoleCentreSettings();
+      setRoleCentre(settings);
+    } catch (e: unknown) {
+      setRoleCentre(null);
+      setRoleCentreError(
+        e instanceof Error ? e.message : 'Could not load Role Centre options.',
+      );
+    } finally {
+      setRoleCentreLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadProfile();
-  }, [loadProfile]);
+    void loadRoleCentre();
+  }, [loadProfile, loadRoleCentre]);
+
+  const handleSelectRoleCentre = useCallback(
+    async (option: ApplicationProfileOption) => {
+      if (!roleCentre || switchingRole) {
+        return;
+      }
+      if (option.code === roleCentre.currentCode) {
+        setRoleModalVisible(false);
+        return;
+      }
+      setSwitchingRole(true);
+      try {
+        await switchRoleCentre(roleCentre.systemId, option.code, {
+          role: roleCentre.currentCode,
+        });
+        setRoleCentre(prev =>
+          prev
+            ? {
+                ...prev,
+                currentCode: option.code,
+                currentDescription: option.description,
+              }
+            : prev,
+        );
+        setRoleModalVisible(false);
+        invalidateQueryCache();
+        Toast.show({
+          type: 'success',
+          text1: 'Role Centre updated',
+          text2: option.description,
+          position: 'top',
+        });
+      } catch (e: unknown) {
+        Toast.show({
+          type: 'error',
+          text1: 'Could not switch profile',
+          text2:
+            e instanceof Error ? e.message : 'Please try again or use the web app.',
+          position: 'top',
+        });
+      } finally {
+        setSwitchingRole(false);
+      }
+    },
+    [roleCentre, switchingRole],
+  );
 
   const avatarSrc = useMemo(
     () =>
@@ -529,6 +606,73 @@ const ProfileScreen = () => {
               </TouchableOpacity>
             </View>
 
+            <View
+              style={[
+                styles.card,
+                {backgroundColor: colors.card, borderColor: colors.border},
+              ]}>
+              <Text style={[styles.sectionTitle, {color: colors.textPrimary}]}>
+                Role Centre
+              </Text>
+              <Text style={[styles.sectionHint, {color: colors.textSecondary}]}>
+                Same as web User settings. Admins (SUPER) can switch between all
+                profiles; other users only see profiles they are allowed to use.
+              </Text>
+
+              {roleCentreLoading && !roleCentre ? (
+                <ActivityIndicator color={COLORS.primary2} />
+              ) : roleCentreError && !roleCentre ? (
+                <View style={styles.roleCentreErrorWrap}>
+                  <Text style={[styles.rolesText, {color: colors.textSecondary}]}>
+                    {roleCentreError}
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.secondaryBtn, {borderColor: colors.border}]}
+                    onPress={() => void loadRoleCentre()}
+                    activeOpacity={0.85}>
+                    <Text
+                      style={[
+                        styles.secondaryBtnText,
+                        {color: colors.textPrimary},
+                      ]}>
+                      Retry
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <>
+                  <Text style={[styles.label, {color: colors.textSecondary}]}>
+                    Current profile
+                  </Text>
+                  <Text style={[styles.roleCurrent, {color: colors.textPrimary}]}>
+                    {roleCentre?.currentDescription ||
+                      roleCentre?.currentCode ||
+                      'Not set'}
+                  </Text>
+                  {roleCentre?.canSwitch ? (
+                    <TouchableOpacity
+                      style={styles.saveProfileBtn}
+                      onPress={() => setRoleModalVisible(true)}
+                      disabled={switchingRole}
+                      activeOpacity={0.85}>
+                      <Text style={styles.saveProfileBtnText}>
+                        Switch profile
+                      </Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <Text
+                      style={[
+                        styles.rolesText,
+                        {color: colors.textSecondary, marginTop: 8},
+                      ]}>
+                      Only one profile is available for your account. An
+                      administrator can assign additional Role Centre access.
+                    </Text>
+                  )}
+                </>
+              )}
+            </View>
+
             {profile?.roles?.length ? (
               <View
                 style={[
@@ -545,6 +689,97 @@ const ProfileScreen = () => {
             ) : null}
           </ScrollView>
         )}
+
+        <Modal
+          visible={roleModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() =>
+            switchingRole ? null : setRoleModalVisible(false)
+          }>
+          <Pressable
+            style={styles.modalBackdrop}
+            onPress={() => (switchingRole ? null : setRoleModalVisible(false))}>
+            <Pressable
+              style={[
+                styles.modalSheet,
+                {
+                  backgroundColor: colors.card,
+                  borderColor: colors.border,
+                  paddingBottom: Math.max(insets.bottom, 16),
+                },
+              ]}
+              onPress={e => e.stopPropagation()}>
+              <Text style={[styles.modalTitle, {color: colors.textPrimary}]}>
+                Switch Role Centre
+              </Text>
+              <Text style={[styles.modalHint, {color: colors.textSecondary}]}>
+                Choose the application profile to use. This matches switching
+                Role Centre on the web.
+              </Text>
+              <ScrollView
+                style={styles.modalList}
+                keyboardShouldPersistTaps="handled">
+                {(roleCentre?.profiles ?? []).map(option => {
+                  const selected = option.code === roleCentre?.currentCode;
+                  return (
+                    <TouchableOpacity
+                      key={option.code}
+                      style={[
+                        styles.modalRow,
+                        {borderBottomColor: colors.border},
+                        selected && styles.modalRowSelected,
+                      ]}
+                      disabled={switchingRole}
+                      onPress={() => void handleSelectRoleCentre(option)}
+                      activeOpacity={0.85}>
+                      <View style={styles.modalRowText}>
+                        <Text
+                          style={[
+                            styles.modalRowTitle,
+                            {color: colors.textPrimary},
+                          ]}>
+                          {option.description}
+                        </Text>
+                        <Text
+                          style={[
+                            styles.modalRowCode,
+                            {color: colors.textSecondary},
+                          ]}>
+                          {option.code}
+                        </Text>
+                      </View>
+                      {selected ? (
+                        <Text
+                          style={[
+                            styles.modalCurrentBadge,
+                            {color: colors.textSecondary},
+                          ]}>
+                          Current
+                        </Text>
+                      ) : switchingRole ? (
+                        <ActivityIndicator color={COLORS.primary2} />
+                      ) : null}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+              <TouchableOpacity
+                style={[
+                  styles.modalCloseBtn,
+                  {backgroundColor: colors.screenMuted},
+                ]}
+                disabled={switchingRole}
+                onPress={() => setRoleModalVisible(false)}
+                activeOpacity={0.85}>
+                <Text
+                  style={[styles.modalCloseBtnText, {color: colors.textPrimary}]}>
+                  Close
+                </Text>
+              </TouchableOpacity>
+            </Pressable>
+          </Pressable>
+        </Modal>
       </View>
     </SafeAreaView>
   );
@@ -699,6 +934,74 @@ const styles = StyleSheet.create({
   rolesText: {
     ...FONTS.body4,
     lineHeight: 20,
+  },
+  roleCurrent: {
+    ...FONTS.body3,
+    fontWeight: '600',
+  },
+  roleCentreErrorWrap: {
+    gap: 10,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  modalSheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderWidth: 1,
+    paddingHorizontal: 16,
+    paddingTop: 18,
+    maxHeight: '75%',
+  },
+  modalTitle: {
+    ...FONTS.h3,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  modalHint: {
+    ...FONTS.body4,
+    marginBottom: 12,
+    lineHeight: 20,
+  },
+  modalList: {
+    maxHeight: 360,
+  },
+  modalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: 10,
+  },
+  modalRowSelected: {
+    opacity: 1,
+  },
+  modalRowText: {
+    flex: 1,
+  },
+  modalRowTitle: {
+    ...FONTS.body3,
+    fontWeight: '600',
+  },
+  modalRowCode: {
+    ...FONTS.body5,
+    marginTop: 2,
+  },
+  modalCurrentBadge: {
+    ...FONTS.body5,
+    fontWeight: '700',
+  },
+  modalCloseBtn: {
+    marginTop: 12,
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  modalCloseBtnText: {
+    ...FONTS.body3,
+    fontWeight: '700',
   },
 });
 

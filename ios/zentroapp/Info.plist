@@ -23,16 +23,16 @@
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSRequiresIPhoneOS</key>
-	<true />
+	<true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
-		<false />
+		<false/>
 		<key>NSAllowsLocalNetworking</key>
-		<true />
+		<true/>
 	</dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string />
+	<string/>
 	<key>NSContactsUsageDescription</key>
 	<string>Zentro uses your contacts so you can quickly add customers from your address book.</string>
 	<key>UILaunchStoryboardName</key>
@@ -48,9 +48,15 @@
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
-	<false />
+	<false/>
 	<key>UIAppFonts</key>
 	<array>
+		<string>Outfit-Bold.ttf</string>
+		<string>Outfit-ExtraBold.ttf</string>
+		<string>Outfit-Light.ttf</string>
+		<string>Outfit-Medium.ttf</string>
+		<string>Outfit-Regular.ttf</string>
+		<string>Outfit-SemiBold.ttf</string>
 		<string>Poppins-Black.ttf</string>
 		<string>Poppins-BlackItalic.ttf</string>
 		<string>Poppins-Bold.ttf</string>

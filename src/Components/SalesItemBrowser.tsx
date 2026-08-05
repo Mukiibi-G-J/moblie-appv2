@@ -158,11 +158,12 @@ const SalesItemBrowser: React.FC<Props> = ({
   const [itemsLoadError, setItemsLoadError] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [hasNextPage, setHasNextPage] = useState(false);
-  const [pendingSearchItem, setPendingSearchItem] = useState<CartItem | null>(null);
   const libraryListRef = useRef<FlatList<CartItem>>(null);
   const addedTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   /** Skip one debounced `loadItems` after add-from-search (avoids a slow refetch right when the cart updates). */
   const skipNextLibraryFetchRef = useRef(false);
+  /** Bumps on each replace fetch so slower older responses cannot overwrite newer search results. */
+  const loadItemsRequestIdRef = useRef(0);
 
   const [favoriteSlots, setFavoriteSlots] = useState<(CartItem | null)[]>(() =>
     Array.from({length: FAVORITE_DEFAULT_VISIBLE_SLOTS}, () => null),
@@ -223,30 +224,31 @@ const SalesItemBrowser: React.FC<Props> = ({
       barFilterChipText: {color: colors.textPrimary},
       barFilterRemove: {tintColor: colors.iconMuted},
       searchResultRow: {borderBottomColor: colors.border},
-      searchResultPending: {backgroundColor: colors.screenMuted},
       searchResultTile: {backgroundColor: colors.inputBackground},
       searchResultTileDis: {backgroundColor: colors.border},
       searchResultInitials: {color: colors.textSecondary},
       searchResultName: {color: colors.textPrimary},
       searchResultNameDis: {color: colors.textTertiary},
       searchResultPrice: {color: colors.textPrimary},
-      searchResultHint: {color: colors.textTertiary},
       stateText: {color: colors.textSecondary},
       listRow: {borderBottomColor: colors.border},
-      selectedRow: {
-        backgroundColor: isDark ? 'rgba(2, 134, 255, 0.12)' : COLORS.transparentPrimary2,
-      },
       disabledRow: {backgroundColor: colors.screenMuted},
       rowSub: {color: colors.textSecondary},
       rowSubDis: {color: colors.textTertiary},
-      libraryGap: {
-        backgroundColor: isDark ? 'rgba(2, 134, 255, 0.08)' : COLORS.transparentPrimary2,
-      },
-      libHdr: {backgroundColor: colors.surface},
-      categoryBack: {
+      catChipBar: {
+        backgroundColor: colors.surface,
         borderBottomColor: colors.border,
-        backgroundColor: colors.inputBackground,
       },
+      catChip: {
+        backgroundColor: colors.inputBackground,
+        borderColor: colors.border,
+      },
+      catChipActive: {
+        backgroundColor: isDark ? 'rgba(2, 134, 255, 0.18)' : COLORS.transparentPrimary2,
+        borderColor: COLORS.primary2,
+      },
+      catChipText: {color: colors.textSecondary},
+      catChipTextActive: {color: COLORS.primary2},
     }),
     [colors, isDark],
   );
@@ -362,10 +364,18 @@ const SalesItemBrowser: React.FC<Props> = ({
         return;
       }
 
+      const requestId = replace
+        ? ++loadItemsRequestIdRef.current
+        : loadItemsRequestIdRef.current;
+
       try {
         if (replace) {
           setItemsLoadError(false);
           setLoadingItems(true);
+          // Drop prior catalog/search rows immediately so typed queries never show
+          // stale A–Z inventory while the new request is in flight.
+          setItems([]);
+          setHasNextPage(false);
         } else {
           setLoadingMore(true);
         }
@@ -380,12 +390,19 @@ const SalesItemBrowser: React.FC<Props> = ({
               : undefined,
         });
 
+        if (requestId !== loadItemsRequestIdRef.current) {
+          return;
+        }
+
         const nextItems = Array.isArray(response?.results) ? response.results : [];
         mergeCachedItems(nextItems);
         setItems(previous => (replace ? nextItems : [...previous, ...nextItems]));
         setCurrentPage(pageToLoad);
         setHasNextPage(Boolean(response?.next));
       } catch (error) {
+        if (requestId !== loadItemsRequestIdRef.current) {
+          return;
+        }
         console.error('Error loading sales browser items:', error);
         if (replace) {
           setItemsLoadError(true);
@@ -393,8 +410,10 @@ const SalesItemBrowser: React.FC<Props> = ({
         }
         setHasNextPage(false);
       } finally {
-        setLoadingItems(false);
-        setLoadingMore(false);
+        if (requestId === loadItemsRequestIdRef.current) {
+          setLoadingItems(false);
+          setLoadingMore(false);
+        }
       }
     },
     [
@@ -411,28 +430,16 @@ const SalesItemBrowser: React.FC<Props> = ({
     void loadItems(1, true);
   }, [loadCategories, loadItems]);
 
-  const handleCategoryPress = useCallback(
-    (category: SalesCategory) => {
-      setSelectedCategoryId(category.id);
-      setTimeout(() => {
-        libraryListRef.current?.scrollToOffset({
-          offset: categories.length * 74 + 28,
-          animated: true,
-        });
-      }, 120);
-    },
-    [categories.length],
-  );
+  const handleCategoryPress = useCallback((categoryId: string | number | null) => {
+    setSelectedCategoryId(categoryId);
+    setTimeout(() => {
+      libraryListRef.current?.scrollToOffset({offset: 0, animated: true});
+    }, 80);
+  }, []);
 
   useEffect(() => {
     loadCategories();
   }, [loadCategories]);
-
-  useEffect(() => {
-    if (!selectedCategoryId && categories.length > 0) {
-      setSelectedCategoryId(categories[0].id);
-    }
-  }, [categories, selectedCategoryId]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -652,7 +659,6 @@ const SalesItemBrowser: React.FC<Props> = ({
         if (hadSearchPanelOpen) {
           skipNextLibraryFetchRef.current = true;
         }
-        setPendingSearchItem(null);
         setRecentlyViewedIds(previous =>
           [item.system_id, ...previous.filter(id => id !== item.system_id)].slice(
             0,
@@ -698,40 +704,17 @@ const SalesItemBrowser: React.FC<Props> = ({
     [handleAddItem, libraryRowTheme],
   );
 
-  const libraryListHeader = useMemo(
-    () => (
-      <PosLibraryListHeader
-        categories={categories}
-        categoriesLoadError={categoriesLoadError}
-        selectedCategory={selectedCategory}
-        selectedCategoryId={selectedCategoryId}
-        bt={bt}
-        onRetry={handleRetryLibrary}
-        onCategoryPress={handleCategoryPress}
-      />
-    ),
-    [
-      categories,
-      categoriesLoadError,
-      selectedCategory,
-      selectedCategoryId,
-      bt,
-      handleRetryLibrary,
-      handleCategoryPress,
-    ],
-  );
-
   const onSearchChangeText = (text: string) => {
     setSearchQuery(text);
-    setPendingSearchItem(prev => {
-      if (!prev) {
-        return null;
-      }
-      if (text.trim().toLowerCase() !== (prev.item_name || '').trim().toLowerCase()) {
-        return null;
-      }
-      return prev;
-    });
+    // Clear immediately on keystroke (before debounce) so the previous catalog
+    // cannot sit under a new query like "Mask". Invalidate in-flight requests
+    // so a slower older response cannot repopulate the list.
+    if (isSearchPanelVisible) {
+      loadItemsRequestIdRef.current += 1;
+      setItems([]);
+      setHasNextPage(false);
+      setLoadingItems(true);
+    }
   };
 
   const showTypedSearchResults =
@@ -746,26 +729,7 @@ const SalesItemBrowser: React.FC<Props> = ({
     if (isPosItemOutOfStock(item)) {
       return;
     }
-    if (pendingSearchItem?.system_id === item.system_id) {
-      handleAddItem(item);
-      return;
-    }
-    setPendingSearchItem(item);
-    setSearchQuery(item.item_name || '');
-  };
-
-  const trySubmitPendingSearchItem = () => {
-    if (!pendingSearchItem) {
-      return;
-    }
-    if (isPosItemOutOfStock(pendingSearchItem)) {
-      return;
-    }
-    const q = searchQuery.trim().toLowerCase();
-    const n = (pendingSearchItem.item_name || '').trim().toLowerCase();
-    if (q === n) {
-      handleAddItem(pendingSearchItem);
-    }
+    handleAddItem(item);
   };
 
   const renderTabButton = (tab: {id: BrowseTab; label: string}) => {
@@ -808,7 +772,6 @@ const SalesItemBrowser: React.FC<Props> = ({
           <QuickIconPressable
             onPress={() => {
               setSearchQuery('');
-              setPendingSearchItem(null);
               setIsSearchPanelVisible(false);
               Keyboard.dismiss();
             }}
@@ -846,14 +809,11 @@ const SalesItemBrowser: React.FC<Props> = ({
                 ? 'Search'
                 : selectedCategory
                   ? `Search in ${selectedCategory.name}`
-                  : 'Search products'
+                  : 'Search all products'
             }
             placeholderTextColor={colors.placeholder}
             style={[styles.searchInputUnified, bt.searchInput]}
-            returnKeyType={showTypedSearchResults ? 'done' : 'search'}
-            onSubmitEditing={
-              showTypedSearchResults ? trySubmitPendingSearchItem : undefined
-            }
+            returnKeyType="search"
             onFocus={() => setIsSearchPanelVisible(true)}
             clearButtonMode={
               Platform.OS === 'ios' && (isSearchPanelVisible || searchQuery.length > 0)
@@ -866,7 +826,6 @@ const SalesItemBrowser: React.FC<Props> = ({
           <QuickIconPressable
             onPress={() => {
               setSearchQuery('');
-              setPendingSearchItem(null);
             }}
             style={styles.searchClearButton}
             hitSlop={{top: 10, bottom: 10, left: 8, right: 8}}
@@ -932,7 +891,6 @@ const SalesItemBrowser: React.FC<Props> = ({
                 setActiveTab('pos');
                 setSelectedCategoryId(category.id);
                 setSearchQuery('');
-                setPendingSearchItem(null);
                 setIsSearchPanelVisible(false);
                 Keyboard.dismiss();
               }}
@@ -988,7 +946,6 @@ const SalesItemBrowser: React.FC<Props> = ({
   const renderSearchResultRow = ({item}: {item: CartItem}) => {
     const isOutOfStock = isPosItemOutOfStock(item);
     const initialsShort = getSearchResultInitials(item.item_name || '');
-    const isPending = pendingSearchItem?.system_id === item.system_id;
 
     return (
       <TouchableOpacity
@@ -996,8 +953,6 @@ const SalesItemBrowser: React.FC<Props> = ({
           styles.searchResultRow,
           bt.searchResultRow,
           isOutOfStock && styles.searchResultRowDisabled,
-          isPending && styles.searchResultRowPending,
-          isPending && bt.searchResultPending,
         ]}
         onPress={() => handleTypedResultPress(item)}
         activeOpacity={isOutOfStock ? 1 : 0.75}
@@ -1024,9 +979,6 @@ const SalesItemBrowser: React.FC<Props> = ({
             numberOfLines={1}>
             {item.item_name}
           </Text>
-          {isPending && !isOutOfStock ? (
-            <Text style={[styles.searchResultHint, bt.searchResultHint]}>Tap again to add to sale</Text>
-          ) : null}
         </View>
         <Text style={[styles.searchResultPrice, bt.searchResultPrice]}>
           {formatMoney(item.unit_price)}
@@ -1036,7 +988,7 @@ const SalesItemBrowser: React.FC<Props> = ({
   };
 
   const renderTypedSearchList = () => {
-    if (loadingItems && items.length === 0) {
+    if (loadingItems) {
       return (
         <View style={styles.stateWrap}>
           <ActivityIndicator size="small" color={COLORS.primary2} />
@@ -1049,7 +1001,6 @@ const SalesItemBrowser: React.FC<Props> = ({
       <FlatList
         style={styles.libraryList}
         data={items}
-        extraData={pendingSearchItem}
         keyExtractor={it => it.system_id}
         renderItem={renderSearchResultRow}
         keyboardShouldPersistTaps="handled"
@@ -1089,61 +1040,70 @@ const SalesItemBrowser: React.FC<Props> = ({
     }
 
     return (
-      <FlatList
-        ref={libraryListRef}
-        style={styles.libraryList}
-        data={items}
-        keyExtractor={item => item.system_id}
-        renderItem={renderLibraryItemRow}
-        extraData={recentlyAddedIds}
-        initialNumToRender={12}
-        maxToRenderPerBatch={8}
-        windowSize={10}
-        updateCellsBatchingPeriod={50}
-        removeClippedSubviews={false}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.listContent}
-        ListHeaderComponent={libraryListHeader}
-        onEndReached={() => {
-          if (!loadingMore && hasNextPage) {
-            loadItems(currentPage + 1, false);
+      <View style={styles.libraryList}>
+        <PosCategoryChipBar
+          categories={categories}
+          categoriesLoadError={categoriesLoadError}
+          selectedCategoryId={selectedCategoryId}
+          bt={bt}
+          onRetry={handleRetryLibrary}
+          onCategoryPress={handleCategoryPress}
+        />
+        <FlatList
+          ref={libraryListRef}
+          style={styles.libraryList}
+          data={items}
+          keyExtractor={item => item.system_id}
+          renderItem={renderLibraryItemRow}
+          extraData={recentlyAddedIds}
+          initialNumToRender={12}
+          maxToRenderPerBatch={8}
+          windowSize={10}
+          updateCellsBatchingPeriod={50}
+          removeClippedSubviews={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.listContent}
+          onEndReached={() => {
+            if (!loadingMore && hasNextPage) {
+              loadItems(currentPage + 1, false);
+            }
+          }}
+          onEndReachedThreshold={0.4}
+          ListEmptyComponent={
+            loadingItems ? (
+              <View style={styles.stateWrap}>
+                <ActivityIndicator size="small" color={COLORS.primary2} />
+                <Text style={[styles.stateText, bt.stateText]}>Loading items...</Text>
+              </View>
+            ) : (
+              <View style={styles.stateWrap}>
+                <Text style={[styles.stateText, bt.stateText]}>
+                  {itemsLoadError
+                    ? "Couldn't load items."
+                    : 'No items found for this search.'}
+                </Text>
+                {itemsLoadError ? (
+                  <TouchableOpacity
+                    style={styles.retryButton}
+                    onPress={handleRetryLibrary}
+                    activeOpacity={0.85}>
+                    <Text style={styles.retryButtonText}>Retry</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            )
           }
-        }}
-        onEndReachedThreshold={0.4}
-        ListEmptyComponent={
-          loadingItems ? (
-            <View style={styles.stateWrap}>
-              <ActivityIndicator size="small" color={COLORS.primary2} />
-              <Text style={[styles.stateText, bt.stateText]}>Loading items...</Text>
-            </View>
-          ) : (
-            <View style={styles.stateWrap}>
-              <Text style={[styles.stateText, bt.stateText]}>
-                {itemsLoadError
-                  ? "Couldn't load items."
-                  : 'No items found for this search.'}
-              </Text>
-              {itemsLoadError ? (
-                <TouchableOpacity
-                  style={styles.retryButton}
-                  onPress={handleRetryLibrary}
-                  activeOpacity={0.85}>
-                  <Text style={styles.retryButtonText}>Retry</Text>
-                </TouchableOpacity>
-              ) : null}
-            </View>
-          )
-        }
-        ListFooterComponent={
-          loadingMore ? (
-            <View style={styles.footerLoader}>
-              <ActivityIndicator size="small" color={COLORS.primary2} />
-            </View>
-          ) : null
-        }
-      />
+          ListFooterComponent={
+            loadingMore ? (
+              <View style={styles.footerLoader}>
+                <ActivityIndicator size="small" color={COLORS.primary2} />
+              </View>
+            ) : null
+          }
+        />
+      </View>
     );
   };
 
@@ -1654,6 +1614,51 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 0,
   },
+  categoryChipBar: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E4E4E4',
+    backgroundColor: COLORS.white,
+  },
+  categoryChipBarEmpty: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  categoryChipScrollContent: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  categoryChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+    backgroundColor: '#F3F3F3',
+    marginRight: 8,
+    maxWidth: 180,
+  },
+  categoryChipActive: {
+    backgroundColor: COLORS.transparentPrimary2,
+    borderColor: COLORS.primary2,
+  },
+  categoryChipText: {
+    ...FONTS.body4,
+    fontWeight: '600',
+    color: '#555',
+  },
+  categoryChipTextActive: {
+    color: COLORS.primary2,
+    fontWeight: '700',
+  },
+  categoryChipRetry: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
   favScrollFill: {
     flex: 1,
     minHeight: 0,
@@ -1908,19 +1913,11 @@ const styles = StyleSheet.create({
   searchResultRowDisabled: {
     opacity: 0.55,
   },
-  searchResultRowPending: {
-    backgroundColor: '#F4F4F4',
-  },
   searchResultTextCol: {
     flex: 1,
     marginRight: 10,
     minWidth: 0,
     justifyContent: 'center',
-  },
-  searchResultHint: {
-    ...FONTS.body5,
-    color: '#888',
-    marginTop: 2,
   },
   searchResultInitialsTile: {
     width: 40,
@@ -2050,9 +2047,6 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.transparentPrimary2,
   },
-  selectedListRow: {
-    backgroundColor: COLORS.transparentPrimary2,
-  },
   disabledListRow: {
     backgroundColor: '#F7F7F7',
   },
@@ -2105,13 +2099,6 @@ const styles = StyleSheet.create({
     color: COLORS.primary2,
     fontWeight: '500',
   },
-  rowChevron: {
-    width: 14,
-    height: 14,
-    marginRight: 12,
-    tintColor: COLORS.primary2,
-    transform: [{rotate: '-90deg'}],
-  },
   addedText: {
     ...FONTS.body3,
     color: COLORS.success,
@@ -2147,156 +2134,123 @@ const styles = StyleSheet.create({
     marginTop: 8,
     lineHeight: 20,
   },
-  categoryBackRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: '#E4E4E4',
-    backgroundColor: '#F8FAFD',
-  },
-  categoryBackIcon: {
-    width: 16,
-    height: 16,
-    tintColor: COLORS.primary2,
-  },
-  categoryBackText: {
-    ...FONTS.body3,
-    color: COLORS.primary2,
-    fontWeight: '700',
-    marginLeft: 8,
-  },
   footerLoader: {
     paddingVertical: 14,
-  },
-  librarySectionGap: {
-    height: 14,
-    backgroundColor: COLORS.transparentPrimary2,
-  },
-  libraryItemsHeader: {
-    paddingHorizontal: 14,
-    paddingVertical: 2,
-    backgroundColor: COLORS.white,
-  },
-  libraryItemsHeaderText: {
-    ...FONTS.body4,
-    color: 'transparent',
-    fontWeight: '700',
   },
   libraryRowPressed: {
     opacity: 0.75,
   },
 });
 
-/** Subset of SalesItemBrowser `bt` used by POS library header rows. */
-type PosLibraryHeaderTheme = {
-  listRow: object;
-  rowSub: object;
-  selectedRow: object;
-  libraryGap: object;
-  libHdr: object;
+/** Subset of SalesItemBrowser `bt` used by the POS category chip bar. */
+type PosCategoryChipTheme = {
+  catChipBar: object;
+  catChip: object;
+  catChipActive: object;
+  catChipText: object;
+  catChipTextActive: object;
   stateText: object;
 };
 
-type PosLibraryCategoryRowProps = {
-  item: SalesCategory;
-  selectedCategoryId: string | number | null;
-  bt: PosLibraryHeaderTheme;
-  onPress: (category: SalesCategory) => void;
-};
-
-const PosLibraryCategoryRow = React.memo(function PosLibraryCategoryRowInner({
-  item,
-  selectedCategoryId,
-  bt,
-  onPress,
-}: PosLibraryCategoryRowProps) {
-  const isSelected = String(selectedCategoryId) === String(item.id);
-  return (
-    <TouchableOpacity
-      style={[
-        styles.listRow,
-        bt.listRow,
-        isSelected && styles.selectedListRow,
-        isSelected && bt.selectedRow,
-      ]}
-      onPress={() => onPress(item)}
-      activeOpacity={0.75}>
-      <View style={styles.initialsTile}>
-        <Text style={styles.initialsText}>{item.initials}</Text>
-      </View>
-
-      <View style={styles.rowContent}>
-        <Text style={styles.rowTitle}>{item.name}</Text>
-        <Text style={[styles.rowSubtitle, bt.rowSub]}>
-          {isSelected ? 'Showing items below' : 'Tap to browse items'}
-        </Text>
-      </View>
-
-      <Image source={icons.down_arrow} style={styles.rowChevron} />
-    </TouchableOpacity>
-  );
-});
-
-type PosLibraryListHeaderProps = {
+type PosCategoryChipBarProps = {
   categories: SalesCategory[];
   categoriesLoadError: boolean;
-  selectedCategory: SalesCategory | null;
   selectedCategoryId: string | number | null;
-  bt: PosLibraryHeaderTheme;
+  bt: PosCategoryChipTheme;
   onRetry: () => void;
-  onCategoryPress: (category: SalesCategory) => void;
+  onCategoryPress: (categoryId: string | number | null) => void;
 };
 
-const PosLibraryListHeader = React.memo(function PosLibraryListHeaderInner({
+const PosCategoryChipBar = React.memo(function PosCategoryChipBarInner({
   categories,
   categoriesLoadError,
-  selectedCategory,
   selectedCategoryId,
   bt,
   onRetry,
   onCategoryPress,
-}: PosLibraryListHeaderProps) {
-  return (
-    <View>
-      {categories.length ? (
-        <View>
-          {categories.map(category => (
-            <View key={String(category.id)}>
-              <PosLibraryCategoryRow
-                item={category}
-                selectedCategoryId={selectedCategoryId}
-                bt={bt}
-                onPress={onCategoryPress}
-              />
-            </View>
-          ))}
-          <View style={[styles.librarySectionGap, bt.libraryGap]} />
-        </View>
-      ) : (
-        <View style={styles.stateWrap}>
-          <Text style={[styles.stateText, bt.stateText]}>
-            {categoriesLoadError
-              ? "Couldn't load categories."
-              : 'No categories available.'}
-          </Text>
-          {categoriesLoadError ? (
-            <TouchableOpacity
-              style={styles.retryButton}
-              onPress={onRetry}
-              activeOpacity={0.85}>
-              <Text style={styles.retryButtonText}>Retry</Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
-      )}
+}: PosCategoryChipBarProps) {
+  if (!categories.length) {
+    return (
+      <View style={[styles.categoryChipBar, bt.catChipBar, styles.categoryChipBarEmpty]}>
+        <Text style={[styles.stateText, bt.stateText]} numberOfLines={1}>
+          {categoriesLoadError
+            ? "Couldn't load categories."
+            : 'No categories available.'}
+        </Text>
+        {categoriesLoadError ? (
+          <TouchableOpacity
+            style={styles.categoryChipRetry}
+            onPress={onRetry}
+            activeOpacity={0.85}>
+            <Text style={styles.retryButtonText}>Retry</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+    );
+  }
 
-      {selectedCategory ? (
-        <View style={[styles.libraryItemsHeader, bt.libHdr]}>
-          <Text style={styles.libraryItemsHeaderText}>{selectedCategory.name}</Text>
-        </View>
-      ) : null}
+  const isAllSelected = selectedCategoryId == null;
+
+  return (
+    <View style={[styles.categoryChipBar, bt.catChipBar]}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        contentContainerStyle={styles.categoryChipScrollContent}>
+        <TouchableOpacity
+          style={[
+            styles.categoryChip,
+            bt.catChip,
+            isAllSelected && styles.categoryChipActive,
+            isAllSelected && bt.catChipActive,
+          ]}
+          onPress={() => onCategoryPress(null)}
+          activeOpacity={0.75}
+          accessibilityRole="button"
+          accessibilityState={{selected: isAllSelected}}
+          accessibilityLabel="All categories">
+          <Text
+            style={[
+              styles.categoryChipText,
+              bt.catChipText,
+              isAllSelected && styles.categoryChipTextActive,
+              isAllSelected && bt.catChipTextActive,
+            ]}
+            numberOfLines={1}>
+            All
+          </Text>
+        </TouchableOpacity>
+        {categories.map(category => {
+          const isSelected = String(selectedCategoryId) === String(category.id);
+          return (
+            <TouchableOpacity
+              key={String(category.id)}
+              style={[
+                styles.categoryChip,
+                bt.catChip,
+                isSelected && styles.categoryChipActive,
+                isSelected && bt.catChipActive,
+              ]}
+              onPress={() => onCategoryPress(category.id)}
+              activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityState={{selected: isSelected}}
+              accessibilityLabel={`Category ${category.name}`}>
+              <Text
+                style={[
+                  styles.categoryChipText,
+                  bt.catChipText,
+                  isSelected && styles.categoryChipTextActive,
+                  isSelected && bt.catChipTextActive,
+                ]}
+                numberOfLines={1}>
+                {category.name}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
     </View>
   );
 });
