@@ -33,8 +33,10 @@ import icons from '../../constants/icons';
 import {usePermissions} from '../../hooks/usePermissions';
 import {
   useExpensesQuery,
+  useExpenseTypesQuery,
   useInvalidateExpenses,
 } from '../../hooks/useExpensesQuery';
+import {usePaymentMethodsQuery} from '../../hooks/useCustomersQuery';
 import {PAGE_NAMES} from '../../constants/pageNames';
 import {QuickIconPressable} from '../../Components';
 import {useTheme} from '../../context/ThemeContext';
@@ -126,11 +128,19 @@ const ExpenseHistory = () => {
   const [dateTo, setDateTo] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] =
     useState<(typeof STATUS_OPTIONS)[number]>('Posted');
+  const [paymentMethodIdFilter, setPaymentMethodIdFilter] = useState<number | null>(
+    null,
+  );
+  const [expenseTypeIdFilter, setExpenseTypeIdFilter] = useState<number | null>(
+    null,
+  );
   const [isDatePickerVisible, setIsDatePickerVisible] = useState(false);
   const [datePickerMode, setDatePickerMode] = useState<'from' | 'to' | null>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const invalidateExpenses = useInvalidateExpenses();
+  const {data: paymentMethods = []} = usePaymentMethodsQuery(hasAccess);
+  const {data: expenseTypes = []} = useExpenseTypesQuery(hasAccess);
   const {
     expenses,
     isLoading: loading,
@@ -144,6 +154,8 @@ const ExpenseHistory = () => {
     status: statusFilter,
     startDate: dateFrom,
     endDate: dateTo,
+    paymentMethod: paymentMethodIdFilter,
+    expenseType: expenseTypeIdFilter,
   });
 
   const {startDate, endDate} = useMemo(() => {
@@ -271,9 +283,30 @@ const ExpenseHistory = () => {
     const statusLabel =
       statusFilter === 'All' ? 'All statuses' : `${statusFilter} only`;
     parts.push(statusLabel);
+
+    if (paymentMethodIdFilter != null) {
+      const pm = paymentMethods.find(m => m.id === paymentMethodIdFilter);
+      parts.push(pm ? pm.code || pm.description : 'Payment method');
+    } else {
+      parts.push('Any payment method');
+    }
+
+    if (expenseTypeIdFilter != null) {
+      const et = expenseTypes.find(type => type.id === expenseTypeIdFilter);
+      parts.push(et ? et.name || et.code : 'Expense type');
+    }
     
     return parts.join(' · ');
-  }, [dateFilter, dateFrom, dateTo, statusFilter]);
+  }, [
+    dateFilter,
+    dateFrom,
+    dateTo,
+    statusFilter,
+    paymentMethodIdFilter,
+    expenseTypeIdFilter,
+    paymentMethods,
+    expenseTypes,
+  ]);
 
   const renderDateFilters = () => (
     <View style={styles.dateFilterContainer}>
@@ -332,6 +365,8 @@ const ExpenseHistory = () => {
               onPress={() => {
                 setDateFilter('last30days');
                 setStatusFilter('Posted');
+                setPaymentMethodIdFilter(null);
+                setExpenseTypeIdFilter(null);
               }}
               style={[styles.clearFiltersButton, t.clearFiltersBtn]}>
               <Text style={styles.clearFiltersButtonText}>Clear All</Text>
@@ -381,6 +416,94 @@ const ExpenseHistory = () => {
                       statusFilter === status && styles.filterChipTextActive,
                     ]}>
                     {status}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          <View style={[styles.bottomSheetSection, t.sheetSection]}>
+            <Text style={[styles.bottomSheetSectionTitle, t.sheetSectionTitle]}>
+              Payment method
+            </Text>
+            <View style={styles.filterChipsContainer}>
+              <TouchableOpacity
+                style={[
+                  styles.filterChip,
+                  t.filterChip,
+                  paymentMethodIdFilter == null && styles.filterChipActive,
+                ]}
+                onPress={() => setPaymentMethodIdFilter(null)}>
+                <Text
+                  style={[
+                    styles.filterChipText,
+                    t.filterChipText,
+                    paymentMethodIdFilter == null && styles.filterChipTextActive,
+                  ]}>
+                  All
+                </Text>
+              </TouchableOpacity>
+              {paymentMethods.map(pm => (
+                <TouchableOpacity
+                  key={pm.id}
+                  style={[
+                    styles.filterChip,
+                    t.filterChip,
+                    paymentMethodIdFilter === pm.id && styles.filterChipActive,
+                  ]}
+                  onPress={() => setPaymentMethodIdFilter(pm.id)}>
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      t.filterChipText,
+                      paymentMethodIdFilter === pm.id &&
+                        styles.filterChipTextActive,
+                    ]}>
+                    {pm.code || pm.description}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          <View style={[styles.bottomSheetSection, t.sheetSection]}>
+            <Text style={[styles.bottomSheetSectionTitle, t.sheetSectionTitle]}>
+              Expense type
+            </Text>
+            <View style={styles.filterChipsContainer}>
+              <TouchableOpacity
+                style={[
+                  styles.filterChip,
+                  t.filterChip,
+                  expenseTypeIdFilter == null && styles.filterChipActive,
+                ]}
+                onPress={() => setExpenseTypeIdFilter(null)}>
+                <Text
+                  style={[
+                    styles.filterChipText,
+                    t.filterChipText,
+                    expenseTypeIdFilter == null && styles.filterChipTextActive,
+                  ]}>
+                  All
+                </Text>
+              </TouchableOpacity>
+              {expenseTypes.map(et => (
+                <TouchableOpacity
+                  key={et.id}
+                  style={[
+                    styles.filterChip,
+                    t.filterChip,
+                    expenseTypeIdFilter === et.id && styles.filterChipActive,
+                  ]}
+                  onPress={() => setExpenseTypeIdFilter(et.id)}>
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      t.filterChipText,
+                      expenseTypeIdFilter === et.id &&
+                        styles.filterChipTextActive,
+                    ]}>
+                    {et.name || et.code}
                   </Text>
                 </TouchableOpacity>
               ))}

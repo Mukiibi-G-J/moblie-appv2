@@ -476,7 +476,10 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
           </QuickIconPressable>
 
           {canWrite && !isGeneralCustomer && (isSaving || showSaved) ? (
-            <View style={styles.headerSaveButton}>
+            <View
+              style={styles.headerSaveButton}
+              accessibilityRole="text"
+              accessibilityLabel={isSaving ? 'Saving' : 'Saved'}>
               <Text style={styles.headerSaveText}>
                 {isSaving ? 'Saving...' : 'Saved'}
               </Text>
@@ -795,23 +798,17 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   headerSaveButton: {
-    minWidth: 108,
+    minWidth: 88,
     height: 48,
-    borderRadius: 24,
-    backgroundColor: COLORS.primary2,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 24,
-    shadowColor: COLORS.primary3,
-    shadowOffset: {width: 0, height: 8},
-    shadowOpacity: 0.18,
-    shadowRadius: 16,
-    elevation: 6,
+    paddingHorizontal: 8,
+    backgroundColor: 'transparent',
   },
   headerSaveText: {
-    color: COLORS.white,
-    fontSize: 18,
-    fontWeight: '700',
+    color: COLORS.gray2,
+    fontSize: 15,
+    fontWeight: '600',
   },
   scrollView: {
     flex: 1,

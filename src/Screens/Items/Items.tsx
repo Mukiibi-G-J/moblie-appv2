@@ -143,6 +143,8 @@ const EditItemModal = ({
   const categoriesRef = useRef<Category[]>([]);
   const savingRef = useRef(false);
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Last values successfully saved to the server — used for dirty checks (not live form state). */
+  const lastSavedRef = useRef<Record<string, any>>({});
 
   editedItemRef.current = editedItem;
   categoriesRef.current = categories;
@@ -268,6 +270,7 @@ const EditItemModal = ({
       setImageUploadError(null);
       setFieldErrors({});
       setShowSaved(false);
+      lastSavedRef.current = {};
       if (savedTimerRef.current) {
         clearTimeout(savedTimerRef.current);
         savedTimerRef.current = null;
@@ -283,11 +286,31 @@ const EditItemModal = ({
       const nextId = item.system_id || item.id || item.no;
       if (!currentId || String(currentId) !== String(nextId || '')) {
         setEditedItem(item);
+        lastSavedRef.current = {
+          item_name: item.item_name ?? '',
+          description: item.description ?? '',
+          bar_code_no: item.bar_code_no ?? '',
+          unit_price: Number(item.unit_price) || 0,
+          unit_cost: Number(item.unit_cost) || 0,
+          minimum_stock: item.minimum_stock ?? null,
+          type: item.type ?? '',
+          category_id: item.category_id ?? null,
+        };
       } else {
         setEditedItem(prev => (prev ? {...prev, ...item} : item));
       }
     } else if (isCreateMode && !editedItemRef.current?.system_id && !editedItemRef.current?.id) {
       setEditedItem(createEmptyItemDraft(defaultCreateType));
+      lastSavedRef.current = {
+        item_name: '',
+        description: '',
+        bar_code_no: '',
+        unit_price: 0,
+        unit_cost: 0,
+        minimum_stock: null,
+        type: defaultCreateType,
+        category_id: null,
+      };
     }
     setSelectedImage(null);
     setImageUploadError(null);
@@ -418,7 +441,9 @@ const EditItemModal = ({
         (current.no && String(current.no).trim())
       );
 
-      const previousValue = (current as any)[field];
+      // Compare against last successfully saved value, not live form state
+      // (onChange already updates editedItem before onBlur runs).
+      const previousValue = lastSavedRef.current[field];
       if (String(previousValue ?? '') === String(value ?? '')) {
         return;
       }
@@ -483,6 +508,17 @@ const EditItemModal = ({
           const saved = normalizeSavedItem(response.data, nextValues);
           setEditedItem(saved);
           editedItemRef.current = saved;
+          lastSavedRef.current = {
+            ...lastSavedRef.current,
+            item_name: saved.item_name ?? '',
+            description: saved.description ?? '',
+            bar_code_no: saved.bar_code_no ?? '',
+            unit_price: Number(saved.unit_price) || 0,
+            unit_cost: Number(saved.unit_cost) || 0,
+            minimum_stock: saved.minimum_stock ?? null,
+            type: saved.type ?? '',
+            category_id: saved.category_id ?? null,
+          };
           onSave(saved);
           flashSaved();
         } else {
@@ -505,6 +541,14 @@ const EditItemModal = ({
           const saved = normalizeSavedItem(response.data, nextValues);
           setEditedItem(saved);
           editedItemRef.current = saved;
+          lastSavedRef.current = {
+            ...lastSavedRef.current,
+            [field]:
+              field === 'category_id'
+                ? saved.category_id ?? null
+                : (saved as any)[field] ?? value,
+            item_name: saved.item_name ?? lastSavedRef.current.item_name,
+          };
           onSave(saved);
           flashSaved();
         }
@@ -1163,8 +1207,15 @@ const EditItemModal = ({
                   </Text>
                   <View style={[styles.editItemHeaderSide, styles.editItemHeaderSideEnd]}>
                     {canWrite && (isSaving || showSaved) ? (
-                      <View style={styles.editItemSavePill}>
-                        <Text style={styles.editItemSavePillText}>
+                      <View
+                        style={styles.editItemSavePill}
+                        accessibilityRole="text"
+                        accessibilityLabel={isSaving ? 'Saving' : 'Saved'}>
+                        <Text
+                          style={[
+                            styles.editItemSavePillText,
+                            {color: colors.textSecondary},
+                          ]}>
                           {isSaving ? 'Saving...' : 'Saved'}
                         </Text>
                       </View>
@@ -2901,17 +2952,16 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
   },
   editItemSavePill: {
-    paddingHorizontal: 20,
+    paddingHorizontal: 8,
     paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: COLORS.primary2,
     minWidth: 72,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: 'transparent',
   },
   editItemSavePillText: {
     ...FONTS.body4,
-    color: COLORS.white,
+    color: COLORS.gray2,
     fontWeight: '600',
     fontSize: 15,
   },

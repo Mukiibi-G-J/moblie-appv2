@@ -372,8 +372,11 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
           </QuickIconPressable>
 
           {canWrite && !isGeneralVendor && (isSaving || showSaved) ? (
-            <View style={styles.headerSaveButton}>
-              <Text style={styles.headerSaveText}>
+            <View
+              style={styles.headerSaveButton}
+              accessibilityRole="text"
+              accessibilityLabel={isSaving ? 'Saving' : 'Saved'}>
+              <Text style={[styles.headerSaveText, {color: colors.textSecondary}]}>
                 {isSaving ? 'Saving...' : 'Saved'}
               </Text>
             </View>
@@ -646,23 +649,17 @@ const styles = StyleSheet.create({
     marginBottom: 18,
   },
   headerSaveButton: {
-    minWidth: 108,
+    minWidth: 88,
     height: 48,
-    borderRadius: 24,
-    backgroundColor: COLORS.primary2,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 24,
-    shadowColor: COLORS.primary3,
-    shadowOffset: {width: 0, height: 8},
-    shadowOpacity: 0.18,
-    shadowRadius: 16,
-    elevation: 6,
+    paddingHorizontal: 8,
+    backgroundColor: 'transparent',
   },
   headerSaveText: {
-    color: COLORS.white,
-    fontSize: 18,
-    fontWeight: '700',
+    color: COLORS.gray2,
+    fontSize: 15,
+    fontWeight: '600',
   },
   scrollView: {
     flex: 1,
