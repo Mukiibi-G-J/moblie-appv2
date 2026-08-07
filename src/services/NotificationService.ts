@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import messaging, {
   FirebaseMessagingTypes,
 } from '@react-native-firebase/messaging';
+import {getApps} from '@react-native-firebase/app';
 import notifee, {AndroidImportance, EventType} from '@notifee/react-native';
 import {PermissionsAndroid, Platform} from 'react-native';
 import DeviceInfo from 'react-native-device-info';
@@ -11,6 +12,14 @@ export const FCM_TOKEN_STORAGE_KEY = 'fcm_token';
 export const DEFAULT_NOTIFICATION_CHANNEL_ID = 'zentro-default';
 
 let listenersRegistered = false;
+
+function isFirebaseReady(): boolean {
+  try {
+    return getApps().length > 0;
+  } catch {
+    return false;
+  }
+}
 
 export async function requestNotificationPermission(): Promise<boolean> {
   if (Platform.OS === 'android') {
@@ -25,7 +34,12 @@ export async function requestNotificationPermission(): Promise<boolean> {
     return true;
   }
 
-  const authStatus = await messaging().requestPermission();  return (
+  if (!isFirebaseReady()) {
+    return false;
+  }
+
+  const authStatus = await messaging().requestPermission();
+  return (
     authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
     authStatus === messaging.AuthorizationStatus.PROVISIONAL
   );
@@ -73,6 +87,9 @@ export async function getStoredFcmToken(): Promise<string | null> {
 
 export async function getFcmToken(): Promise<string | null> {
   try {
+    if (!isFirebaseReady()) {
+      return null;
+    }
     const token = await messaging().getToken();
     if (token) {
       await persistFcmToken(token);
@@ -152,6 +169,9 @@ function registerNotificationListeners(): void {
   if (listenersRegistered) {
     return;
   }
+  if (!isFirebaseReady()) {
+    return;
+  }
   listenersRegistered = true;
 
   messaging().onMessage(async remoteMessage => {
@@ -176,9 +196,11 @@ function registerNotificationListeners(): void {
 }
 
 export async function checkInitialNotification(): Promise<void> {
-  const initialNotification = await messaging().getInitialNotification();
-  if (initialNotification) {
-    navigateFromNotificationData(initialNotification.data);
+  if (isFirebaseReady()) {
+    const initialNotification = await messaging().getInitialNotification();
+    if (initialNotification) {
+      navigateFromNotificationData(initialNotification.data);
+    }
   }
 
   const initialNotifee = await notifee.getInitialNotification();
@@ -191,6 +213,11 @@ export async function registerPushNotifications(): Promise<{
   granted: boolean;
   token: string | null;
 }> {
+  if (!isFirebaseReady()) {
+    console.warn('[notifications] Firebase not configured — skipping push setup');
+    return {granted: false, token: null};
+  }
+
   const granted = await requestNotificationPermission();
   if (!granted) {
     return {granted: false, token: null};
@@ -220,7 +247,9 @@ export async function sendTestNotification(): Promise<void> {
 
 export async function clearPushToken(): Promise<void> {
   try {
-    await messaging().deleteToken();
+    if (isFirebaseReady()) {
+      await messaging().deleteToken();
+    }
   } catch {
     // Ignore when Firebase is unavailable (e.g. emulator without Play Services).
   }

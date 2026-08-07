@@ -1,7 +1,7 @@
 import {Platform} from 'react-native';
 
 // Set USE_TEST_ENV to true to use test environment
-export const USE_TEST_ENV = true;
+export const USE_TEST_ENV = false;
 
 /**
  * Test-only master switch for simulated offline (requires USE_TEST_ENV = true).

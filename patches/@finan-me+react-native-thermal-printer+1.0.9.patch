@@ -99,3 +99,45 @@ index d29fc3d..ccf8076 100644
                  // Default
                  else -> unknown(e)
              }
+diff --git a/node_modules/@finan-me/react-native-thermal-printer/ios/Printing/PrintConnection.swift b/node_modules/@finan-me/react-native-thermal-printer/ios/Printing/PrintConnection.swift
+index 1a6057e..38ec836 100644
+--- a/node_modules/@finan-me/react-native-thermal-printer/ios/Printing/PrintConnection.swift
++++ b/node_modules/@finan-me/react-native-thermal-printer/ios/Printing/PrintConnection.swift
+@@ -183,11 +183,15 @@ class LANPrintConnection: PrintConnection {
+                 )
+ 
+                 // Setup connection with async/await
++                // Use a reference type so closures can mutate safely under Swift concurrency.
++                final class CompletionFlag: @unchecked Sendable {
++                    var value = false
++                }
+                 let connected = await withCheckedContinuation { continuation in
+-                    var hasCompleted = false
++                    let hasCompleted = CompletionFlag()
+                     let timeout = DispatchWorkItem {
+-                        if !hasCompleted {
+-                            hasCompleted = true
++                        if !hasCompleted.value {
++                            hasCompleted.value = true
+                             newConnection.cancel()
+                             continuation.resume(returning: false)
+                         }
+@@ -198,14 +202,14 @@ class LANPrintConnection: PrintConnection {
+                     newConnection.stateUpdateHandler = { state in
+                         switch state {
+                         case .ready:
+-                            if !hasCompleted {
+-                                hasCompleted = true
++                            if !hasCompleted.value {
++                                hasCompleted.value = true
+                                 timeout.cancel()
+                                 continuation.resume(returning: true)
+                             }
+                         case .failed:
+-                            if !hasCompleted {
+-                                hasCompleted = true
++                            if !hasCompleted.value {
++                                hasCompleted.value = true
+                                 timeout.cancel()
+                                 continuation.resume(returning: false)
+                             }

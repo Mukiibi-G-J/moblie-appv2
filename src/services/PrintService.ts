@@ -1,6 +1,5 @@
 import {Platform} from 'react-native';
 import Toast from 'react-native-toast-message';
-import PrinterSunmi from 'react-native-printer-sunmi';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BluetoothPrinterService from './BluetoothPrinterService';
 import UsbPrinterService, {KotData} from './UsbPrinterService';
@@ -17,6 +16,12 @@ import {
   buildSampleSaleReceiptData,
   fetchCompanyInfoForReceipt,
 } from '../utils/companyReceiptInfo';
+
+// Android-only native module — do not import on iOS (module is not linked there).
+const PrinterSunmi =
+  Platform.OS === 'android'
+    ? require('react-native-printer-sunmi').default
+    : null;
 
 // Types for printing
 export interface PrintItem {
