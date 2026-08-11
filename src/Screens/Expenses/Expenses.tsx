@@ -415,9 +415,11 @@ const Expenses = () => {
   };
 
   const handleFormSave = () => {
-    setIsFormModalVisible(false);
-    setSelectedExpense(null);
     onRefresh();
+  };
+
+  const handleRecordChange = (record: Expense) => {
+    setSelectedExpense(record);
   };
 
   const hasActiveFilters = useMemo(() => {
@@ -916,9 +918,11 @@ const Expenses = () => {
         onClose={() => {
           setIsFormModalVisible(false);
           setSelectedExpense(null);
+          onRefresh();
         }}
         expense={selectedExpense}
         onSave={handleFormSave}
+        onRecordChange={handleRecordChange}
         expenseTypes={expenseTypes}
         paymentMethods={paymentMethods}
         canCreate={canCreate(PAGE_NAME)}

@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
-import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../utils/currency';
+import {formatCurrencyCompact} from '../utils/currency';
 import {
   ActivityIndicator,
   StyleSheet,
@@ -26,9 +26,6 @@ type TodayMySalesBarProps = {
   onOpenHistory?: () => void;
   refreshKey?: number;
 };
-
-const formatUgx = (amount: number) =>
-  formatCurrencyCompact(amount);
 
 const TodayMySalesBar: React.FC<TodayMySalesBarProps> = ({
   userId,
@@ -98,7 +95,7 @@ const TodayMySalesBar: React.FC<TodayMySalesBarProps> = ({
     ? 'Hidden'
     : loading
       ? 'Loading…'
-      : formatUgx(summary?.total_sales ?? 0);
+      : formatCurrencyCompact(summary?.total_sales ?? 0);
 
   const invoiceCount = summary?.total_invoices ?? 0;
 

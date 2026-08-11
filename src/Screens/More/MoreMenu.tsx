@@ -469,12 +469,13 @@ const MoreMenu: React.FC = () => {
             onPress: () => navigate('BankAccounts', undefined),
           },
           {
-            key: 'payments',
-            label: constants.screens.payments,
-            icon: icons.wallet,
+            key: 'quickPayment',
+            label: constants.screens.quickPayment,
+            icon: icons.dollar,
             visible:
               isModuleVisible('payments') &&
-              hasAnyPageAccess(PAGE_NAMES.PAYMENTS),
+              (hasAnyPageAccess(PAGE_NAMES.QUICK_PAYMENT) ||
+                hasAnyPageAccess(PAGE_NAMES.PAYMENTS)),
             onPress: () => navigate('Payments', undefined),
           },
           {

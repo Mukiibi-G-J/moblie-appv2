@@ -30,7 +30,7 @@ import type {RootStackParamList} from '../../@types/types.dto';
 import Toast from 'react-native-toast-message';
 
 const ao = authOnboarding;
-const BRAND = '#0b5cff';
+const BRAND = '#005151';
 const LOGIN_DRAFT_COMPANY_DISPLAY = '@zentro_login_draft_company_display';
 
 type RestaurantPinSetupRoute = RouteProp<

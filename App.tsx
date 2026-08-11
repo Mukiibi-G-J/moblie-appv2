@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   NavigationContainer,
-  DarkTheme,
   DefaultTheme,
 } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
@@ -697,12 +696,12 @@ const AppNavigator = () => {
 };
 
 function ThemedNavigation() {
-  const { isDark, colors } = useTheme();
+  const {colors} = useTheme();
   const navTheme = useMemo(
     () => ({
-      ...(isDark ? DarkTheme : DefaultTheme),
+      ...DefaultTheme,
       colors: {
-        ...(isDark ? DarkTheme.colors : DefaultTheme.colors),
+        ...DefaultTheme.colors,
         primary: COLORS.primary,
         background: colors.screenMuted,
         card: colors.surface,
@@ -710,7 +709,7 @@ function ThemedNavigation() {
         border: colors.border,
       },
     }),
-    [isDark, colors],
+    [colors],
   );
   return (
     <NavigationContainer ref={navigationRef} theme={navTheme}>

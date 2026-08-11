@@ -41,7 +41,7 @@ import { authOnboarding } from "../../design-system/authOnboardingTokens";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 /** Primary CTA — match Login Continue / Sign in */
-const SIGNUP_PRIMARY = "#0b5cff";
+const SIGNUP_PRIMARY = "#005151";
 const COMPANY_VALIDATION_DEBOUNCE_MS = 400;
 
 const ORG_SIZE_OPTIONS = [

@@ -32,7 +32,7 @@ import { LOGIN_DRAFT_PASSWORD } from '../../utils/loginCredentials';
 
 const RESEND_TIMER_SECONDS = 30;
 const OTP_LENGTH = 6;
-const BRAND = '#0b5cff';
+const BRAND = '#005151';
 
 function maskPhone(phone: string): string {
     const digits = phone.replace(/\D/g, '');

@@ -205,9 +205,11 @@ const ItemCategories = () => {
   };
 
   const handleFormSave = () => {
-    setIsFormModalVisible(false);
-    setSelectedCategory(null);
     loadCategories();
+  };
+
+  const handleRecordChange = (record: ItemCategory) => {
+    setSelectedCategory(record);
   };
 
   const toggleSelected = (code: string) => {
@@ -467,6 +469,7 @@ const ItemCategories = () => {
         }}
         category={selectedCategory}
         onSave={handleFormSave}
+        onRecordChange={handleRecordChange}
         canCreate={canCreate(PAGE_NAME)}
         canEdit={canEdit(PAGE_NAME)}
         categories={categories}

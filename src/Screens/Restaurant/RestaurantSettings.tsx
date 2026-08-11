@@ -16,7 +16,7 @@ import {
   type RestaurantPinStatusResponse,
 } from '../../services/restaurantPinApi';
 
-const BRAND = '#0b5cff';
+const BRAND = '#005151';
 
 type PinStatus = RestaurantPinStatusResponse | null;
 

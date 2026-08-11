@@ -71,15 +71,17 @@ const BranchSelectModal = () => {
   setPendingRef.current = ctx?.setBranchSelectionPending;
   setActiveBranchRef.current = ctx?.setActiveBranch;
 
-  // Safety: if multi-branch is disabled (or user can't switch), ensure modal can't show.
+  // Safety: if multi-branch is disabled (or user can't switch), clear pending so we don't stick.
   useEffect(() => {
-    if (!ctx || !showModal) {
+    if (!ctx) {
       return;
     }
     if (!multiBranchEnabled || !canSwitchBranch) {
-      void ctx.setBranchSelectionPending(false);
+      if (ctx.branchSession?.branchSelectionPending) {
+        void ctx.setBranchSelectionPending(false);
+      }
     }
-  }, [canSwitchBranch, ctx, multiBranchEnabled, showModal]);
+  }, [canSwitchBranch, ctx, multiBranchEnabled]);
 
   // Match web BranchSelectModal: one fetch when modal opens — no context refresh here.
   useEffect(() => {

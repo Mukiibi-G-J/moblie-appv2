@@ -27,6 +27,35 @@ export type SavePdfResult = {
   openedViewer: boolean;
 };
 
+/** Hermes/RN may lack `atob`; decode PDF/base64 from page-action downloads. */
+export function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const cleaned = base64.replace(/\s/g, '');
+  const padding = cleaned.endsWith('==') ? 2 : cleaned.endsWith('=') ? 1 : 0;
+  const byteLength = (cleaned.length * 3) / 4 - padding;
+  const bytes = new Uint8Array(byteLength);
+  const decodeChar = (c: string) => {
+    const code = c.charCodeAt(0);
+    if (code >= 65 && code <= 90) return code - 65;
+    if (code >= 97 && code <= 122) return code - 71;
+    if (code >= 48 && code <= 57) return code + 4;
+    if (c === '+') return 62;
+    if (c === '/') return 63;
+    return 0;
+  };
+  let out = 0;
+  for (let i = 0; i < cleaned.length; i += 4) {
+    const n =
+      (decodeChar(cleaned[i]!) << 18) |
+      (decodeChar(cleaned[i + 1]!) << 12) |
+      (decodeChar(cleaned[i + 2]!) << 6) |
+      decodeChar(cleaned[i + 3]!);
+    if (out < byteLength) bytes[out++] = (n >> 16) & 0xff;
+    if (out < byteLength) bytes[out++] = (n >> 8) & 0xff;
+    if (out < byteLength) bytes[out++] = n & 0xff;
+  }
+  return bytes.buffer;
+}
+
 /** Hermes/RN has no `btoa`; encode bytes for native / RNFS write. */
 export function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -128,6 +157,16 @@ async function savePdfOnIos(
     sharedOnIos: true,
     openedViewer: false,
   };
+}
+
+/**
+ * Saves a PDF from base64 (page-action DOWNLOAD Content.FileBase64).
+ */
+export async function savePdfBase64AndShare(
+  base64: string,
+  fileBaseName: string,
+): Promise<SavePdfResult> {
+  return savePdfBufferAndShare(base64ToArrayBuffer(base64), fileBaseName);
 }
 
 /**

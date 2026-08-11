@@ -90,7 +90,7 @@ const TILES: Tile[] = [
   },
 ];
 
-const BRAND = '#0b5cff';
+const BRAND = '#005151';
 
 const RestaurantHub = () => {
   const {colors} = useTheme();

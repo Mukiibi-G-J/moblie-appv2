@@ -77,11 +77,6 @@ const SignIn = ({ navigation }: { navigation: any }) => {
             index: 0,
             routes: [{ name: 'Home' }],
           });
-          Toast.show({
-            text1: 'Login Successful',
-            text2: `Welcome, ${email}!`,
-            type: 'success',
-          });
         } else {
           Toast.show({
             text1: 'Login Failed',

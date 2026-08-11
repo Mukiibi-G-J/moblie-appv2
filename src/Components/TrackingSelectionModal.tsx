@@ -277,7 +277,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   rowSelected: {
-    backgroundColor: 'rgba(2, 134, 255, 0.15)',
+    backgroundColor: 'rgba(0, 81, 81, 0.15)',
     borderWidth: 1,
     borderColor: COLORS.primary,
   },

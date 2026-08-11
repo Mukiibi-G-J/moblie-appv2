@@ -40,12 +40,13 @@ import {useAppContext, useAuth} from '../../context/Store';
 import {safeGoBack} from '../../hooks/NavigationService';
 import type {SubscriptionExpiryKind} from '../../utils/subscriptionExpired';
 import {USE_TEST_ENV} from '../../config/api.config';
+import {
+  formatSubscriptionPrice,
+  SUBSCRIPTION_UGX_PER_USD,
+  type SubscriptionDisplayCurrency,
+} from '../../utils/subscriptionCurrency';
 
 type Phase = 'form' | 'waiting' | 'success' | 'failed';
-
-function formatCurrency(amount: number) {
-  return `UGX ${Math.round(amount || 0).toLocaleString('en-UG')}`;
-}
 
 /** Map backend Subscription.plan labels to pricing-plan display names (web parity). */
 function planToPricingName(plan: string | null | undefined): string | null {
@@ -105,6 +106,8 @@ export default function SubscriptionPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [plans, setPlans] = useState<PricingPlan[]>([]);
   const [billingCycle, setBillingCycle] = useState<BillingCycle>('monthly');
+  const [displayCurrency, setDisplayCurrency] =
+    useState<SubscriptionDisplayCurrency>('UGX');
   const [selectedPlanId, setSelectedPlanId] = useState<number | null>(null);
   const [months, setMonths] = useState(1);
   const [method, setMethod] = useState<CollectionMethod>('mobile_money');
@@ -262,7 +265,7 @@ export default function SubscriptionPage() {
         const status = await getCollectionStatus(reference);
         if (cancelled) return;
         consecutiveErrors = 0;
-        setAmountLabel(formatCurrency(Number(status.amount)));
+        setAmountLabel(formatSubscriptionPrice(Number(status.amount), 'UGX'));
         setProductLabel(status.product);
         if (status.status === 'paid') {
           finishSuccess();
@@ -360,7 +363,7 @@ export default function SubscriptionPage() {
         res.test_mode && res.charged_amount != null
           ? Number(res.charged_amount)
           : Number(res.amount);
-      setAmountLabel(formatCurrency(displayAmount));
+      setAmountLabel(formatSubscriptionPrice(displayAmount, 'UGX'));
       setProductLabel(res.product);
 
       if (res.status === 'paid') {
@@ -596,7 +599,44 @@ export default function SubscriptionPage() {
           </View>
         ) : (
           <>
-            <Text style={[styles.sectionTitle, t.sectionTitle]}>Select a plan</Text>
+            <View style={styles.planHeaderRow}>
+              <Text style={[styles.sectionTitle, t.sectionTitle, styles.planHeaderTitle]}>
+                Select a plan
+              </Text>
+              <View style={[styles.currencyToggle, t.toggleBtn]}>
+                {(['UGX', 'USD'] as const).map(code => (
+                  <TouchableOpacity
+                    key={code}
+                    style={[
+                      styles.currencyToggleBtn,
+                      displayCurrency === code && [
+                        styles.toggleBtnActive,
+                        t.toggleBtnActive,
+                      ],
+                    ]}
+                    onPress={() => setDisplayCurrency(code)}
+                    activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}>
+                    <Text
+                      style={[
+                        styles.toggleBtnText,
+                        t.toggleBtnText,
+                        displayCurrency === code && [
+                          styles.toggleBtnTextActive,
+                          t.toggleBtnTextActive,
+                        ],
+                      ]}>
+                      {code}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+            {displayCurrency === 'USD' ? (
+              <Text style={[styles.currencyHint, t.emptyText]}>
+                Approx. at 1 USD = {SUBSCRIPTION_UGX_PER_USD.toLocaleString('en-UG')}{' '}
+                UGX · billed in UGX
+              </Text>
+            ) : null}
             <View style={styles.cardList}>
               {plans.length === 0 ? (
                 <Text style={[styles.emptyText, t.emptyText]}>
@@ -621,7 +661,7 @@ export default function SubscriptionPage() {
                         {plan.name}
                       </Text>
                       <Text style={[styles.cardPrice, t.cardPrice]}>
-                        {formatCurrency(monthly)}
+                        {formatSubscriptionPrice(monthly, displayCurrency)}
                         <Text style={styles.perMo}> / mo</Text>
                       </Text>
                     </TouchableOpacity>
@@ -741,11 +781,16 @@ export default function SubscriptionPage() {
                   {USE_TEST_ENV ? 'Catalog total' : 'Total due'}
                 </Text>
                 <Text style={[styles.footerTotalValue, t.footerTotalValue]}>
-                  {formatCurrency(totalAmount)}
+                  {formatSubscriptionPrice(totalAmount, displayCurrency)}
                 </Text>
+                {displayCurrency === 'USD' ? (
+                  <Text style={[styles.footerTotalLabel, t.footerTotalLabel]}>
+                    Charged as {formatSubscriptionPrice(totalAmount, 'UGX')}
+                  </Text>
+                ) : null}
                 {USE_TEST_ENV ? (
                   <Text style={styles.testChargeHint}>
-                    Marz charge: {formatCurrency(testAmountUgx)}
+                    Marz charge: {formatSubscriptionPrice(testAmountUgx, 'UGX')}
                   </Text>
                 ) : null}
               </View>
@@ -894,6 +939,30 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginTop: 8,
     marginBottom: 10,
+  },
+  planHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginTop: 8,
+    marginBottom: 10,
+  },
+  planHeaderTitle: {marginTop: 0, marginBottom: 0, flex: 1},
+  currencyToggle: {
+    flexDirection: 'row',
+    borderRadius: 10,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  currencyToggleBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  currencyHint: {
+    fontSize: 12,
+    marginBottom: 12,
+    marginTop: -4,
   },
   toggleRow: {flexDirection: 'row', gap: 10, marginBottom: 16},
   toggleBtn: {

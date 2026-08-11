@@ -177,7 +177,7 @@ const Cart = ({
       currentSalePanel: { backgroundColor: colors.surface },
       currentSaleHdr: { borderBottomColor: colors.border },
       customerRow: {
-        backgroundColor: isDark ? 'rgba(2, 134, 255, 0.14)' : COLORS.transparentPrimary2,
+        backgroundColor: isDark ? 'rgba(0, 81, 81, 0.14)' : COLORS.transparentPrimary2,
       },
       customerIconWrap: { backgroundColor: colors.surface },
       reviewFooter: {
@@ -204,7 +204,7 @@ const Cart = ({
       cartEditorInfoVal: { color: colors.textPrimary },
       cartEditorQtyAct: {
         borderColor: colors.border,
-        backgroundColor: isDark ? 'rgba(2,134,255,0.1)' : COLORS.transparentPrimary,
+        backgroundColor: isDark ? 'rgba(0,81,81,0.1)' : COLORS.transparentPrimary,
       },
       cartEditorQtyValBr: { borderBottomColor: colors.border },
       cartEditorTrack: {
@@ -224,7 +224,7 @@ const Cart = ({
       },
       saleCustRowSel: {
         borderColor: COLORS.primary2,
-        backgroundColor: isDark ? 'rgba(2, 134, 255, 0.12)' : COLORS.transparentPrimary2,
+        backgroundColor: isDark ? 'rgba(0, 81, 81, 0.12)' : COLORS.transparentPrimary2,
       },
       saleCustName: { color: colors.textPrimary },
       saleCustMeta: { color: colors.textSecondary },
@@ -276,7 +276,7 @@ const Cart = ({
       draftsHubTitle: { color: colors.textPrimary },
       draftsHubSubtitle: { color: colors.textSecondary },
       draftsHubSaveBtn: {
-        backgroundColor: isDark ? 'rgba(2, 134, 255, 0.18)' : COLORS.transparentPrimary2,
+        backgroundColor: isDark ? 'rgba(0, 81, 81, 0.18)' : COLORS.transparentPrimary2,
         borderColor: COLORS.primary2,
       },
       draftsHubSaveText: { color: COLORS.primary2 },
@@ -654,7 +654,7 @@ const Cart = ({
           text1Style: {
             fontSize: 20,
             fontWeight: 'bold',
-            color: '#007AFF', // iOS-style blue for info
+            color: '#005151', // iOS-style blue for info
             textAlign: 'center',
           },
           text2Style: {

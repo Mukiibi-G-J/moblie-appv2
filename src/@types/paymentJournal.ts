@@ -105,18 +105,69 @@ export interface PaymentMethod {
   bal_account_type?: string;
   bal_account_content_type_id?: number;
   bal_account_object_id?: number;
+  blocked?: boolean;
+  requires_amount_received?: boolean;
 }
 
 export interface Customer {
   id: number;
   no: string;
   name: string;
+  balance?: string | number | null;
+  customer_type?: string | null;
+  payment_method?: number | null;
+}
+
+export interface QuickCustomerPaymentPayload {
+  customer_id: number;
+  amount: number;
+  payment_method_id: number;
+  posting_date?: string;
+}
+
+export interface QuickCustomerPaymentResult {
+  document_no: string;
+  system_id: string;
+  amount: number;
+  customer_id: number;
+  customer_no: string;
+  customer_name: string;
+  applied_document_no: string;
+  applied_ledger_id: number;
+  remaining_balance: number;
+  payment_method_id: number;
+  payment_method_code: string;
 }
 
 export interface Vendor {
   id: number;
   no: string;
   name: string;
+  balance?: string | number | null;
+  payment_method?: number | null;
+  blocked?: boolean;
+}
+
+export interface QuickVendorPaymentPayload {
+  vendor_id: number;
+  amount: number;
+  payment_method_id: number;
+  posting_date?: string;
+}
+
+export interface QuickVendorPaymentResult {
+  document_no: string;
+  system_id: string;
+  amount: number;
+  vendor_id: number;
+  vendor_no: string;
+  vendor_name: string;
+  applied_document_no?: string;
+  applied_ledger_id?: number;
+  remaining_balance: number;
+  payment_method_id: number;
+  payment_method_code: string;
+  posted?: boolean;
 }
 
 export interface GLAccount {

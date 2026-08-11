@@ -620,7 +620,9 @@ const SalesHistory = () => {
     }
     setDetailLoading(true);
     try {
-      const full = await getSalesInvoice(item.id);
+      const full = await getSalesInvoice(item.id, {
+        invoiceNo: item.invoice_no,
+      });
       setDetailForModal({
         ...item,
         ...full,
@@ -648,7 +650,9 @@ const SalesHistory = () => {
       return base;
     }
     try {
-      const full = await getSalesInvoice(base.id);
+      const full = await getSalesInvoice(base.id, {
+        invoiceNo: base.invoice_no,
+      });
       return {
         ...base,
         ...full,

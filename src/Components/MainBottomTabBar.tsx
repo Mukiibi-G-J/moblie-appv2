@@ -27,7 +27,7 @@ const TabButton: React.FC<TabButtonProps> = ({
 }) => {
   const {colors, isDark} = useTheme();
   const activeBg = isDark ? 'rgba(255,255,255,0.08)' : '#E8EAED';
-  const accent = COLORS.primary2;
+  const accent = COLORS.primary;
   return (
     <TouchableOpacity
       activeOpacity={0.65}

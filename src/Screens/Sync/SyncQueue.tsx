@@ -29,6 +29,7 @@ import {
 } from '../../db/sqlite';
 import {runFullOfflineSync} from '../../services/sync/SyncEngine';
 import {getEffectiveIsOnline} from '../../utils/posConnectivity';
+import {formatCurrencyCompact} from '../../utils/currency';
 
 type QueueRow = {
   id: string;
@@ -40,9 +41,6 @@ type QueueRow = {
   totalAmount?: number;
   createdAt?: string;
 };
-
-const formatUgx = (amount: number) =>
-  `UGX ${(amount || 0).toLocaleString('en-UG', {maximumFractionDigits: 0})}`;
 
 const SyncQueue = () => {
   const navigation = useNavigation<any>();
@@ -76,7 +74,7 @@ const SyncQueue = () => {
           id: row.event_id,
           localId,
           title: String(row.payload?.customer_name ?? 'Sale'),
-          subtitle: total > 0 ? formatUgx(total) : localId.slice(0, 8) + '…',
+          subtitle: total > 0 ? formatCurrencyCompact(total) : localId.slice(0, 8) + '…',
           status: row.status,
           error: row.last_error,
           totalAmount: total,
@@ -94,7 +92,7 @@ const SyncQueue = () => {
             title: String(s.receipt_no ?? s.customer_name ?? 'Local sale'),
             subtitle: [
               String(s.customer_name ?? ''),
-              total > 0 ? formatUgx(total) : '',
+              total > 0 ? formatCurrencyCompact(total) : '',
             ]
               .filter(Boolean)
               .join(' · '),
@@ -335,7 +333,7 @@ const SyncQueue = () => {
                 />
                 <DetailRow
                   label="Total"
-                  value={formatUgx(detail.total_amount)}
+                  value={formatCurrencyCompact(detail.total_amount)}
                   colors={colors}
                 />
                 {detail.branch_name ? (
@@ -390,7 +388,7 @@ const SyncQueue = () => {
                         </Text>
                         <Text style={[styles.lineMeta, {color: colors.textSecondary}]}>
                           Qty {qty}
-                          {lineTotal > 0 ? ` · ${formatUgx(lineTotal)}` : ''}
+                          {lineTotal > 0 ? ` · ${formatCurrencyCompact(lineTotal)}` : ''}
                         </Text>
                       </View>
                     );

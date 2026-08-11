@@ -244,7 +244,7 @@ const SalesItemBrowser: React.FC<Props> = ({
         borderColor: colors.border,
       },
       catChipActive: {
-        backgroundColor: isDark ? 'rgba(2, 134, 255, 0.18)' : COLORS.transparentPrimary2,
+        backgroundColor: isDark ? 'rgba(0, 81, 81, 0.18)' : COLORS.transparentPrimary2,
         borderColor: COLORS.primary2,
       },
       catChipText: {color: colors.textSecondary},
@@ -1163,7 +1163,7 @@ const SalesItemBrowser: React.FC<Props> = ({
             android_ripple={
               Platform.OS === 'android'
                 ? {
-                    color: cell ? 'rgba(2, 134, 255, 0.22)' : 'rgba(0,0,0,0.08)',
+                    color: cell ? 'rgba(0, 81, 81, 0.22)' : 'rgba(0,0,0,0.08)',
                     foreground: true,
                   }
                 : undefined
@@ -1175,7 +1175,7 @@ const SalesItemBrowser: React.FC<Props> = ({
                 borderColor: cell ? COLORS.primary2 : colors.border,
                 backgroundColor: cell
                   ? isDark
-                    ? 'rgba(2, 134, 255, 0.14)'
+                    ? 'rgba(0, 81, 81, 0.14)'
                     : COLORS.transparentPrimary2
                   : colors.inputBackground,
                 opacity: pressed ? 0.88 : 1,

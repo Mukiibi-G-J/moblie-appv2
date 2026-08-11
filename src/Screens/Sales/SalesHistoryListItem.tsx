@@ -1,17 +1,16 @@
-import React, {useMemo} from 'react';
-import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
+import React from 'react';
 import {
+  Alert,
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   Image,
-  ImageSourcePropType,
   ActivityIndicator,
 } from 'react-native';
-import {COLORS, FONTS, SIZES, icons} from '../../constants';
+import {COLORS, FONTS, icons} from '../../constants';
+import {formatCurrencyCompact} from '../../utils/currency';
 import {useTheme} from '../../context/ThemeContext';
-import SalesInvoiceStatusBadge from './SalesInvoiceStatusBadge';
 
 export type SalesHistoryListItemData = {
   id?: number;
@@ -56,6 +55,21 @@ type Props = {
   posting?: boolean;
 };
 
+const formatDate = (dateString?: string) => {
+  if (!dateString) {
+    return null;
+  }
+  try {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  } catch {
+    return dateString;
+  }
+};
+
 const SalesHistoryListItem: React.FC<Props> = ({
   item,
   onPress,
@@ -65,289 +79,207 @@ const SalesHistoryListItem: React.FC<Props> = ({
   posting = false,
 }) => {
   const {colors} = useTheme();
-  const t = useMemo(
-    () => ({
-      container: {
-        backgroundColor: colors.card,
-        borderBottomColor: colors.border,
-      },
-      iconWrap: {
-        backgroundColor: colors.screenMuted,
-        borderColor: colors.border,
-      },
-      leadingIcon: {tintColor: colors.iconMuted},
-      title: {color: colors.textPrimary},
-      subtitle: {color: colors.textSecondary},
-      amount: {color: colors.textPrimary},
-      metaRow: {borderTopColor: colors.border},
-      metaDivider: {backgroundColor: colors.border},
-      detailLabel: {color: colors.textSecondary},
-      detailValue: {color: colors.textPrimary},
-    }),
-    [colors],
-  );
-
-  const formatAmount = (raw: unknown) => {
-    const n = Number(raw);
-    const amount = Number.isFinite(n) ? n : 0;
-    return formatCurrencyCompact(amount);
-  };
-
   const statusLower = String(item.status || '').toLowerCase();
-  const isPosted =
-    statusLower === 'posted' && !item.reversed && onPrintPress;
-  const canPost =
-    (statusLower === 'open' || statusLower === 'draft') &&
-    !item.reversed &&
-    onPostPress;
-  const canEditInPos =
-    (statusLower === 'open' || statusLower === 'draft') &&
-    !item.reversed &&
-    onEditInPosPress;
+  const isOpenish =
+    (statusLower === 'open' || statusLower === 'draft') && !item.reversed;
+  const title = item.customer_name?.trim() || 'Walk-in customer';
 
-  const formatDate = (dateString?: string) => {
-    if (!dateString) {
-      return '—';
+  const initials =
+    title
+      .split(' ')
+      .filter(Boolean)
+      .slice(0, 2)
+      .map(part => part[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase() || 'SL';
+
+  const invoiceLabel = item.invoice_no ? `#${item.invoice_no}` : null;
+  const paymentLabel = salesHistoryPaymentLabel(item);
+  const secondaryLine = [
+    invoiceLabel,
+    paymentLabel !== '—' ? paymentLabel : null,
+    formatDate(item.document_date),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  const amountText = formatCurrencyCompact(
+    Number.isFinite(Number(item.total_amount)) ? Number(item.total_amount) : 0,
+  );
+  const statusLabel = item.reversed
+    ? 'Reversed'
+    : item.status?.trim() || '—';
+
+  const canEditInPos = !!onEditInPosPress && isOpenish;
+  const canPost = !!onPostPress && isOpenish;
+  const canPrint =
+    !!onPrintPress && statusLower === 'posted' && !item.reversed;
+  const canOpenActions = canEditInPos || canPost || canPrint;
+
+  const handleOpenActions = () => {
+    if (posting) {
+      return;
     }
-    try {
-      return new Date(dateString).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
+
+    const options: Array<{
+      text: string;
+      style?: 'cancel' | 'destructive';
+      onPress?: () => void;
+    }> = [];
+
+    options.push({
+      text: 'View details',
+      onPress,
+    });
+
+    if (canEditInPos) {
+      options.push({
+        text: 'Edit in POS',
+        onPress: onEditInPosPress,
       });
-    } catch {
-      return dateString;
     }
+
+    if (canPost) {
+      options.push({
+        text: 'Post sale',
+        onPress: onPostPress,
+      });
+    }
+
+    if (canPrint) {
+      options.push({
+        text: 'Print receipt',
+        onPress: onPrintPress,
+      });
+    }
+
+    options.push({text: 'Cancel', style: 'cancel'});
+
+    Alert.alert(title, 'Choose an action', options);
   };
 
   return (
     <TouchableOpacity
-      activeOpacity={0.7}
-      style={[styles.container, t.container]}
+      activeOpacity={0.8}
+      style={[styles.container, {borderBottomColor: colors.border}]}
       onPress={onPress}>
-      <View style={styles.headerRow}>
-        <View style={styles.leftCol}>
-          <View style={[styles.iconWrap, t.iconWrap]}>
-            <Image
-              source={icons.cart as ImageSourcePropType}
-              style={[styles.leadingIcon, t.leadingIcon]}
-            />
-          </View>
-          <View style={styles.textCol}>
-            <Text style={[styles.title, t.title, item.reversed && styles.reversedText]} numberOfLines={1}>
-              {item.customer_name?.trim() || 'Walk-in customer'}
-            </Text>
-            <Text style={[styles.subtitle, t.subtitle, item.reversed && styles.reversedText]} numberOfLines={1}>
-              Invoice #{item.invoice_no || '—'}
-            </Text>
-          </View>
-        </View>
-        <View style={styles.rightCol}>
-          <View style={styles.badgeRow}>
-            {item.reversed ? (
-              <SalesInvoiceStatusBadge status="Reversed" />
-            ) : item.status ? (
-              <SalesInvoiceStatusBadge status={item.status} />
-            ) : null}
-          </View>
-          <View style={styles.amountRow}>
-            {canEditInPos ? (
-              <TouchableOpacity
-                style={[styles.editPosHit, t.iconWrap]}
-                onPress={onEditInPosPress}
-                disabled={posting}
-                activeOpacity={0.65}
-                accessibilityRole="button"
-                accessibilityLabel="Edit in POS">
-                <Image
-                  source={icons.cart as ImageSourcePropType}
-                  style={[styles.printIcon, {tintColor: COLORS.primary}]}
-                />
-              </TouchableOpacity>
-            ) : null}
-            {canPost ? (
-              <TouchableOpacity
-                style={[styles.postHit, {backgroundColor: COLORS.primary}]}
-                onPress={onPostPress}
-                disabled={posting}
-                activeOpacity={0.65}
-                accessibilityRole="button"
-                accessibilityLabel="Post sale">
-                {posting ? (
-                  <ActivityIndicator color={COLORS.white} size="small" />
-                ) : (
-                  <Text style={styles.postHitText}>Post</Text>
-                )}
-              </TouchableOpacity>
-            ) : null}
-            {isPosted ? (
-              <TouchableOpacity
-                style={[styles.printHit, t.iconWrap]}
-                onPress={onPrintPress}
-                activeOpacity={0.65}
-                accessibilityRole="button"
-                accessibilityLabel="Print receipt">
-                <Image
-                  source={icons.printer as ImageSourcePropType}
-                  style={[styles.printIcon, t.leadingIcon]}
-                />
-              </TouchableOpacity>
-            ) : null}
-            <Text style={[styles.amount, t.amount, item.reversed && styles.reversedText]}>
-              {formatAmount(item.total_amount)}
-            </Text>
-          </View>
-        </View>
+      <View style={[styles.avatar, {backgroundColor: colors.backButtonBg}]}>
+        <Text style={styles.avatarText}>{initials}</Text>
       </View>
 
-      <View style={[styles.metaRow, t.metaRow]}>
-        <View style={styles.detailItem}>
-          <Text style={[styles.detailLabel, t.detailLabel]}>Date</Text>
-          <Text style={[styles.detailValue, t.detailValue]}>
-            {formatDate(item.document_date)}
-          </Text>
-        </View>
-        <View style={[styles.metaDivider, t.metaDivider]} />
-        <View style={styles.detailItem}>
-          <Text style={[styles.detailLabel, t.detailLabel]}>Payment</Text>
-          <Text
-            style={[styles.detailValue, t.detailValue]}
-            numberOfLines={1}>
-            {salesHistoryPaymentLabel(item)}
-          </Text>
-        </View>
+      <View style={styles.content}>
+        <Text
+          style={[
+            styles.title,
+            {color: colors.textPrimary},
+            item.reversed && styles.reversedText,
+          ]}
+          numberOfLines={1}>
+          {title}
+        </Text>
+        <Text
+          style={[
+            styles.secondaryText,
+            {color: colors.textSecondary},
+            item.reversed && styles.reversedText,
+          ]}
+          numberOfLines={1}>
+          {secondaryLine}
+        </Text>
+        <Text
+          style={[
+            styles.metaText,
+            isOpenish
+              ? styles.metaTextOpen
+              : item.reversed
+                ? styles.reversedText
+                : {color: colors.textSecondary},
+          ]}>
+          {amountText} · {statusLabel}
+        </Text>
       </View>
+
+      {canOpenActions ? (
+        <TouchableOpacity
+          onPress={handleOpenActions}
+          disabled={posting}
+          style={[styles.actionButton, {backgroundColor: colors.backButtonBg}]}
+          hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
+          {posting ? (
+            <ActivityIndicator color={COLORS.primary} size="small" />
+          ) : (
+            <Image
+              source={icons.menu}
+              style={[styles.actionIcon, {tintColor: colors.textPrimary}]}
+              resizeMode="contain"
+            />
+          )}
+        </TouchableOpacity>
+      ) : null}
     </TouchableOpacity>
   );
 };
 
+export default SalesHistoryListItem;
+
 const styles = StyleSheet.create({
   container: {
-    paddingVertical: 14,
-    paddingHorizontal: SIZES.padding,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  leftCol: {
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
-    minWidth: 0,
+    marginHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
   },
-  iconWrap: {
-    width: 44,
-    height: 44,
+  avatar: {
+    width: 48,
+    height: 48,
     borderRadius: 10,
-    borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: SIZES.base,
+    marginRight: 14,
   },
-  leadingIcon: {
-    width: 20,
-    height: 20,
+  avatarText: {
+    color: COLORS.primary3,
+    fontSize: 16,
+    fontWeight: '700',
   },
-  textCol: {
+  content: {
     flex: 1,
-    minWidth: 0,
-    paddingRight: SIZES.base,
   },
   title: {
-    ...FONTS.body3,
+    ...FONTS.body2,
     fontWeight: '700',
-    fontSize: 16,
+    fontSize: 15,
+    marginBottom: 4,
   },
-  subtitle: {
+  secondaryText: {
     ...FONTS.body4,
-    marginTop: 2,
+    fontSize: 13,
   },
-  rightCol: {
-    alignItems: 'flex-end',
-    justifyContent: 'flex-start',
-  },
-  badgeRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'flex-end',
-    gap: 6,
-  },
-  amountRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  metaText: {
+    ...FONTS.body4,
+    fontSize: 13,
     marginTop: 6,
+    fontWeight: '600',
   },
-  printHit: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    borderWidth: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
-  },
-  printIcon: {
-    width: 18,
-    height: 18,
-  },
-  postHit: {
-    minWidth: 52,
-    height: 32,
-    paddingHorizontal: 10,
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
-  },
-  postHitText: {
-    ...FONTS.body5,
-    color: COLORS.white,
-    fontWeight: '700',
-  },
-  editPosHit: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    borderWidth: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 8,
-  },
-  amount: {
-    ...FONTS.body3,
-    fontWeight: '700',
+  metaTextOpen: {
+    color: COLORS.primary2,
   },
   reversedText: {
     color: '#B42318',
     textDecorationLine: 'line-through',
     opacity: 0.85,
   },
-  metaRow: {
-    flexDirection: 'row',
+  actionButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
-    marginTop: SIZES.base,
-    paddingTop: SIZES.base,
-    borderTopWidth: 1,
+    justifyContent: 'center',
   },
-  detailItem: {
-    flex: 1,
-  },
-  metaDivider: {
-    width: 1,
-    height: '100%',
-    marginHorizontal: SIZES.base,
-  },
-  detailLabel: {
-    ...FONTS.body5,
-  },
-  detailValue: {
-    ...FONTS.body4,
-    marginTop: 2,
-    fontWeight: '600',
+  actionIcon: {
+    width: 16,
+    height: 16,
   },
 });
-
-export default SalesHistoryListItem;

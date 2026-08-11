@@ -1,14 +1,16 @@
 {
-  "primary": "#00AEEF",
-  "secondary": "#283891",
+  "primary": "#005151",
+  "secondary": "#1a938a",
+  "accent": "#ffbf3f",
+  "accentDark": "#e8a115",
   "canvas": "#000000",
   "neutralCharcoal": "#1A1A1A",
   "gradientBrand": {
     "type": "linear",
     "angle": 135,
     "stops": [
-      { "position": 0, "color": "#00AEEF" },
-      { "position": 100, "color": "#283891" }
+      { "position": 0, "color": "#005151" },
+      { "position": 100, "color": "#1a938a" }
     ]
   }
 }

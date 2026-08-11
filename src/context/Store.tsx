@@ -309,6 +309,15 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
       }
 
       if (args.requireSelectionAfterTokenIssue) {
+        // Only force the picker when multi-branch is actually enabled.
+        if (!args.enableMultiple) {
+          await AsyncStorage.setItem(BRANCH_SESSION_KEYS.selectionPending, '0');
+          setBranchSessionState((prev) => ({
+            ...prev,
+            branchSelectionPending: false,
+          }));
+          return;
+        }
         // Web sets pending for any user who can switch; modal checks enable_multiple_branches.
         await AsyncStorage.setItem(BRANCH_SESSION_KEYS.selectionPending, '1');
         setBranchSessionState((prev) => ({...prev, branchSelectionPending: true}));
@@ -321,18 +330,9 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
         return;
       }
 
-      // App restart: honour persisted pending flag until user confirms (web redux-persist).
-      const rawPending = await AsyncStorage.getItem(BRANCH_SESSION_KEYS.selectionPending);
-      if (rawPending === '1') {
-        setBranchSessionState((prev) => ({...prev, branchSelectionPending: true}));
-        return;
-      }
-
-      const rawId = await AsyncStorage.getItem(BRANCH_SESSION_KEYS.activeBranchId);
-      const hasActive = rawId != null && rawId.trim() !== '';
-      const pending = !hasActive;
-      await AsyncStorage.setItem(BRANCH_SESSION_KEYS.selectionPending, pending ? '1' : '0');
-      setBranchSessionState((prev) => ({...prev, branchSelectionPending: pending}));
+      // App reopen / cold start: always ask multi-branch switchers to confirm branch.
+      await AsyncStorage.setItem(BRANCH_SESSION_KEYS.selectionPending, '1');
+      setBranchSessionState((prev) => ({...prev, branchSelectionPending: true}));
     },
     [],
   );
@@ -426,7 +426,7 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
         BRANCH_SESSION_KEYS.enableMultiple,
         enableMultipleJwt ? '1' : '0',
       );
-      if (canSwitch) {
+      if (canSwitch && enableMultipleJwt) {
         await AsyncStorage.setItem(BRANCH_SESSION_KEYS.selectionPending, '1');
       } else {
         await AsyncStorage.setItem(BRANCH_SESSION_KEYS.selectionPending, '0');
@@ -435,7 +435,7 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
         ...prev,
         can_switch_branch: canSwitch,
         enable_multiple_branches: enableMultipleJwt,
-        branchSelectionPending: canSwitch,
+        branchSelectionPending: canSwitch && enableMultipleJwt,
       }));
 
       // Authenticate immediately so navigation can leave the sign-in stack.
@@ -530,6 +530,7 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
           await ensureBranchSelectionGate({
             enableMultiple,
             canSwitch: user.can_switch_branch !== false,
+            requireSelectionAfterTokenIssue: true,
           });
           const cachedAvatar = await readCachedAvatarUrl();
           setAuth({

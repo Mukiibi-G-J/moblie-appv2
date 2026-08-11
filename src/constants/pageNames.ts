@@ -47,6 +47,8 @@ export const PAGE_NAMES = {
   // ============================================
   PAYMENTS: 'Payments',
   PAYMENT_HISTORY: 'Payment History',
+  /** Matches backend page object name (object ID 10406) */
+  QUICK_PAYMENT: 'QuickPayment',
 
   // ============================================
   // FINANCIALS MODULE PAGES (10501-10599)

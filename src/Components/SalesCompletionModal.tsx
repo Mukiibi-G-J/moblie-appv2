@@ -30,7 +30,7 @@ import {
 import {QuickIconPressable} from './QuickIconPressable';
 import {CartItem, SalesInvoiceData} from '../@types/types.dto';
 import {validateCartTracking} from '../utils/salesTracking';
-import {formatCurrencyCompact} from '../utils/currency';
+import {formatCurrencyCompact, getLocalCurrencyCode} from '../utils/currency';
 import {
   createSalesInvoice,
   postSalesInvoice,
@@ -104,7 +104,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
       dropdownOption: {borderBottomColor: colors.border},
       dropdownOptionSel: {
         backgroundColor: isDark
-          ? 'rgba(2, 134, 255, 0.14)'
+          ? 'rgba(0, 81, 81, 0.14)'
           : COLORS.transparentPrimary2,
       },
       dropdownOptionText: {color: colors.textPrimary},
@@ -137,7 +137,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
       tenderInput: {color: colors.textPrimary},
       tenderChange: {
         backgroundColor: isDark
-          ? 'rgba(2,134,255,0.1)'
+          ? 'rgba(0,81,81,0.1)'
           : COLORS.transparentPrimary,
         borderColor: colors.border,
       },
@@ -890,7 +890,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
                 </View>
                 <View style={[styles.tenderInputShell, st.tenderShell]}>
                   <Text style={[styles.amountCurrencyPrefix, st.tenderLabel]}>
-                    UGX
+                    {getLocalCurrencyCode()}
                   </Text>
                   <TextInput
                     style={[styles.tenderInput, st.tenderInput]}

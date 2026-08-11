@@ -89,7 +89,13 @@ export async function getLocalPaymentMethods(): Promise<PaymentMethod[]> {
   const count = await getPaymentMethodCount();
   triggerHydrationIfOnlineAndEmpty('paymentMethods', count);
   const methods = await getAllPaymentMethods();
-  return methods.length ? methods : [];
+  if (!methods.length) {
+    return [];
+  }
+  const {filterCollectablePaymentMethods} = await import(
+    '../utils/paymentMethodDefaults'
+  );
+  return filterCollectablePaymentMethods(methods);
 }
 
 export async function getLocalCustomers(): Promise<Customer[]> {

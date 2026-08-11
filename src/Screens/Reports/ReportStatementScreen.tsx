@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
-import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
+import {formatCurrencyCompact} from '../../utils/currency';
 import {
   ActivityIndicator,
   FlatList,
@@ -28,39 +28,16 @@ import {
   downloadProfitLossPdf,
   fetchBalanceSheetReport,
   fetchProfitLossStatement,
+  type FinancialReportData,
+  type FinancialReportRow,
 } from '../../services/app.services';
-import {savePdfBufferAndShare} from '../../utils/reportPdfDownload';
+import {
+  savePdfBase64AndShare,
+  savePdfBufferAndShare,
+} from '../../utils/reportPdfDownload';
 import {BranchFilterSelect} from '../../Components/BranchFilterSelect';
 
 type ReportVariant = 'profit-loss' | 'balance-sheet';
-
-type ProfitLossAccount = {
-  gl_account__name?: string;
-  gl_account__no?: string;
-  gl_account__indentation?: number;
-  amount?: number;
-};
-
-type ProfitLossResponse = {
-  period?: {
-    start_date?: string;
-    end_date?: string;
-  };
-  revenue?: {
-    total?: number;
-    accounts?: ProfitLossAccount[];
-  };
-  cost_of_goods_sold?: {
-    total?: number;
-    accounts?: ProfitLossAccount[];
-  };
-  gross_profit?: number;
-  operating_expenses?: {
-    total?: number;
-    accounts?: ProfitLossAccount[];
-  };
-  net_income?: number;
-};
 
 type BalanceSheetAccount = {
   no?: string;
@@ -168,20 +145,26 @@ function profitLossRangeForPreset(key: string, today: Date): DateRange | null {
     case 'as_of_today':
       return {startDate: todayStr, endDate: todayStr};
     case 'this_month':
-    case 'this_month_to_date': {
-      const start = new Date(y, m, 1);
-      return {startDate: toYmd(start), endDate: todayStr};
-    }
-    case 'this_quarter':
-    case 'this_quarter_to_date': {
+      return {
+        startDate: toYmd(new Date(y, m, 1)),
+        endDate: toYmd(new Date(y, m + 1, 0)),
+      };
+    case 'this_month_to_date':
+      return {startDate: toYmd(new Date(y, m, 1)), endDate: todayStr};
+    case 'this_quarter': {
       const start = startOfQuarter(today);
-      return {startDate: toYmd(start), endDate: todayStr};
+      const end = new Date(start.getFullYear(), start.getMonth() + 3, 0);
+      return {startDate: toYmd(start), endDate: toYmd(end)};
     }
+    case 'this_quarter_to_date':
+      return {startDate: toYmd(startOfQuarter(today)), endDate: todayStr};
     case 'this_year':
-    case 'this_year_to_date': {
-      const start = new Date(y, 0, 1);
-      return {startDate: toYmd(start), endDate: todayStr};
-    }
+      return {
+        startDate: toYmd(new Date(y, 0, 1)),
+        endDate: toYmd(new Date(y, 11, 31)),
+      };
+    case 'this_year_to_date':
+      return {startDate: toYmd(new Date(y, 0, 1)), endDate: todayStr};
     case 'last_month': {
       const start = new Date(y, m - 1, 1);
       const end = new Date(y, m, 0);
@@ -239,7 +222,7 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [profitLossData, setProfitLossData] = useState<ProfitLossResponse | null>(
+  const [profitLossData, setProfitLossData] = useState<FinancialReportData | null>(
     null,
   );
   const [balanceSheetData, setBalanceSheetData] =
@@ -247,13 +230,13 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
 
   const [filterMenuVisible, setFilterMenuVisible] = useState(false);
   const [periodLabel, setPeriodLabel] = useState(() =>
-    reportType === 'profit-loss' ? 'This Month to Date' : 'As of Today',
+    reportType === 'profit-loss' ? 'This Year to Date' : 'As of Today',
   );
   const [activeFilterKey, setActiveFilterKey] = useState(() =>
-    reportType === 'profit-loss' ? 'this_month_to_date' : 'as_of_today',
+    reportType === 'profit-loss' ? 'this_year_to_date' : 'as_of_today',
   );
   const [plRange, setPlRange] = useState<DateRange>(() =>
-    profitLossRangeForPreset('this_month_to_date', getTodayDate())!,
+    profitLossRangeForPreset('this_year_to_date', getTodayDate())!,
   );
   const [bsAsOf, setBsAsOf] = useState(() =>
     balanceSheetAsOfForPreset('as_of_today', getTodayDate())!,
@@ -332,7 +315,8 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
           return;
         }
         setError(
-          fetchError?.response?.data?.detail ||
+          fetchError?.response?.data?.error ||
+            fetchError?.response?.data?.detail ||
             fetchError?.message ||
             'Unable to load this report right now.',
         );
@@ -385,24 +369,42 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
     }
     setExportingPdf(true);
     try {
-      const apiType =
-        reportType === 'profit-loss' ? 'profit_loss' : 'balance_sheet';
-      const buf =
-        reportType === 'profit-loss'
-          ? await downloadProfitLossPdf({
-              startDate: plRange.startDate,
-              endDate: plRange.endDate,
-              branch: branchFilter,
-              requestConfig: branchRequestConfig,
-            })
-          : await downloadBalanceSheetPdf({
-              asOfDate: bsAsOf,
-              branch: branchFilter,
-              requestConfig: branchRequestConfig,
-            });
-      const baseName = `zentro_${apiType}_${
-        reportType === 'profit-loss' ? plRange.endDate : bsAsOf
-      }`;
+      if (reportType === 'profit-loss') {
+        const pdf = await downloadProfitLossPdf({
+          startDate: plRange.startDate,
+          endDate: plRange.endDate,
+          branch: branchFilter,
+          requestConfig: branchRequestConfig,
+        });
+        const baseName =
+          pdf.fileName.replace(/\.pdf$/i, '') ||
+          `zentro_profit_loss_${plRange.endDate}`;
+        const {sharedOnIos, displayPath, openedViewer} =
+          await savePdfBase64AndShare(pdf.base64, baseName);
+        if (sharedOnIos) {
+          Toast.show({
+            type: 'success',
+            text1: 'PDF ready',
+            text2: 'Use the share sheet to save or send.',
+          });
+        } else {
+          Toast.show({
+            type: 'success',
+            text1: 'PDF downloaded',
+            text2: openedViewer
+              ? `Saved to ${displayPath}`
+              : `Saved to ${displayPath}. Open Downloads or Files to view it.`,
+          });
+        }
+        return;
+      }
+
+      const buf = await downloadBalanceSheetPdf({
+        asOfDate: bsAsOf,
+        branch: branchFilter,
+        requestConfig: branchRequestConfig,
+      });
+      const baseName = `zentro_balance_sheet_${bsAsOf}`;
       const {sharedOnIos, displayPath, openedViewer} = await savePdfBufferAndShare(
         buf,
         baseName,
@@ -423,11 +425,14 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
         });
       }
     } catch (e: unknown) {
-      const err = e as {message?: string};
+      const err = e as {message?: string; response?: {data?: {error?: string}}};
       Toast.show({
         type: 'error',
         text1: 'PDF export failed',
-        text2: err?.message || 'Could not export PDF.',
+        text2:
+          err?.response?.data?.error ||
+          err?.message ||
+          'Could not export PDF.',
       });
     } finally {
       setExportingPdf(false);
@@ -557,10 +562,42 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
     return formatCurrencyCompact(amount);
   };
 
+  const primaryPlColumnKey = useMemo(() => {
+    if (!profitLossData?.columns?.length) {
+      return null;
+    }
+    const current =
+      profitLossData.columns.find(
+        col =>
+          String(col.comparison_period_formula || '').toUpperCase() === '0M',
+      ) || profitLossData.columns[0];
+    return current?.key ?? null;
+  }, [profitLossData]);
+
+  const findPlRowAmount = useCallback(
+    (matchers: string[]) => {
+      if (!profitLossData?.rows?.length || !primaryPlColumnKey) {
+        return undefined;
+      }
+      const row = profitLossData.rows.find(item => {
+        const description = (item.description || '').toLowerCase();
+        return matchers.some(matcher =>
+          description.includes(matcher.toLowerCase()),
+        );
+      });
+      if (!row) {
+        return undefined;
+      }
+      const amount = row.amounts?.[primaryPlColumnKey];
+      return typeof amount === 'number' ? amount : undefined;
+    },
+    [primaryPlColumnKey, profitLossData],
+  );
+
   const renderSummaryCard = (
     label: string,
     value: string,
-    tone: 'default' | 'positive' | 'negative' = 'default',
+    _tone: 'default' | 'positive' | 'negative' = 'default',
   ) => (
     <View
       style={[
@@ -573,65 +610,147 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
       <Text style={[styles.summaryLabel, {color: colors.textSecondary}]}>
         {label}
       </Text>
-      <Text
-        style={[
-          styles.summaryValue,
-          tone === 'positive' && styles.positiveValue,
-          tone === 'negative' && styles.negativeValue,
-          tone === 'default' && {color: colors.textPrimary},
-        ]}>
+      <Text style={[styles.summaryValue, {color: colors.textPrimary}]}>
         {value}
       </Text>
     </View>
   );
 
-  const renderProfitLossAccounts = (
-    heading: string,
-    total: number | undefined,
-    accounts: ProfitLossAccount[] | undefined,
-  ) => (
-    <View
-      style={[
-        styles.sectionCard,
-        {backgroundColor: colors.card, borderColor: colors.border},
-      ]}>
-      <View style={styles.sectionHeaderRow}>
-        <Text style={[styles.sectionTitle, {color: colors.textPrimary}]}>
-          {heading}
-        </Text>
-        <Text style={styles.sectionTotal}>{formatCurrency(total)}</Text>
-      </View>
+  const renderFinancialReportRows = (
+    report: FinancialReportData,
+    columns = report.columns,
+  ) => {
+    const visibleRows = (report.rows || []).filter(
+      row => row.visible !== false,
+    );
+    if (!visibleRows.length) {
+      return (
+        <View style={styles.plStatement}>
+          <Text style={[styles.emptySectionText, {color: colors.textSecondary}]}>
+            No report lines available.
+          </Text>
+        </View>
+      );
+    }
 
-      {accounts?.length ? (
-        accounts.map(account => (
+    const amountColumns = columns?.length ? columns : [];
+    const displayColumns = amountColumns.length
+      ? amountColumns
+      : primaryPlColumnKey
+        ? [{key: primaryPlColumnKey, header: '', line_no: 0}]
+        : [];
+
+    return (
+      <View style={styles.plStatement}>
+        {displayColumns.length > 1 ? (
           <View
-            key={`${account.gl_account__no ?? account.gl_account__name}`}
             style={[
-              styles.accountRow,
-              {marginLeft: (account.gl_account__indentation ?? 0) * 10},
+              styles.plColumnHeaderRow,
+              {borderBottomColor: colors.border},
             ]}>
             <Text
-              style={[styles.accountName, {color: colors.textSecondary}]}
-              numberOfLines={2}>
-              {account.gl_account__name ?? 'Account'}
+              style={[
+                styles.plColumnHeaderLabel,
+                {color: colors.textSecondary},
+              ]}>
+              Line
             </Text>
-            <Text style={[styles.accountAmount, {color: colors.textPrimary}]}>
-              {formatCurrency(account.amount)}
-            </Text>
+            {displayColumns.map(col => (
+              <Text
+                key={col.key}
+                style={[
+                  styles.plColumnHeaderAmount,
+                  {color: colors.textSecondary},
+                ]}
+                numberOfLines={1}>
+                {col.header}
+              </Text>
+            ))}
           </View>
-        ))
-      ) : (
-        <Text style={[styles.emptySectionText, {color: colors.textSecondary}]}>
-          No account lines available.
-        </Text>
-      )}
-    </View>
-  );
+        ) : null}
+
+        {visibleRows.map((row: FinancialReportRow, index: number) => {
+          const rowType = (row.row_type || '').toLowerCase();
+          const isHeader = rowType === 'header';
+          const isBeginTotal = rowType === 'begin-total';
+          const isEndTotal = rowType === 'end-total' || rowType === 'total';
+          const isSectionBreak = isHeader || isBeginTotal;
+          const isEmphasis =
+            row.bold ||
+            isHeader ||
+            isEndTotal ||
+            /money made|profit before|total /i.test(row.description || '');
+          const indent = Math.max(0, row.indentation ?? 0);
+          const showTopGap = isSectionBreak && index > 0;
+
+          return (
+            <View
+              key={`${row.line_no}-${row.row_no}`}
+              style={[
+                styles.plRow,
+                showTopGap && styles.plRowSectionGap,
+                isEndTotal && [
+                  styles.plRowTotal,
+                  {borderTopColor: colors.border},
+                ],
+              ]}>
+              <Text
+                style={[
+                  styles.plRowDescription,
+                  {
+                    color: isHeader
+                      ? colors.textSecondary
+                      : colors.textPrimary,
+                    fontWeight: isEmphasis ? '600' : '400',
+                    fontStyle: row.italic ? 'italic' : 'normal',
+                    paddingLeft: indent * 12,
+                    textTransform: isHeader ? 'uppercase' : 'none',
+                    letterSpacing: isHeader ? 0.4 : 0,
+                    fontSize: isHeader ? 12 : 15,
+                  },
+                ]}
+                numberOfLines={2}>
+                {row.description || '—'}
+              </Text>
+              <View style={styles.plRowAmounts}>
+                {displayColumns.map(col => {
+                  const amount =
+                    typeof row.amounts?.[col.key] === 'number'
+                      ? row.amounts[col.key]
+                      : null;
+                  if (isHeader || amount == null) {
+                    return (
+                      <View
+                        key={col.key || 'empty'}
+                        style={styles.plRowAmountSlot}
+                      />
+                    );
+                  }
+                  return (
+                    <Text
+                      key={col.key || 'amount'}
+                      style={[
+                        styles.plRowAmount,
+                        {
+                          color: colors.textPrimary,
+                          fontWeight: isEmphasis ? '600' : '400',
+                        },
+                      ]}>
+                      {formatCurrency(amount)}
+                    </Text>
+                  );
+                })}
+              </View>
+            </View>
+          );
+        })}
+      </View>
+    );
+  };
 
   const renderBalanceSheetAccounts = (
     heading: string,
     section: BalanceSheetSection | undefined,
-    tone: 'positive' | 'negative' | 'default' = 'default',
   ) => (
     <View
       style={[
@@ -642,13 +761,7 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
         <Text style={[styles.sectionTitle, {color: colors.textPrimary}]}>
           {heading}
         </Text>
-        <Text
-          style={[
-            styles.sectionTotal,
-            tone === 'positive' && styles.positiveValue,
-            tone === 'negative' && styles.negativeValue,
-            tone === 'default' && {color: colors.textPrimary},
-          ]}>
+        <Text style={[styles.sectionTotal, {color: colors.textPrimary}]}>
           {formatCurrency(section?.total)}
         </Text>
       </View>
@@ -711,89 +824,41 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
     }
 
     if (reportType === 'profit-loss' && profitLossData) {
+      const netProfit = findPlRowAmount([
+        'money made',
+        'profit or loss',
+        'net income',
+        'net profit',
+      ]);
+      const periodText =
+        profitLossData.period_label ||
+        `${profitLossData.start_date || plRange.startDate} – ${
+          profitLossData.end_date || plRange.endDate
+        }`;
+
       return (
         <>
-          <View
-            style={[
-              styles.heroCard,
-              {backgroundColor: colors.card, borderColor: colors.border},
-            ]}>
-            <Text style={[styles.heroEyebrow, {color: COLORS.primary2}]}>
-              CURRENT PERIOD
+          <View style={styles.plPeriodBlock}>
+            <Text style={[styles.plPeriodLabel, {color: colors.textSecondary}]}>
+              {periodText}
+              {profitLossData.branch_name
+                ? ` · ${profitLossData.branch_name}`
+                : ''}
             </Text>
-            <Text style={[styles.heroTitle, {color: colors.textPrimary}]}>
-              {profitLossData.period?.start_date} to {profitLossData.period?.end_date}
-            </Text>
-            <Text style={[styles.heroSubtitle, {color: colors.textSecondary}]}>
-              Review revenue, direct costs, and operating expenses in one place.
-            </Text>
+            {typeof netProfit === 'number' ? (
+              <View style={styles.plNetBlock}>
+                <Text
+                  style={[styles.plNetLabel, {color: colors.textSecondary}]}>
+                  Profit / Loss
+                </Text>
+                <Text style={[styles.plNetValue, {color: colors.textPrimary}]}>
+                  {formatCurrency(netProfit)}
+                </Text>
+              </View>
+            ) : null}
           </View>
 
-          <View style={styles.summaryGrid}>
-            {renderSummaryCard(
-              'Revenue',
-              formatCurrency(profitLossData.revenue?.total),
-              'positive',
-            )}
-            {renderSummaryCard(
-              'Gross Profit',
-              formatCurrency(profitLossData.gross_profit),
-              (profitLossData.gross_profit ?? 0) >= 0 ? 'positive' : 'negative',
-            )}
-            {renderSummaryCard(
-              'Net Income',
-              formatCurrency(profitLossData.net_income),
-              (profitLossData.net_income ?? 0) >= 0 ? 'positive' : 'negative',
-            )}
-          </View>
-
-          {renderProfitLossAccounts(
-            'Revenue',
-            profitLossData.revenue?.total,
-            profitLossData.revenue?.accounts,
-          )}
-          {renderProfitLossAccounts(
-            'Cost of Goods Sold',
-            profitLossData.cost_of_goods_sold?.total,
-            profitLossData.cost_of_goods_sold?.accounts,
-          )}
-          <View
-            style={[
-              styles.highlightCard,
-              {backgroundColor: COLORS.primary2 + '12', borderColor: COLORS.primary2 + '30'},
-            ]}>
-            <Text style={styles.highlightLabel}>Gross Profit</Text>
-            <Text
-              style={[
-                styles.highlightValue,
-                (profitLossData.gross_profit ?? 0) >= 0
-                  ? styles.positiveValue
-                  : styles.negativeValue,
-              ]}>
-              {formatCurrency(profitLossData.gross_profit)}
-            </Text>
-          </View>
-          {renderProfitLossAccounts(
-            'Operating Expenses',
-            profitLossData.operating_expenses?.total,
-            profitLossData.operating_expenses?.accounts,
-          )}
-          <View
-            style={[
-              styles.highlightCard,
-              {backgroundColor: COLORS.primary2 + '12', borderColor: COLORS.primary2 + '30'},
-            ]}>
-            <Text style={styles.highlightLabel}>Net Income</Text>
-            <Text
-              style={[
-                styles.highlightValue,
-                (profitLossData.net_income ?? 0) >= 0
-                  ? styles.positiveValue
-                  : styles.negativeValue,
-              ]}>
-              {formatCurrency(profitLossData.net_income)}
-            </Text>
-          </View>
+          {renderFinancialReportRows(profitLossData)}
         </>
       );
     }
@@ -801,19 +866,9 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
     if (reportType === 'balance-sheet' && balanceSheetData) {
       return (
         <>
-          <View
-            style={[
-              styles.heroCard,
-              {backgroundColor: colors.card, borderColor: colors.border},
-            ]}>
-            <Text style={[styles.heroEyebrow, {color: COLORS.primary2}]}>
-              AS OF
-            </Text>
-            <Text style={[styles.heroTitle, {color: colors.textPrimary}]}>
-              {balanceSheetData.as_of_date}
-            </Text>
-            <Text style={[styles.heroSubtitle, {color: colors.textSecondary}]}>
-              Check the business position across assets, liabilities, and equity.
+          <View style={styles.plPeriodBlock}>
+            <Text style={[styles.plPeriodLabel, {color: colors.textSecondary}]}>
+              As of {balanceSheetData.as_of_date}
             </Text>
           </View>
 
@@ -821,12 +876,10 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
             {renderSummaryCard(
               'Total Assets',
               formatCurrency(balanceSheetData.assets?.total),
-              'positive',
             )}
             {renderSummaryCard(
               'Liabilities',
               formatCurrency(balanceSheetData.liabilities?.total),
-              'negative',
             )}
             {renderSummaryCard(
               'Equity',
@@ -835,17 +888,13 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
             {renderSummaryCard(
               'Difference',
               formatCurrency(balanceSheetData.balance_check?.difference),
-              (balanceSheetData.balance_check?.difference ?? 0) === 0
-                ? 'positive'
-                : 'negative',
             )}
           </View>
 
-          {renderBalanceSheetAccounts('Assets', balanceSheetData.assets, 'positive')}
+          {renderBalanceSheetAccounts('Assets', balanceSheetData.assets)}
           {renderBalanceSheetAccounts(
             'Liabilities',
             balanceSheetData.liabilities,
-            'negative',
           )}
           {renderBalanceSheetAccounts('Equity', balanceSheetData.equity)}
         </>
@@ -1142,29 +1191,33 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    padding: SIZES.padding,
+    paddingHorizontal: SIZES.padding,
+    paddingTop: 8,
     paddingBottom: SIZES.padding * 2,
   },
-  heroCard: {
-    borderWidth: 1,
-    borderRadius: 22,
-    padding: 18,
-    marginBottom: 16,
+  plPeriodBlock: {
+    marginBottom: 18,
+    paddingTop: 4,
   },
-  heroEyebrow: {
-    ...FONTS.body5,
-    fontWeight: '700',
-    letterSpacing: 0.8,
-  },
-  heroTitle: {
-    ...FONTS.h3,
-    marginTop: 8,
-    fontWeight: '700',
-  },
-  heroSubtitle: {
+  plPeriodLabel: {
     ...FONTS.body4,
-    marginTop: 8,
     lineHeight: 20,
+  },
+  plNetBlock: {
+    marginTop: 14,
+  },
+  plNetLabel: {
+    ...FONTS.body5,
+    fontWeight: '500',
+  },
+  plNetValue: {
+    ...FONTS.h2,
+    marginTop: 4,
+    fontWeight: '600',
+    letterSpacing: -0.3,
+  },
+  plStatement: {
+    paddingTop: 4,
   },
   summaryGrid: {
     flexDirection: 'row',
@@ -1177,9 +1230,9 @@ const styles = StyleSheet.create({
     padding: 14,
     marginHorizontal: 6,
     marginBottom: 12,
-    borderRadius: 18,
-    borderWidth: 1,
-    minHeight: 94,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    minHeight: 84,
   },
   summaryLabel: {
     ...FONTS.body5,
@@ -1187,11 +1240,11 @@ const styles = StyleSheet.create({
   summaryValue: {
     ...FONTS.h3,
     marginTop: 8,
-    fontWeight: '700',
+    fontWeight: '600',
   },
   sectionCard: {
-    borderWidth: 1,
-    borderRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 14,
     padding: 16,
     marginBottom: 12,
   },
@@ -1203,14 +1256,70 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     ...FONTS.h3,
-    fontWeight: '700',
+    fontWeight: '600',
     flex: 1,
     paddingRight: 12,
   },
   sectionTotal: {
     ...FONTS.body4,
-    color: COLORS.primary2,
-    fontWeight: '700',
+    fontWeight: '600',
+  },
+  plColumnHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: 10,
+    marginBottom: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  plColumnHeaderLabel: {
+    ...FONTS.body5,
+    fontWeight: '500',
+    flex: 1,
+    paddingRight: 8,
+  },
+  plColumnHeaderAmount: {
+    ...FONTS.body5,
+    fontWeight: '500',
+    minWidth: 78,
+    textAlign: 'right',
+    marginLeft: 8,
+  },
+  plRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingVertical: 9,
+  },
+  plRowSectionGap: {
+    marginTop: 14,
+    paddingTop: 4,
+  },
+  plRowTotal: {
+    marginTop: 4,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  plRowDescription: {
+    ...FONTS.body4,
+    flex: 1,
+    lineHeight: 21,
+    paddingRight: 12,
+  },
+  plRowAmounts: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  plRowAmountSlot: {
+    minWidth: 78,
+    marginLeft: 8,
+  },
+  plRowAmount: {
+    ...FONTS.body4,
+    minWidth: 78,
+    textAlign: 'right',
+    marginLeft: 8,
+    fontVariant: ['tabular-nums'],
   },
   accountRow: {
     flexDirection: 'row',
@@ -1225,36 +1334,14 @@ const styles = StyleSheet.create({
   },
   accountAmount: {
     ...FONTS.body4,
-    fontWeight: '600',
+    fontWeight: '500',
     textAlign: 'right',
   },
   accountHeading: {
-    fontWeight: '700',
+    fontWeight: '600',
   },
   emptySectionText: {
     ...FONTS.body4,
-  },
-  highlightCard: {
-    borderWidth: 1,
-    borderRadius: 18,
-    padding: 16,
-    marginBottom: 12,
-  },
-  highlightLabel: {
-    ...FONTS.body5,
-    color: COLORS.primary2,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  highlightValue: {
-    ...FONTS.h2,
-    fontWeight: '700',
-  },
-  positiveValue: {
-    color: COLORS.success,
-  },
-  negativeValue: {
-    color: COLORS.error,
   },
   stateWrap: {
     alignItems: 'center',

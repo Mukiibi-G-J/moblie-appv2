@@ -3462,7 +3462,7 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   selectedGalleryItem: {
-    borderColor: '#007AFF',
+    borderColor: '#005151',
   },
   galleryImage: {
     width: '100%',

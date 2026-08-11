@@ -1,18 +1,21 @@
 {
   "meta": {
     "name": "zentroapp-design-system",
-    "version": "1.0.0",
-    "colorSchemeDefault": "dark",
+    "version": "1.1.0",
+    "colorSchemeDefault": "light",
     "platformTarget": "react-native",
     "sourceScreenshotFolder": "square screen shoots",
-    "generatedAtIso": "2026-03-27T19:15:00.000Z"
+    "generatedAtIso": "2026-04-07T00:00:00.000Z",
+    "alignedWith": "zentroapp-webV2 teal/gold tokens"
   },
   "brand": {
-    "primary": "#00AEEF",
-    "secondary": "#283891",
+    "primary": "#005151",
+    "secondary": "#1a938a",
     "additional": {
       "canvas": "#000000",
-      "neutralCharcoal": "#1A1A1A"
+      "neutralCharcoal": "#1A1A1A",
+      "accent": "#ffbf3f",
+      "accentDark": "#e8a115"
     }
   },
   "color": {
@@ -43,19 +46,19 @@
         "border": {
           "subtle": "#404040",
           "strong": "#737373",
-          "focusRing": "#00AEEF"
+          "focusRing": "#005151"
         },
         "control": {
-          "fill": "#00AEEF",
-          "fillPressed": "#283891",
+          "fill": "#005151",
+          "fillPressed": "#003d3d",
           "border": "#404040"
         }
       },
       "light": {
         "background": {
-          "canvas": "#FFFFFF",
-          "elevated": "#F7F7F7",
-          "sunken": "#F2F2F2"
+          "canvas": "#F7F7F7",
+          "elevated": "#FFFFFF",
+          "sunken": "#EAFAF8"
         },
         "surface": {
           "primary": "#FFFFFF",
@@ -63,25 +66,25 @@
           "tertiary": "#EEEEEE"
         },
         "text": {
-          "primary": "#000000",
-          "secondary": "#666666",
+          "primary": "#060b1e",
+          "secondary": "#3b4a46",
           "tertiary": "#757575",
           "inverse": "#FFFFFF",
           "disabled": "#A0A0A0"
         },
         "icon": {
-          "primary": "#000000",
-          "secondary": "#757575",
+          "primary": "#060b1e",
+          "secondary": "#3b4a46",
           "inverse": "#FFFFFF"
         },
         "border": {
-          "subtle": "#E0E0E0",
+          "subtle": "#e5e5e5",
           "strong": "#BDBDBD",
-          "focusRing": "#00AEEF"
+          "focusRing": "#005151"
         },
         "control": {
-          "fill": "#00AEEF",
-          "fillPressed": "#283891",
+          "fill": "#005151",
+          "fillPressed": "#003d3d",
           "border": "#E0E0E0"
         }
       }
@@ -103,27 +106,27 @@
       "success": "#22C55E",
       "warning": "#F59E0B",
       "error": "#EF4444",
-      "info": "#3B82F6",
+      "info": "#1a938a",
       "overlayScrim": "#00000066",
       "overlayScrimStrong": "#000000B3",
-      "focus": "#00AEEF",
-      "link": "#00AEEF"
+      "focus": "#005151",
+      "link": "#005151"
     },
     "gradients": {
       "gradient.brand": {
         "type": "linear",
         "angle": 135,
-        "value": "linear-gradient(135deg, #00AEEF 0%, #283891 100%)",
+        "value": "linear-gradient(135deg, #005151 0%, #1a938a 100%)",
         "stops": [
-          { "position": 0, "color": "#00AEEF" },
-          { "position": 100, "color": "#283891" }
+          { "position": 0, "color": "#005151" },
+          { "position": 100, "color": "#1a938a" }
         ]
       }
     }
   },
   "typography": {
     "fontFamily": {
-      "primary": "Lexend",
+      "primary": "Outfit",
       "mono": "ui-monospace"
     },
     "scale": {
@@ -264,7 +267,7 @@
             },
             "pressed": {
               "fillType": "solid",
-              "backgroundColor": "#283891",
+              "backgroundColor": "#003d3d",
               "labelColor": "#FFFFFF",
               "borderWidthToken": "border.widths.none",
               "borderColor": "#00000000"
@@ -283,16 +286,16 @@
             "default": {
               "fillType": "solid",
               "backgroundColor": "#00000000",
-              "labelColor": "#00AEEF",
+              "labelColor": "#005151",
               "borderWidthToken": "border.widths.sm",
-              "borderColor": "#00AEEF"
+              "borderColor": "#005151"
             },
             "pressed": {
               "fillType": "solid",
-              "backgroundColor": "#00AEEF1A",
-              "labelColor": "#00AEEF",
+              "backgroundColor": "#0051511A",
+              "labelColor": "#005151",
               "borderWidthToken": "border.widths.sm",
-              "borderColor": "#00AEEF"
+              "borderColor": "#005151"
             },
             "disabled": {
               "fillType": "solid",
@@ -308,14 +311,14 @@
             "default": {
               "fillType": "solid",
               "backgroundColor": "#00000000",
-              "labelColor": "#00AEEF",
+              "labelColor": "#005151",
               "borderWidthToken": "border.widths.none",
               "borderColor": "#00000000"
             },
             "pressed": {
               "fillType": "solid",
               "backgroundColor": "#00000000",
-              "labelColor": "#283891",
+              "labelColor": "#003d3d",
               "borderWidthToken": "border.widths.none",
               "borderColor": "#00000000"
             },

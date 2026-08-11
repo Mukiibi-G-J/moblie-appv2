@@ -24,6 +24,8 @@ export const PAGE_IDS = {
   PaymentJournalList: 10401,
   PaymentMethodList: 10405,
   GLAccountList: 10501,
+  FinancialReportList: 10510,
+  FinancialReportOverview: 10511,
   ExpenseList: 10520,
   PaymentHistoryList: 10522,
   BankAccountList: 10601,

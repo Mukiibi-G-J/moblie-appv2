@@ -66,6 +66,7 @@ const screens = {
   purchases: 'Purchases',
   suppliers: 'Suppliers',
   payments: 'Payments',
+  quickPayment: 'Quick Payment',
   bankAccounts: 'Bank Accounts',
   bankAccountLedger: 'Bank Account Ledger Entries',
   loans: 'Loans',

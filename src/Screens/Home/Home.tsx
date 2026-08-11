@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {
   View,
   Text,
@@ -9,12 +9,14 @@ import {
   Platform,
   ActivityIndicator,
   RefreshControl,
+  Modal,
+  Pressable,
+  ScrollView,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {useNavigation} from '@react-navigation/native';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {
   constants,
-  FONTS,
   SIZES,
   COLORS,
   icons,
@@ -22,21 +24,19 @@ import {
   ICON_BUTTON_HIT_SLOP,
 } from '../../constants';
 import Options from './Options';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { ScrollView } from 'react-native';
-import { useAppContext, useAuth, useTabContext } from '../../context/Store';
-import { usePermissions } from '../../hooks/usePermissions';
-import { PAGE_NAMES } from '../../constants/pageNames';
-import { useCompanyInfo } from '../../hooks/useCompanyInfo';
-import { useTheme } from '../../context/ThemeContext';
-import { navigate } from '../../hooks/NavigationService';
+import {SafeAreaView} from 'react-native-safe-area-context';
+import {useAppContext, useAuth, useTabContext} from '../../context/Store';
+import {usePermissions} from '../../hooks/usePermissions';
+import {PAGE_NAMES} from '../../constants/pageNames';
+import {useCompanyInfo} from '../../hooks/useCompanyInfo';
+import {useTheme} from '../../context/ThemeContext';
+import {navigate} from '../../hooks/NavigationService';
 import {
   fetchHomeKpisFromSalesSummary,
   fetchHomeSnapshot,
   fetchMyUserSetup,
   fetchRecentTransactions,
   fetchLowStockItems,
-  fetchUnpostedSales,
   fetchOutstandingReceivables,
   KPIMetrics,
 } from '../../services/app.services';
@@ -47,16 +47,14 @@ interface SalesInvoice {
   id: number;
   invoice_no?: string;
   customer_invoice_no?: string;
-  customer?: { name: string };
+  customer?: {name: string};
   customer_name?: string;
   document_date?: string;
-  /** DRF DecimalField is often serialized as a string */
   total_amount?: number | string;
   created_at?: string;
   status: string;
 }
 
-/** SalesHistoryListSerializer exposes document_date, not created_at — parse safely for subtitle. */
 function formatSalesTransactionListSubtitle(
   documentDate?: string | null,
   createdAt?: string | null,
@@ -98,18 +96,24 @@ function formatSalesTransactionListSubtitle(
   return '—';
 }
 
+type QuickCreateAction = {
+  key: string;
+  label: string;
+  icon: number;
+  onPress: () => void;
+};
+
 export default function Home() {
-  const { colors } = useTheme();
+  const {colors, isDark} = useTheme();
   const insets = useSafeAreaInsets();
-  const { auth, accessToken } = useAuth();
+  const {auth, accessToken} = useAuth();
   const app = useAppContext();
-  const { isModuleVisible, hasAnyPageAccess, canCreate } = usePermissions();
-  const { storeLabel } = useCompanyInfo();
+  const {isModuleVisible, hasAnyPageAccess, canCreate} = usePermissions();
+  const {storeLabel} = useCompanyInfo();
   const [isAuthLoading, setIsAuthLoading] = React.useState(true);
   const navigation = useNavigation();
-  const { setSelectedTab } = useTabContext();
+  const {setSelectedTab} = useTabContext();
 
-  /** Greeting uses a single given name (first word of full name, else username). */
   const displayName =
     auth.full_name?.trim()?.split(/\s+/).filter(Boolean)[0] ||
     auth.username?.trim() ||
@@ -126,43 +130,22 @@ export default function Home() {
     return description || code || '';
   }, [app?.branchSession?.active_branch]);
 
-  // KPI Data
-  const [kpiMetrics, setKpiMetrics] = useState < KPIMetrics | null > (null);
+  const [kpiMetrics, setKpiMetrics] = useState<KPIMetrics | null>(null);
   const [kpiLoading, setKpiLoading] = useState(false);
-
-  // Recent Transactions
-  const [recentTransactions, setRecentTransactions] = useState < SalesInvoice[] > (
+  const [recentTransactions, setRecentTransactions] = useState<SalesInvoice[]>(
     [],
   );
   const [transactionsLoading, setTransactionsLoading] = useState(false);
-
-  // Low Stock
-  const [lowStockItems, setLowStockItems] = useState < any[] > ([]);
-  const [lowStockLoading, setLowStockLoading] = useState(false);
-
-  // Open + Draft together
-  const [unpostedSales, setUnpostedSales] = useState<any[]>([]);
-  const [unpostedLoading, setUnpostedLoading] = useState(false);
-
-  // Outstanding Receivables
-  const [outstandingReceivables, setOutstandingReceivables] = useState < {
+  const [lowStockItems, setLowStockItems] = useState<any[]>([]);
+  const [outstandingReceivables, setOutstandingReceivables] = useState<{
     total_amount: number;
     count: number;
-  } | null > (null);
-  const [receivablesLoading, setReceivablesLoading] = useState(false);
-
-  // Top Selling Items
-  const [topSellingItems, setTopSellingItems] = useState < any[] > ([]);
-  const [topItemsLoading, setTopItemsLoading] = useState(false);
-
-  // Refresh state
+  } | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-
-  /** Matches Sales History: User Setup canViewOnlyTheirSales + ?user= on sales list */
   const [restrictSalesToSelf, setRestrictSalesToSelf] = useState(true);
+  const [mySalesRefreshKey, setMySalesRefreshKey] = useState(0);
+  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
 
-  // Permission checks
-  /** Web parity: Sales module entry uses "Sales Dashboard"; snapshot KPIs match that gate only. */
   const canViewSalesDashboard =
     isModuleVisible('sales') &&
     hasAnyPageAccess(PAGE_NAMES.SALES_DASHBOARD);
@@ -175,75 +158,55 @@ export default function Home() {
   const canViewItems =
     isModuleVisible('items') && hasAnyPageAccess(PAGE_NAMES.ITEMS);
 
-  const canViewDrafts =
-    isModuleVisible('sales') && canCreate(PAGE_NAMES.SALES);
-
-  /** Open + Draft unposted sales — same visibility as recent / history. */
-  const canViewUnpostedSales = canViewTransactions || canViewDrafts;
-
   const canViewReceivables =
     (isModuleVisible('payments') || isModuleVisible('customers')) &&
     (hasAnyPageAccess(PAGE_NAMES.PAYMENTS) ||
       hasAnyPageAccess(PAGE_NAMES.CUSTOMER_MANAGEMENT));
 
-  /** Cashiers / sales staff without dashboard — web POS shows today totals instead. */
   const canViewMySalesToday =
     isModuleVisible('sales') &&
     (hasAnyPageAccess(PAGE_NAMES.SALES) ||
       hasAnyPageAccess(PAGE_NAMES.SALES_HISTORY)) &&
     !canViewSalesDashboard;
 
-  const [mySalesRefreshKey, setMySalesRefreshKey] = useState(0);
+  const canMakeSale =
+    isModuleVisible('sales') && hasAnyPageAccess(PAGE_NAMES.SALES);
 
-  const t = useMemo(
-    () => ({
-      root: { backgroundColor: colors.screenMuted },
-      card: {
-        backgroundColor: colors.card,
-        borderColor: colors.border,
-      },
-      sectionTitle: { color: colors.textPrimary },
-      seeAll: { color: COLORS.primary2 },
-      salesLabel: { color: colors.textSecondary },
-      salesAmount: { color: colors.textPrimary },
-      comparedText: { color: colors.textSecondary },
-      statValue: { color: colors.textPrimary },
-      statItemLabel: { color: colors.textSecondary },
-      snapshotDivider: { backgroundColor: colors.border },
-      alertTitle: { color: colors.textPrimary },
-      alertText: { color: colors.textSecondary },
-      listCard: {
-        backgroundColor: colors.card,
-        borderColor: colors.border,
-      },
-      transactionNumber: { color: colors.textPrimary },
-      transactionCustomer: { color: colors.textSecondary },
-      transactionTime: { color: colors.textSecondary },
-      placeholderText: { color: colors.textSecondary },
-      iconWell: {
-        backgroundColor: colors.screenMuted,
-        borderColor: colors.border,
-      },
-    }),
-    [colors],
-  );
+  const canSwitchBranch =
+    app?.branchSession?.enable_multiple_branches === true &&
+    app?.branchSession?.can_switch_branch !== false;
+
+  const openBranchSwitcher = useCallback(() => {
+    if (!canSwitchBranch || !app?.setBranchSelectionPending) {
+      return;
+    }
+    void app.setBranchSelectionPending(true);
+  }, [app, canSwitchBranch]);
 
   const softCardShadow = useMemo(
     () =>
       Platform.select({
         ios: {
           shadowColor: '#000',
-          shadowOffset: { width: 0, height: 2 },
-          shadowOpacity: 0.07,
-          shadowRadius: 8,
+          shadowOffset: {width: 0, height: 2},
+          shadowOpacity: isDark ? 0.28 : 0.07,
+          shadowRadius: 10,
         },
-        android: { elevation: 2 },
+        android: {elevation: isDark ? 0 : 2},
         default: {},
       }),
-    [],
+    [isDark],
   );
 
-  // Debug auth state and handle loading
+  const cardSurface = useMemo(
+    () => ({
+      backgroundColor: colors.card,
+      borderColor: isDark ? colors.border : 'transparent',
+      ...softCardShadow,
+    }),
+    [colors.card, colors.border, isDark, softCardShadow],
+  );
+
   React.useEffect(() => {
     if (auth.username && auth.user_id) {
       setIsAuthLoading(false);
@@ -252,7 +215,6 @@ export default function Home() {
     }
   }, [auth, accessToken]);
 
-  // Timeout to prevent infinite loading
   React.useEffect(() => {
     const timeout = setTimeout(() => {
       if (isAuthLoading) {
@@ -267,14 +229,10 @@ export default function Home() {
     (async () => {
       try {
         const setup = await fetchMyUserSetup();
-        if (cancelled) {
-          return;
-        }
+        if (cancelled) return;
         setRestrictSalesToSelf(setup?.canViewOnlyTheirSales ?? true);
       } catch {
-        if (!cancelled) {
-          setRestrictSalesToSelf(true);
-        }
+        if (!cancelled) setRestrictSalesToSelf(true);
       }
     })();
     return () => {
@@ -284,35 +242,28 @@ export default function Home() {
 
   const loadHomeSnapshot = useCallback(async () => {
     if (!canViewSalesDashboard) return;
-
     setKpiLoading(true);
-    setTopItemsLoading(true);
     try {
-      // Same API as web POS / Sales History: GET /api/sales/summary/
-      const [kpi, snapshot] = await Promise.all([
+      const [kpi] = await Promise.all([
         fetchHomeKpisFromSalesSummary(),
-        fetchHomeSnapshot(5), // top sellers only (optional)
+        fetchHomeSnapshot(5),
       ]);
       setKpiMetrics(kpi);
-      setTopSellingItems(snapshot?.top_selling_items ?? []);
     } catch (error) {
       console.error('Error loading home sales KPIs:', error);
       setKpiMetrics(null);
-      setTopSellingItems([]);
     } finally {
       setKpiLoading(false);
-      setTopItemsLoading(false);
     }
   }, [canViewSalesDashboard]);
 
   const loadRecentTransactions = useCallback(async () => {
     if (!canViewTransactions) return;
-
     setTransactionsLoading(true);
     try {
       const uid = Number.parseInt(String(auth.user_id || ''), 10);
       const opts =
-        restrictSalesToSelf && Number.isFinite(uid) ? { userId: uid } : undefined;
+        restrictSalesToSelf && Number.isFinite(uid) ? {userId: uid} : undefined;
       const transactions = await fetchRecentTransactions(10, opts);
       setRecentTransactions(transactions);
     } catch (error) {
@@ -322,84 +273,50 @@ export default function Home() {
     }
   }, [canViewTransactions, restrictSalesToSelf, auth.user_id]);
 
-  // Fetch Low Stock Items
-  const loadLowStockItems = async () => {
+  const loadLowStockItems = useCallback(async () => {
     if (!canViewItems) return;
-
-    setLowStockLoading(true);
     try {
       const items = await fetchLowStockItems();
       setLowStockItems(items);
     } catch (error) {
       console.error('Error loading low stock items:', error);
-    } finally {
-      setLowStockLoading(false);
     }
-  };
+  }, [canViewItems]);
 
-  const loadUnpostedSales = useCallback(async () => {
-    if (!canViewUnpostedSales) return;
-
-    setUnpostedLoading(true);
-    try {
-      const rows = await fetchUnpostedSales(15);
-      setUnpostedSales(rows);
-    } catch (error) {
-      console.error('Error loading unposted sales:', error);
-    } finally {
-      setUnpostedLoading(false);
-    }
-  }, [canViewUnpostedSales]);
-
-  // Fetch Outstanding Receivables
-  const loadOutstandingReceivables = async () => {
+  const loadOutstandingReceivables = useCallback(async () => {
     if (!canViewReceivables) return;
-
-    setReceivablesLoading(true);
     try {
       const receivables = await fetchOutstandingReceivables();
       setOutstandingReceivables(receivables);
     } catch (error) {
       console.error('Error loading outstanding receivables:', error);
-    } finally {
-      setReceivablesLoading(false);
     }
-  };
+  }, [canViewReceivables]);
 
-  // Load all data on mount
   useEffect(() => {
     if (!isAuthLoading) {
       loadHomeSnapshot();
       loadRecentTransactions();
       loadLowStockItems();
-      loadUnpostedSales();
       loadOutstandingReceivables();
     }
   }, [
     isAuthLoading,
-    canViewSalesDashboard,
-    canViewTransactions,
-    canViewItems,
-    canViewUnpostedSales,
-    canViewReceivables,
-    restrictSalesToSelf,
-    auth.user_id,
-    loadRecentTransactions,
+    app?.branchSession?.active_branch_id,
     loadHomeSnapshot,
-    loadUnpostedSales,
+    loadRecentTransactions,
+    loadLowStockItems,
+    loadOutstandingReceivables,
   ]);
 
-  // Pull to refresh handler
-  const onRefresh = React.useCallback(async () => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
     setMySalesRefreshKey(k => k + 1);
     try {
-      // Load all data in parallel
       await Promise.all([
         loadHomeSnapshot(),
         loadRecentTransactions(),
         loadLowStockItems(),
-        loadUnpostedSales(),
         loadOutstandingReceivables(),
       ]);
     } catch (error) {
@@ -408,394 +325,294 @@ export default function Home() {
       setRefreshing(false);
     }
   }, [
-    canViewSalesDashboard,
-    canViewTransactions,
-    canViewItems,
-    canViewUnpostedSales,
-    canViewReceivables,
-    loadRecentTransactions,
     loadHomeSnapshot,
-    loadUnpostedSales,
+    loadRecentTransactions,
+    loadLowStockItems,
+    loadOutstandingReceivables,
   ]);
 
-  const openMoreTab = () => {
-    setSelectedTab(constants.screens.more);
+  const quickCreateActions = useMemo((): QuickCreateAction[] => {
+    const actions: QuickCreateAction[] = [];
+    if (canMakeSale) {
+      actions.push({
+        key: 'sale',
+        label: 'Sale',
+        icon: icons.cart,
+        onPress: () => setSelectedTab(constants.screens.makeSale),
+      });
+    }
+    if (
+      isModuleVisible('customers') &&
+      hasAnyPageAccess(PAGE_NAMES.CUSTOMER_MANAGEMENT)
+    ) {
+      actions.push({
+        key: 'customer',
+        label: 'Customer',
+        icon: icons.profile,
+        onPress: () => navigate('Customers', undefined),
+      });
+    }
+    if (
+      isModuleVisible('expenses') &&
+      hasAnyPageAccess(PAGE_NAMES.EXPENSES)
+    ) {
+      actions.push({
+        key: 'expense',
+        label: 'Expense',
+        icon: icons.coupon,
+        onPress: () => navigation.navigate('Expenses' as never),
+      });
+    }
+    if (isModuleVisible('items') && hasAnyPageAccess(PAGE_NAMES.ITEMS)) {
+      actions.push({
+        key: 'item',
+        label: 'Item',
+        icon: icons.product,
+        onPress: () => navigation.navigate('Items' as never),
+      });
+    }
+    if (
+      isModuleVisible('suppliers') &&
+      hasAnyPageAccess(PAGE_NAMES.SUPPLIERS)
+    ) {
+      actions.push({
+        key: 'vendor',
+        label: 'Vendor',
+        icon: icons.company,
+        onPress: () => navigate('Suppliers', undefined),
+      });
+    }
+    if (
+      isModuleVisible('payments') &&
+      (canCreate(PAGE_NAMES.QUICK_PAYMENT) ||
+        canCreate(PAGE_NAMES.PAYMENTS) ||
+        hasAnyPageAccess(PAGE_NAMES.QUICK_PAYMENT))
+    ) {
+      actions.push({
+        key: 'quick-payment',
+        label: 'Payment',
+        icon: icons.wallet,
+        onPress: () => navigation.navigate('Payments' as never),
+      });
+    }
+    return actions;
+  }, [
+    canMakeSale,
+    isModuleVisible,
+    hasAnyPageAccess,
+    canCreate,
+    navigation,
+    setSelectedTab,
+  ]);
+
+  const showFab = quickCreateActions.length > 0;
+
+  const runQuickAction = (action: QuickCreateAction) => {
+    setQuickCreateOpen(false);
+    // Let modal dismiss before navigating
+    requestAnimationFrame(() => action.onPress());
   };
 
   const renderHomeTopBar = () => (
     <View style={styles.homeTopBar}>
       <TouchableOpacity
-        onPress={openMoreTab}
-        style={[
-          styles.homeCircleBtn,
-          {
-            backgroundColor: colors.card,
-            ...softCardShadow,
-          },
-        ]}
-        activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}
-        hitSlop={ICON_BUTTON_HIT_SLOP}
-        accessibilityRole="button"
-        accessibilityLabel="Open More menu">
-        <Image
-          source={icons.menu}
-          style={[styles.homeTopBarIcon, { tintColor: colors.textPrimary }]}
-        />
-      </TouchableOpacity>
-
-      <View style={styles.homeTitleBlock} pointerEvents="none">
-        <Text
-          style={[styles.homeStoreTitle, { color: colors.textPrimary }]}
-          numberOfLines={1}>
-          {(storeLabel || 'Zentro').toUpperCase()}
-        </Text>
-        {activeBranchLabel || (!isAuthLoading && displayName) ? (
+        style={styles.homeTitleBlock}
+        onPress={canSwitchBranch ? openBranchSwitcher : undefined}
+        disabled={!canSwitchBranch}
+        activeOpacity={canSwitchBranch ? 0.7 : 1}
+        accessibilityRole={canSwitchBranch ? 'button' : undefined}
+        accessibilityLabel={
+          canSwitchBranch ? 'Switch branch' : undefined
+        }>
+        <View style={styles.homeStoreTitleRow}>
           <Text
-            style={[styles.homeStoreSubtitle, { color: colors.textSecondary }]}
+            style={[styles.homeStoreTitle, {color: colors.textPrimary}]}
             numberOfLines={1}>
-            {activeBranchLabel ||
-              (displayName ? `Hi, ${displayName}` : '')}
+            {storeLabel || 'Zentro'}
           </Text>
-        ) : null}
-      </View>
-
-      <TouchableOpacity
-        onPress={() => navigate('PrinterConfig', undefined)}
-        style={[
-          styles.homeCircleBtn,
-          {
-            backgroundColor: colors.card,
-            ...softCardShadow,
-          },
-        ]}
-        activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}
-        hitSlop={ICON_BUTTON_HIT_SLOP}
-        accessibilityRole="button"
-        accessibilityLabel="Printer configuration">
-        <Image
-          source={icons.printer}
-          style={[styles.homeTopBarIcon, { tintColor: colors.textPrimary }]}
-        />
+          {canSwitchBranch ? (
+            <Image
+              source={icons.down_arrow}
+              style={[styles.homeChevron, {tintColor: colors.textSecondary}]}
+            />
+          ) : null}
+        </View>
+        <Text
+          style={[styles.homeStoreSubtitle, {color: colors.textSecondary}]}
+          numberOfLines={1}>
+          {activeBranchLabel
+            ? activeBranchLabel
+            : !isAuthLoading && displayName
+              ? `Hi, ${displayName}`
+              : 'Updated just now'}
+        </Text>
       </TouchableOpacity>
+
+      <View style={styles.homeTopActions}>
+        {canViewTransactions ? (
+          <TouchableOpacity
+            onPress={() => navigation.navigate('SalesHistory' as never)}
+            style={[styles.homeCircleBtn, {backgroundColor: colors.card}, softCardShadow]}
+            activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}
+            hitSlop={ICON_BUTTON_HIT_SLOP}
+            accessibilityRole="button"
+            accessibilityLabel="Sales history">
+            <Image
+              source={icons.clock}
+              style={[styles.homeTopBarIcon, {tintColor: colors.textPrimary}]}
+            />
+          </TouchableOpacity>
+        ) : null}
+        <TouchableOpacity
+          onPress={() => navigate('SearchPage', undefined)}
+          style={[styles.homeCircleBtn, {backgroundColor: colors.card}, softCardShadow]}
+          activeOpacity={ICON_BUTTON_ACTIVE_OPACITY}
+          hitSlop={ICON_BUTTON_HIT_SLOP}
+          accessibilityRole="button"
+          accessibilityLabel="Search">
+          <Image
+            source={icons.search}
+            style={[styles.homeTopBarIcon, {tintColor: colors.textPrimary}]}
+          />
+        </TouchableOpacity>
+      </View>
     </View>
   );
 
-  /** QuickBooks-style Insights: large money figures + soft progress bars. */
-  const renderQuickStats = () => {
+  const renderOutlineCta = (
+    label: string,
+    onPress: () => void,
+    accent: string = COLORS.primary,
+  ) => (
+    <TouchableOpacity
+      onPress={onPress}
+      activeOpacity={0.85}
+      style={[styles.outlineCta, {borderColor: accent}]}
+      accessibilityRole="button"
+      accessibilityLabel={label}>
+      <Text style={[styles.outlineCtaLabel, {color: accent}]}>{label}</Text>
+    </TouchableOpacity>
+  );
+
+  /** One metric per card — QuickBooks density. */
+  const renderMetricCards = () => {
     const unpaidAmount = outstandingReceivables?.total_amount ?? 0;
     const unpaidCount = outstandingReceivables?.count ?? 0;
     const todayRevenue = kpiMetrics?.today_revenue ?? 0;
     const salesChange = kpiMetrics?.revenue_growth ?? 0;
     const hasPositiveTrend = salesChange >= 0;
 
-    const showUnpaid = canViewReceivables;
-
-    if (!canViewSalesDashboard && !showUnpaid) {
+    if (!canViewSalesDashboard && !canViewReceivables) {
       return null;
     }
 
-    const barMax = Math.max(unpaidAmount, todayRevenue, 1);
-    const unpaidFill = Math.min(1, unpaidAmount / barMax);
-    const todayFill = Math.min(1, todayRevenue / barMax);
-
     return (
-      <View style={styles.statsSection}>
-        <View style={styles.statsSectionHeader}>
-          <Text style={[styles.insightsSectionTitle, t.sectionTitle]}>
-            Insights
+      <View style={styles.sectionBlock}>
+        <View style={styles.sectionHeaderRow}>
+          <Text style={[styles.sectionEyebrow, {color: colors.textPrimary}]}>
+            Today
           </Text>
         </View>
 
-        {canViewSalesDashboard && kpiLoading ? (
-          <View
-            style={[
-              styles.insightsCard,
-              t.card,
-              softCardShadow,
-              styles.snapshotLoadingCard,
-            ]}>
-            <ActivityIndicator size="small" color={COLORS.primary2} />
-            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
-              Loading insights...
-            </Text>
-          </View>
-        ) : (
-          <View style={[styles.insightsCard, t.card, softCardShadow]}>
-            {showUnpaid ? (
-              <TouchableOpacity
-                activeOpacity={0.75}
-                onPress={() => navigation.navigate('Payments' as never)}
-                accessibilityRole="button"
-                accessibilityLabel={`Unpaid ${formatCurrency(unpaidAmount)}`}>
-                <Text style={[styles.insightMetricLabel, t.salesLabel]}>
-                  Unpaid
-                  {unpaidCount > 0 ? ` · ${unpaidCount}` : ''}
+        {canViewSalesDashboard ? (
+          <View style={[styles.metricCard, cardSurface]}>
+            {kpiLoading ? (
+              <View style={styles.metricLoading}>
+                <ActivityIndicator size="small" color={COLORS.primary} />
+              </View>
+            ) : (
+              <>
+                <Text style={[styles.metricLabel, {color: colors.textSecondary}]}>
+                  Sales
                 </Text>
-                <Text style={[styles.insightMetricValue, t.salesAmount]}>
-                  {formatCurrency(unpaidAmount)}
+                <Text style={[styles.metricPeriod, {color: colors.textTertiary}]}>
+                  This day
                 </Text>
-                <View
-                  style={[
-                    styles.insightBarTrack,
-                    { backgroundColor: colors.screenMuted },
-                  ]}>
-                  <View
-                    style={[
-                      styles.insightBarFill,
-                      {
-                        width: `${Math.max(unpaidFill * 100, unpaidAmount > 0 ? 4 : 0)}%`,
-                        backgroundColor: COLORS.warning,
-                      },
-                    ]}
-                  />
-                </View>
-              </TouchableOpacity>
-            ) : null}
-
-            {showUnpaid && canViewSalesDashboard ? (
-              <View style={styles.insightMetricGap} />
-            ) : null}
-
-            {canViewSalesDashboard ? (
-              <View>
-                <Text style={[styles.insightMetricLabel, t.salesLabel]}>
-                  Today's sales
-                </Text>
-                <Text style={[styles.insightMetricValue, t.salesAmount]}>
+                <Text style={[styles.metricValue, {color: colors.textPrimary}]}>
                   {formatCurrency(todayRevenue)}
                 </Text>
-                <View
-                  style={[
-                    styles.insightBarTrack,
-                    { backgroundColor: colors.screenMuted },
-                  ]}>
-                  <View
-                    style={[
-                      styles.insightBarFill,
-                      {
-                        width: `${Math.max(todayFill * 100, todayRevenue > 0 ? 4 : 0)}%`,
-                        backgroundColor: COLORS.primary2,
-                      },
-                    ]}
-                  />
-                </View>
                 {kpiMetrics ? (
-                  <Text style={[styles.comparedText, t.comparedText, styles.insightTrend]}>
-                    {salesChange !== 0 ? (
+                  <Text style={[styles.metricTrend, {color: colors.textSecondary}]}>
+                    {salesChange === 0 ? (
+                      'No change vs yesterday'
+                    ) : (
                       <>
                         <Text
                           style={{
-                            color: hasPositiveTrend ? COLORS.success : COLORS.error,
-                            fontWeight: '600',
+                            color: hasPositiveTrend
+                              ? COLORS.success
+                              : COLORS.error,
+                            fontWeight: '700',
                           }}>
-                          {hasPositiveTrend ? 'Up' : 'Down'}{' '}
-                          {Math.abs(salesChange).toFixed(1)}%
+                          {hasPositiveTrend ? '↑ Up' : '↓ Down'}{' '}
+                          {Math.abs(salesChange).toFixed(0)}%
                         </Text>
-                        <Text style={t.comparedText}> vs yesterday</Text>
+                        {' vs yesterday'}
                       </>
-                    ) : (
-                      'No change vs yesterday'
                     )}
                   </Text>
                 ) : null}
                 {kpiMetrics ? (
-                  <View style={styles.insightMetaRow}>
-                    <Text style={[styles.insightMetaText, t.statItemLabel]}>
-                      {kpiMetrics.today_orders} orders
-                    </Text>
-                    <Text style={[styles.insightMetaDot, t.statItemLabel]}>·</Text>
-                    <Text style={[styles.insightMetaText, t.statItemLabel]}>
-                      {kpiMetrics.today_products_sold} products
-                    </Text>
-                  </View>
+                  <Text style={[styles.metricMeta, {color: colors.textTertiary}]}>
+                    {kpiMetrics.today_orders} orders ·{' '}
+                    {kpiMetrics.today_products_sold} products
+                  </Text>
                 ) : null}
-              </View>
-            ) : null}
+                {canViewTransactions
+                  ? renderOutlineCta('View sales', () =>
+                      navigation.navigate('SalesHistory' as never),
+                    )
+                  : null}
+              </>
+            )}
           </View>
-        )}
-      </View>
-    );
-  };
+        ) : null}
 
-  // Open + Draft together (not yet posted)
-  const renderUnpostedSales = () => {
-    if (!canViewUnpostedSales) return null;
-
-    if (unpostedLoading) {
-      return (
-        <View style={styles.recentSection}>
-          <Text style={[styles.sectionTitle, t.sectionTitle]}>
-            Unposted Sales
-          </Text>
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="small" color={COLORS.primary2} />
-          </View>
-        </View>
-      );
-    }
-
-    if (unpostedSales.length === 0) {
-      return null;
-    }
-
-    const preview = unpostedSales.slice(0, 5);
-    return (
-      <View style={styles.recentSection}>
-        <View style={styles.sectionHeader}>
-          <Text
-            style={[styles.sectionTitle, t.sectionTitle]}
-            numberOfLines={1}
-            ellipsizeMode="tail">
-            Unposted Sales
-          </Text>
-          <TouchableOpacity
-            style={styles.sectionHeaderAction}
-            onPress={() =>
-              navigation.navigate(
-                'SalesHistory' as never,
-                {status: 'Unposted', dateFilter: 'alltime'} as never,
-              )
-            }>
-            <Text style={[styles.seeAllText, t.seeAll]}>See All</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={[styles.recentTransactions, t.listCard]}>
-          {preview.map((sale: any, index: number) => {
-            const statusLabel =
-              String(sale.status || '').toLowerCase() === 'draft'
-                ? 'Draft'
-                : 'Open';
-            return (
-              <TouchableOpacity
-                key={sale.id}
-                style={[
-                  styles.transactionItem,
-                  {borderBottomColor: colors.border},
-                  index === preview.length - 1
-                    ? styles.transactionItemLast
-                    : null,
-                ]}
-                onPress={() =>
-                  navigation.navigate(
-                    'SalesHistory' as never,
-                    {status: 'Unposted', dateFilter: 'alltime'} as never,
-                  )
-                }>
-                <View style={styles.transactionLeft}>
-                  <View style={[styles.transactionIconContainer, t.iconWell]}>
-                    <Image
-                      source={icons.cart}
-                      style={[
-                        styles.transactionIcon,
-                        {tintColor: COLORS.warning},
-                      ]}
-                    />
-                  </View>
-                  <View style={styles.transactionInfo}>
-                    <Text
-                      style={[styles.transactionNumber, t.transactionNumber]}>
-                      {sale.customer_invoice_no ||
-                        sale.invoice_no ||
-                        `Sale #${sale.id}`}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.transactionCustomer,
-                        t.transactionCustomer,
-                      ]}>
-                      {sale.customer?.name?.trim() ||
-                        sale.customer_name?.trim() ||
-                        'Unposted sale'}
-                    </Text>
-                  </View>
-                </View>
-                <View style={styles.transactionRight}>
-                  <Text
-                    style={[
-                      styles.transactionAmount,
-                      {color: COLORS.warning},
-                    ]}>
-                    {formatCurrency(sale.total_amount || 0)}
-                  </Text>
-                  <Text style={[styles.transactionTime, t.transactionTime]}>
-                    {statusLabel} ·{' '}
-                    {formatSalesTransactionListSubtitle(
-                      sale.document_date,
-                      sale.created_at,
-                    )}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-      </View>
-    );
-  };
-
-  // Render Top Selling Items
-  const renderTopSellingItems = () => {
-    if (!canViewSalesDashboard || topSellingItems.length === 0) return null;
-
-    return (
-      <View style={styles.recentSection}>
-        <View style={styles.sectionHeader}>
-          <Text
-            style={[styles.sectionTitle, t.sectionTitle]}
-            numberOfLines={1}
-            ellipsizeMode="tail">
-            Top Selling Items Today
-          </Text>
-          <TouchableOpacity
-            style={styles.sectionHeaderAction}
-            onPress={() => navigation.navigate('Items' as never)}>
-            <Text style={[styles.seeAllText, t.seeAll]}>View All</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={[styles.recentTransactions, t.listCard]}>
-          {topSellingItems.map((item: any, index: number) => (
+        {canViewReceivables ? (
+          <View style={[styles.metricCard, cardSurface]}>
+            <Text style={[styles.metricLabel, {color: colors.textSecondary}]}>
+              Unpaid invoices
+            </Text>
+            <Text style={[styles.metricPeriod, {color: colors.textTertiary}]}>
+              {unpaidCount > 0
+                ? `${unpaidCount} outstanding`
+                : 'Get paid faster'}
+            </Text>
+            <Text style={[styles.metricValue, {color: colors.textPrimary}]}>
+              {formatCurrency(unpaidAmount)}
+            </Text>
             <View
-              key={item.item_no || index}
               style={[
-                styles.transactionItem,
-                { borderBottomColor: colors.border },
-                index === topSellingItems.length - 1 ? styles.transactionItemLast : null,
+                styles.softBar,
+                {backgroundColor: isDark ? colors.border : '#EEF2F1'},
               ]}>
-              <View style={styles.transactionLeft}>
-                <View style={[styles.transactionIconContainer, t.iconWell]}>
-                  <Text style={[styles.rankBadge, { color: COLORS.success }]}>
-                    #{index + 1}
-                  </Text>
-                </View>
-                <View style={styles.transactionInfo}>
-                  <Text style={[styles.transactionNumber, t.transactionNumber]}>
-                    {item.name}
-                  </Text>
-                  <Text style={[styles.transactionCustomer, t.transactionCustomer]}>
-                    {item.quantity} sold • {formatCurrency(item.total)}
-                  </Text>
-                </View>
-              </View>
+              <View
+                style={[
+                  styles.softBarFill,
+                  {
+                    width: unpaidAmount > 0 ? '42%' : '0%',
+                    backgroundColor: COLORS.warning,
+                  },
+                ]}
+              />
             </View>
-          ))}
-        </View>
+            {renderOutlineCta(
+              unpaidAmount > 0 ? 'Collect payment' : 'View payments',
+              () => navigation.navigate('Payments' as never),
+            )}
+          </View>
+        ) : null}
       </View>
     );
   };
 
   const renderMySalesToday = () => {
-    if (!canViewMySalesToday) {
-      return null;
-    }
+    if (!canViewMySalesToday) return null;
     const uid = Number.parseInt(String(auth.user_id || ''), 10);
-    if (!Number.isFinite(uid)) {
-      return null;
-    }
+    if (!Number.isFinite(uid)) return null;
     const canOpenHistory = hasAnyPageAccess(PAGE_NAMES.SALES_HISTORY);
     return (
-      <View style={styles.mySalesSection}>
+      <View style={styles.sectionBlock}>
         <TodayMySalesBar
           variant="card"
           userId={uid}
@@ -810,64 +627,82 @@ export default function Home() {
     );
   };
 
-  // Render Recent Transactions
   const renderRecentTransactions = () => {
     if (!canViewTransactions) return null;
+    const txPreview = recentTransactions.slice(0, 3);
 
-    const txPreview = recentTransactions.slice(0, 5);
     return (
-      <View style={styles.recentSection}>
-        <View style={styles.sectionHeader}>
-          <Text
-            style={[styles.sectionTitle, t.sectionTitle]}
-            numberOfLines={1}
-            ellipsizeMode="tail">
-            Recent Transactions
+      <View style={styles.sectionBlock}>
+        <View style={styles.sectionHeaderRow}>
+          <Text style={[styles.sectionEyebrow, {color: colors.textPrimary}]}>
+            Recent activity
           </Text>
           <TouchableOpacity
-            style={styles.sectionHeaderAction}
-            onPress={() => navigation.navigate('SalesHistory' as never)}>
-            <Text style={[styles.seeAllText, t.seeAll]}>See All</Text>
+            onPress={() => navigation.navigate('SalesHistory' as never)}
+            hitSlop={ICON_BUTTON_HIT_SLOP}>
+            <Text style={[styles.seeAllText, {color: COLORS.primary}]}>
+              See all
+            </Text>
           </TouchableOpacity>
         </View>
 
-        {transactionsLoading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="small" color={COLORS.primary2} />
-            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
-              Loading transactions...
-            </Text>
-          </View>
-        ) : recentTransactions.length > 0 ? (
-          <View style={[styles.recentTransactions, t.listCard]}>
+        <View style={[styles.listCard, cardSurface]}>
+          {transactionsLoading ? (
+            <View style={styles.metricLoading}>
+              <ActivityIndicator size="small" color={COLORS.primary} />
+            </View>
+          ) : txPreview.length > 0 ? (
             <FlatList
               data={txPreview}
               keyExtractor={item => item.id.toString()}
               scrollEnabled={false}
-              renderItem={({ item, index }) => (
+              renderItem={({item, index}) => (
                 <TouchableOpacity
                   style={[
                     styles.transactionItem,
-                    { borderBottomColor: colors.border },
-                    index === txPreview.length - 1 ? styles.transactionItemLast : null,
+                    {borderBottomColor: colors.border},
+                    index === txPreview.length - 1
+                      ? styles.transactionItemLast
+                      : null,
                   ]}
-                  onPress={() => {
-                    navigation.navigate('SalesHistory' as never);
-                  }}>
+                  onPress={() =>
+                    navigation.navigate('SalesHistory' as never)
+                  }>
                   <View style={styles.transactionLeft}>
-                    <View style={[styles.transactionIconContainer, t.iconWell]}>
+                    <View
+                      style={[
+                        styles.transactionIconContainer,
+                        {
+                          backgroundColor: isDark
+                            ? 'rgba(255,255,255,0.06)'
+                            : '#eafaf8',
+                        },
+                      ]}>
                       <Image
                         source={icons.cart}
-                        style={[styles.transactionIcon, { tintColor: COLORS.primary2 }]}
+                        style={[
+                          styles.transactionIcon,
+                          {tintColor: COLORS.primary},
+                        ]}
                       />
                     </View>
                     <View style={styles.transactionInfo}>
-                      <Text style={[styles.transactionNumber, t.transactionNumber]}>
+                      <Text
+                        style={[
+                          styles.transactionNumber,
+                          {color: colors.textPrimary},
+                        ]}
+                        numberOfLines={1}>
                         {item.customer_invoice_no ||
                           item.invoice_no ||
                           `#${item.id}`}
                       </Text>
-                      <Text style={[styles.transactionCustomer, t.transactionCustomer]}>
+                      <Text
+                        style={[
+                          styles.transactionCustomer,
+                          {color: colors.textSecondary},
+                        ]}
+                        numberOfLines={1}>
                         {item.customer?.name?.trim() ||
                           item.customer_name?.trim() ||
                           'Walk-in Customer'}
@@ -875,10 +710,18 @@ export default function Home() {
                     </View>
                   </View>
                   <View style={styles.transactionRight}>
-                    <Text style={[styles.transactionAmount, { color: COLORS.primary2 }]}>
+                    <Text
+                      style={[
+                        styles.transactionAmount,
+                        {color: colors.textPrimary},
+                      ]}>
                       {formatCurrency(item.total_amount || 0)}
                     </Text>
-                    <Text style={[styles.transactionTime, t.transactionTime]}>
+                    <Text
+                      style={[
+                        styles.transactionTime,
+                        {color: colors.textTertiary},
+                      ]}>
                       {formatSalesTransactionListSubtitle(
                         item.document_date,
                         item.created_at,
@@ -888,52 +731,151 @@ export default function Home() {
                 </TouchableOpacity>
               )}
             />
-          </View>
-        ) : (
-          <View style={[styles.recentTransactions, t.listCard]}>
-            <Text style={[styles.placeholderText, t.placeholderText]}>
-              No recent transactions
-            </Text>
-          </View>
-        )}
+          ) : (
+            <View style={styles.emptyActivity}>
+              <Text
+                style={[styles.emptyTitle, {color: colors.textPrimary}]}>
+                No sales yet today
+              </Text>
+              <Text
+                style={[styles.emptyBody, {color: colors.textSecondary}]}>
+                Your latest transactions will show up here.
+              </Text>
+              {canMakeSale
+                ? renderOutlineCta('Make sale', () =>
+                    setSelectedTab(constants.screens.makeSale),
+                  )
+                : null}
+            </View>
+          )}
+        </View>
       </View>
     );
   };
 
   return (
     <SafeAreaView
-      style={[styles.container, t.root]}
+      style={[styles.container, {backgroundColor: colors.background}]}
       edges={['left', 'right', 'bottom']}>
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={[
           styles.scrollContent,
-          { paddingTop: Math.max(insets.top, 12) },
+          {
+            paddingTop: Math.max(insets.top, 12),
+            paddingBottom: showFab ? 108 : 28,
+          },
         ]}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            colors={[COLORS.primary2]}
-            tintColor={COLORS.primary2}
+            colors={[COLORS.primary]}
+            tintColor={COLORS.primary}
             title="Pull to refresh"
             titleColor={colors.textSecondary}
             progressBackgroundColor={colors.surface}
           />
         }>
         {renderHomeTopBar()}
-        <View style={styles.quickActionsSection}>
-          <Options
-            unpostedCount={unpostedSales.length}
-            lowStockCount={lowStockItems.length}
-          />
-        </View>
-        {renderQuickStats()}
+
+        {renderMetricCards()}
         {renderMySalesToday()}
-        {renderUnpostedSales()}
-        {renderTopSellingItems()}
+
+        <View style={styles.sectionBlock}>
+          <Options lowStockCount={lowStockItems.length} />
+        </View>
+
         {renderRecentTransactions()}
       </ScrollView>
+
+      {showFab ? (
+        <TouchableOpacity
+          style={[
+            styles.fab,
+            {
+              backgroundColor: COLORS.primary,
+              bottom: 20,
+            },
+            softCardShadow,
+          ]}
+          activeOpacity={0.9}
+          onPress={() => setQuickCreateOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Create new">
+          <Image
+            source={icons.plus}
+            style={styles.fabIcon}
+          />
+        </TouchableOpacity>
+      ) : null}
+
+      <Modal
+        visible={quickCreateOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setQuickCreateOpen(false)}>
+        <Pressable
+          style={styles.sheetScrim}
+          onPress={() => setQuickCreateOpen(false)}>
+          <Pressable
+            style={[
+              styles.sheet,
+              {
+                backgroundColor: colors.card,
+                paddingBottom: Math.max(insets.bottom, 16),
+              },
+            ]}
+            onPress={e => e.stopPropagation()}>
+            <View style={styles.sheetHandleWrap}>
+              <View
+                style={[
+                  styles.sheetHandle,
+                  {backgroundColor: colors.border},
+                ]}
+              />
+            </View>
+            <Text style={[styles.sheetTitle, {color: colors.textPrimary}]}>
+              Create
+            </Text>
+            {quickCreateActions.map((action, index) => (
+              <TouchableOpacity
+                key={action.key}
+                style={[
+                  styles.sheetRow,
+                  {
+                    borderBottomColor: colors.border,
+                    borderBottomWidth:
+                      index === quickCreateActions.length - 1
+                        ? 0
+                        : StyleSheet.hairlineWidth,
+                  },
+                ]}
+                activeOpacity={0.7}
+                onPress={() => runQuickAction(action)}>
+                <View
+                  style={[
+                    styles.sheetIconWell,
+                    {
+                      backgroundColor: isDark
+                        ? 'rgba(255,255,255,0.08)'
+                        : '#eafaf8',
+                    },
+                  ]}>
+                  <Image
+                    source={action.icon}
+                    style={[styles.sheetIcon, {tintColor: COLORS.primary}]}
+                  />
+                </View>
+                <Text
+                  style={[styles.sheetRowLabel, {color: colors.textPrimary}]}>
+                  {action.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -944,252 +886,148 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
-    paddingBottom: 24,
   },
   homeTopBar: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: SIZES.padding,
-    marginBottom: 18,
+    marginBottom: 20,
+    gap: 12,
+  },
+  homeTitleBlock: {
+    flex: 1,
+    paddingRight: 8,
+  },
+  homeStoreTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  homeStoreTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    letterSpacing: -0.4,
+    flexShrink: 1,
+  },
+  homeChevron: {
+    width: 14,
+    height: 14,
+    resizeMode: 'contain',
+    marginTop: 2,
+  },
+  homeStoreSubtitle: {
+    marginTop: 3,
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  homeTopActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   homeCircleBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
   },
   homeTopBarIcon: {
-    width: 22,
-    height: 22,
-    resizeMode: 'contain',
-  },
-  homeTitleBlock: {
-    flex: 1,
-    alignItems: 'center',
-    paddingHorizontal: 10,
-  },
-  homeStoreTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    letterSpacing: 0.6,
-    textAlign: 'center',
-  },
-  homeStoreSubtitle: {
-    marginTop: 2,
-    fontSize: 12,
-    fontWeight: '500',
-    textAlign: 'center',
-  },
-  quickActionsSection: {
-    paddingHorizontal: SIZES.padding,
-    paddingTop: 0,
-  },
-  mySalesSection: {
-    paddingHorizontal: SIZES.padding,
-    paddingTop: 16,
-  },
-  kpiSectionTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-  },
-  insightsSectionTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    letterSpacing: -0.3,
-  },
-  statsSection: {
-    paddingHorizontal: SIZES.padding,
-    paddingTop: 4,
-  },
-  statsSectionHeader: {
-    marginBottom: 12,
-  },
-  insightsCard: {
-    borderRadius: 16,
-    borderWidth: StyleSheet.hairlineWidth,
-    paddingHorizontal: 18,
-    paddingVertical: 18,
-  },
-  insightMetricLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    marginBottom: 4,
-  },
-  insightMetricValue: {
-    fontSize: 28,
-    fontWeight: '700',
-    letterSpacing: -0.5,
-    marginBottom: 10,
-  },
-  insightBarTrack: {
-    height: 8,
-    borderRadius: 99,
-    overflow: 'hidden',
-  },
-  insightBarFill: {
-    height: '100%',
-    borderRadius: 99,
-  },
-  insightMetricGap: {
-    height: 22,
-  },
-  insightTrend: {
-    marginTop: 10,
-  },
-  insightMetaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-    gap: 6,
-  },
-  insightMetaText: {
-    fontSize: 13,
-    fontWeight: '500',
-  },
-  insightMetaDot: {
-    fontSize: 13,
-  },
-  snapshotCard: {
-    borderRadius: 12,
-    borderWidth: 1,
-    overflow: 'hidden',
-    ...Platform.select({
-      android: {elevation: 0},
-      default: {},
-    }),
-  },
-  snapshotLoadingCard: {
-    paddingVertical: 28,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  revenueBlock: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 14,
-  },
-  salesLabel: {
-    ...FONTS.body4,
-    marginBottom: 4,
-  },
-  salesAmount: {
-    ...FONTS.h2,
-    fontSize: 24,
-    fontWeight: '700',
-    marginBottom: 4,
-  },
-  comparedText: {
-    ...FONTS.body5,
-  },
-  snapshotMetricsRow: {
-    flexDirection: 'row',
-    alignItems: 'stretch',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-  },
-  snapshotMetric: {
-    flex: 1,
-    alignItems: 'center',
-    paddingHorizontal: 4,
-  },
-  snapshotMetricDivider: {
-    width: StyleSheet.hairlineWidth,
-    alignSelf: 'stretch',
-    marginVertical: 4,
-  },
-  statValue: {
-    ...FONTS.body2,
-    fontWeight: '600',
-    marginBottom: 2,
-  },
-  statItemLabel: {
-    ...FONTS.body5,
-    textAlign: 'center',
-  },
-  snapshotTintWell: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 8,
-  },
-  snapshotTintWellRow: {
-    marginBottom: 0,
-  },
-  snapshotTintWellImage: {
     width: 20,
     height: 20,
     resizeMode: 'contain',
   },
-  snapshotSectionDivider: {
-    height: StyleSheet.hairlineWidth,
-    marginHorizontal: 16,
+  sectionBlock: {
+    paddingHorizontal: SIZES.padding,
+    marginBottom: 16,
+    gap: 14,
   },
-  snapshotAlertRow: {
+  sectionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    gap: 12,
-  },
-  snapshotAlertRowLast: {
-    borderBottomWidth: 0,
-  },
-  snapshotAlertCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  alertTitle: {
-    ...FONTS.body4,
-    fontWeight: '600',
+    justifyContent: 'space-between',
     marginBottom: 2,
   },
-  alertText: {
-    ...FONTS.body5,
-  },
-  recentSection: {
-    paddingHorizontal: SIZES.padding,
-    paddingVertical: 16,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-    gap: 8,
-  },
-  sectionTitle: {
-    ...FONTS.h3,
-    fontSize: 17,
+  sectionEyebrow: {
+    fontSize: 20,
     fontWeight: '700',
-    flex: 1,
-    flexShrink: 1,
-    minWidth: 0,
-  },
-  sectionHeaderAction: {
-    flexShrink: 0,
+    letterSpacing: -0.3,
   },
   seeAllText: {
-    ...FONTS.body4,
-    fontWeight: '500',
+    fontSize: 14,
+    fontWeight: '600',
   },
-  recentTransactions: {
+  metricCard: {
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 16,
+  },
+  metricLoading: {
+    paddingVertical: 28,
+    alignItems: 'center',
+  },
+  metricLabel: {
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  metricPeriod: {
+    fontSize: 13,
+    fontWeight: '500',
+    marginTop: 2,
+    marginBottom: 10,
+  },
+  metricValue: {
+    fontSize: 32,
+    fontWeight: '700',
+    letterSpacing: -0.8,
+    marginBottom: 8,
+  },
+  metricTrend: {
+    fontSize: 14,
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  metricMeta: {
+    fontSize: 13,
+    marginBottom: 14,
+  },
+  softBar: {
+    height: 8,
+    borderRadius: 99,
+    overflow: 'hidden',
+    marginBottom: 16,
+    marginTop: 4,
+  },
+  softBarFill: {
+    height: '100%',
+    borderRadius: 99,
+  },
+  outlineCta: {
+    minHeight: 44,
     borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    ...Platform.select({
-      android: {elevation: 0},
-      default: {},
-    }),
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+  },
+  outlineCtaLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  listCard: {
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
   },
   transactionItem: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingVertical: 12,
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   transactionItemLast: {
@@ -1199,59 +1037,117 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
+    marginRight: 10,
   },
   transactionIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
-    borderWidth: 1,
+    marginRight: 10,
   },
   transactionIcon: {
-    width: 20,
-    height: 20,
+    width: 18,
+    height: 18,
   },
   transactionInfo: {
     flex: 1,
   },
   transactionNumber: {
-    ...FONTS.body3,
+    fontSize: 14,
     fontWeight: '600',
-    marginBottom: 2,
   },
   transactionCustomer: {
-    ...FONTS.body4,
+    fontSize: 12,
+    marginTop: 2,
   },
   transactionRight: {
     alignItems: 'flex-end',
   },
   transactionAmount: {
-    ...FONTS.body3,
-    fontWeight: '600',
-    marginBottom: 2,
+    fontSize: 14,
+    fontWeight: '700',
   },
   transactionTime: {
-    ...FONTS.body5,
+    fontSize: 11,
+    marginTop: 2,
   },
-  placeholderText: {
-    ...FONTS.body4,
-    textAlign: 'center',
+  emptyActivity: {
+    paddingHorizontal: 18,
     paddingVertical: 20,
   },
-  loadingContainer: {
-    padding: 20,
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  emptyBody: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 8,
+  },
+  fab: {
+    position: 'absolute',
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 20,
+  },
+  fabIcon: {
+    width: 24,
+    height: 24,
+    tintColor: COLORS.white,
+  },
+  sheetScrim: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 8,
+    paddingTop: 8,
+  },
+  sheetHandleWrap: {
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  sheetHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+  },
+  sheetTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+  },
+  sheetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 14,
+  },
+  sheetIconWell: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  loadingText: {
-    ...FONTS.body4,
-    marginTop: 8,
+  sheetIcon: {
+    width: 20,
+    height: 20,
   },
-  rankBadge: {
-    ...FONTS.h3,
-    fontWeight: '700',
-    fontSize: 14,
+  sheetRowLabel: {
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

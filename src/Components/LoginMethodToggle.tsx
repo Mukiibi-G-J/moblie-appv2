@@ -11,7 +11,7 @@ type Props = {
 };
 
 const ao = authOnboarding;
-const BRAND = '#0b5cff';
+const BRAND = '#005151';
 
 const LoginMethodToggle = ({value, onChange}: Props) => {
   const {colors, isDark} = useTheme();

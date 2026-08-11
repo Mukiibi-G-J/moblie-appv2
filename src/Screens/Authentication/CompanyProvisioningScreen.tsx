@@ -24,7 +24,7 @@ import type { RootStackParamList } from "../../@types/types.dto";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "CompanyProvisioning">;
 
-const CTA_BRAND = "#0b5cff";
+const CTA_BRAND = "#005151";
 
 const CompanyProvisioningScreen = () => {
     const { colors } = useTheme();

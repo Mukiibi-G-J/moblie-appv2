@@ -90,6 +90,12 @@ export function mapPageDataCustomer(row: PageDataRecord): Customer {
     balance: row.balance != null ? asString(row.balance) : undefined,
     contact: asString(row.contact) || undefined,
     city: asString(row.city) || undefined,
+    payment_method:
+      row.payment_method != null && row.payment_method !== ''
+        ? asNumber(row.payment_method)
+        : undefined,
+    customer_type:
+      (asString(row.customer_type) as Customer['customer_type']) || undefined,
   };
 }
 
@@ -103,6 +109,10 @@ export function mapPageDataVendor(row: PageDataRecord): Vendor {
     email: asString(row.email) || undefined,
     balance: row.balance != null ? asString(row.balance) : undefined,
     blocked: Boolean(row.blocked),
+    payment_method:
+      row.payment_method != null && row.payment_method !== ''
+        ? asNumber(row.payment_method)
+        : undefined,
   };
 }
 
@@ -129,8 +139,11 @@ export function mapPageDataExpense(row: PageDataRecord): Expense {
 export function mapPageDataSale(row: PageDataRecord): Record<string, unknown> {
   const closed = Boolean(row.closed);
   const reversed = Boolean(row.reversed);
+  // `id` is PostedSalesInvoice.pk (not SalesInvoice.pk). Detail/print resolve
+  // via invoice_no → live SalesInvoice, or backend PostedSalesInvoice lookup.
   return {
     id: asOptionalNumber(row.id) ?? row.id,
+    posted_id: asOptionalNumber(row.id) ?? row.id,
     system_id: systemIdOf(row),
     invoice_no: asString(row.no ?? row.invoice_no),
     customer_name: asString(row.customer ?? row.customer_name),
@@ -241,6 +254,7 @@ export function mapPageDataPaymentMethod(row: PageDataRecord) {
     bal_account_no: asString(row.bal_account_no),
     system_id: systemIdOf(row),
     requires_amount_received: Boolean(row.requires_amount_received),
+    blocked: Boolean(row.blocked),
   };
 }
 

@@ -1150,15 +1150,57 @@ export const fetchOpenSales = async (pageSize: number = 10) => {
   return rows.filter((r: any) => r?.status === 'Open');
 };
 
-// Get a single sales invoice by ID
-export const getSalesInvoice = async (invoiceId: number) => {
-  try {
-    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const axiosInstance = createAxiosInstance(tenant) || undefined;
+/**
+ * Get a single sales invoice by ID.
+ * Sales History page-data rows use PostedSalesInvoice.id; when that fails,
+ * resolve the live SalesInvoice via invoice_no (posted archive `no`).
+ */
+export const getSalesInvoice = async (
+  invoiceId: number | string,
+  options?: {invoiceNo?: string},
+) => {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant) || undefined;
 
-    const response = await axiosInstance.get(`/api/sales/${invoiceId}/`);
+  const fetchById = async (id: number | string) => {
+    const response = await axiosInstance.get(`/api/sales/${id}/`);
     return response.data;
+  };
+
+  try {
+    return await fetchById(invoiceId);
   } catch (error: any) {
+    const status = error?.response?.status ?? error?.status;
+    const invoiceNo = options?.invoiceNo?.trim();
+    if (!invoiceNo || (status !== 400 && status !== 404)) {
+      console.error('Error fetching sales invoice:', error);
+      throw error;
+    }
+
+    try {
+      const listRes = await axiosInstance.get('/api/sales/', {
+        params: {
+          search: invoiceNo,
+          status: 'Posted',
+          page_size: 50,
+        },
+      });
+      const rows = normalizeSalesListResponse(listRes?.data).results || [];
+      const match = rows.find(
+        (row: any) =>
+          row?.invoice_no === invoiceNo ||
+          row?.customer_invoice_no === invoiceNo,
+      );
+      if (match?.id != null) {
+        return await fetchById(match.id);
+      }
+    } catch (fallbackError) {
+      console.error(
+        'Error resolving sales invoice by invoice_no:',
+        fallbackError,
+      );
+    }
+
     console.error('Error fetching sales invoice:', error);
     throw error;
   }
@@ -1369,7 +1411,7 @@ export const updateItemCategory = async (
   try {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
     const axiosInstance = createAxiosInstance(tenant) || undefined;
-    const response = await axiosInstance.put(`/api/categories/${code}/`, data);
+    const response = await axiosInstance.patch(`/api/categories/${code}/`, data);
     return response.data;
   } catch (error) {
     console.error('Error updating item category:', error);
@@ -1547,13 +1589,127 @@ const financialPdfRequestConfig = (
   ...(requestConfig ?? branchRequestConfig(branch) ?? {}),
 });
 
-/** Web parity: GET `/api/financials/gl-accounts/profit-loss/export/` */
+/** Seeded Profit & Loss financial report (webV2 `INCOME`). */
+export const PROFIT_LOSS_REPORT_NAME = 'INCOME';
+
+export type FinancialReportColumn = {
+  key: string;
+  line_no: number;
+  header: string;
+  column_type?: string;
+  column_no?: string;
+  comparison_period_formula?: string;
+};
+
+export type FinancialReportRow = {
+  line_no: number;
+  row_no: string;
+  description: string;
+  row_type?: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  indentation?: number;
+  amounts: Record<string, number | null>;
+  visible?: boolean;
+};
+
+export type FinancialReportData = {
+  report_name: string;
+  description?: string;
+  period_type?: string;
+  period_label?: string;
+  start_date?: string;
+  end_date?: string;
+  currency_code?: string;
+  branch_code?: string;
+  branch_name?: string;
+  include_comparisons?: boolean;
+  columns: FinancialReportColumn[];
+  rows: FinancialReportRow[];
+};
+
+type PageActionResponse = {
+  Successful?: boolean;
+  Command?: string;
+  Content?: Record<string, unknown>;
+  Message?: string;
+  error?: string;
+};
+
+const extractPageActionError = (payload: any, fallback: string): string => {
+  if (!payload) {
+    return fallback;
+  }
+  if (typeof payload === 'string') {
+    return payload;
+  }
+  const msg =
+    payload.error ||
+    payload.detail ||
+    payload.Message ||
+    payload.message ||
+    payload.Content?.Message;
+  if (typeof msg === 'string' && msg.trim()) {
+    return msg;
+  }
+  return fallback;
+};
+
+/** WebV2 parity: POST `/api/pages/action/` → recalculate_financial_report (BatchName INCOME). */
+export const fetchProfitLossStatement = async (params?: {
+  startDate?: string;
+  endDate?: string;
+  branch?: number | null;
+  includeComparisons?: boolean;
+  reportName?: string;
+  requestConfig?: AxiosRequestConfig;
+}): Promise<FinancialReportData> => {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant) || undefined;
+  const sd = params?.startDate?.trim();
+  const ed = params?.endDate?.trim();
+  if (!sd || !ed) {
+    throw new Error('Profit & loss requires start and end dates.');
+  }
+
+  const {PAGE_IDS} = await import('./pageDataService');
+  const response = await axiosInstance.post<PageActionResponse>(
+    '/api/pages/action/',
+    {
+      PageId: PAGE_IDS.FinancialReportOverview,
+      ActionId: 'recalculate_financial_report',
+      BatchName: params?.reportName || PROFIT_LOSS_REPORT_NAME,
+      StartDate: sd,
+      EndDate: ed,
+      IncludeComparisons: params?.includeComparisons ?? false,
+    },
+    params?.requestConfig ?? branchRequestConfig(params?.branch) ?? {},
+  );
+
+  const payload = response?.data;
+  const report = payload?.Content?.FinancialReport as FinancialReportData | undefined;
+  if (
+    !report ||
+    !Array.isArray(report.columns) ||
+    !Array.isArray(report.rows)
+  ) {
+    throw new Error(
+      extractPageActionError(payload, 'Profit & Loss report returned no data.'),
+    );
+  }
+  return report;
+};
+
+/** WebV2 parity: POST `/api/pages/action/` → print_financial_report PDF (BatchName INCOME). */
 export const downloadProfitLossPdf = async (params: {
   startDate: string;
   endDate: string;
   branch?: number | null;
+  includeComparisons?: boolean;
+  reportName?: string;
   requestConfig?: AxiosRequestConfig;
-}): Promise<ArrayBuffer> => {
+}): Promise<{fileName: string; base64: string; mimeType: string}> => {
   const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
   const axiosInstance = createAxiosInstance(tenant) || undefined;
   const sd = params.startDate.trim();
@@ -1561,21 +1717,40 @@ export const downloadProfitLossPdf = async (params: {
   if (!sd || !ed) {
     throw new Error('Start and end dates are required.');
   }
-  const query: Record<string, string> = {
-    start_date: sd,
-    end_date: ed,
-  };
-  if (typeof branchParam(params.branch) === 'number') {
-    query.global_dimension_1_id = String(branchParam(params.branch));
-  }
-  const response = await axiosInstance.get(
-    '/api/financials/gl-accounts/profit-loss/export/',
+
+  const {PAGE_IDS} = await import('./pageDataService');
+  const response = await axiosInstance.post<PageActionResponse>(
+    '/api/pages/action/',
     {
-      params: query,
-      ...financialPdfRequestConfig(params.branch, params.requestConfig),
+      PageId: PAGE_IDS.FinancialReportOverview,
+      ActionId: 'print_financial_report',
+      BatchName: params.reportName || PROFIT_LOSS_REPORT_NAME,
+      StartDate: sd,
+      EndDate: ed,
+      Format: 'pdf',
+      IncludeComparisons: params.includeComparisons ?? false,
     },
+    params.requestConfig ?? branchRequestConfig(params.branch) ?? {},
   );
-  return response.data as ArrayBuffer;
+
+  const payload = response?.data;
+  const content = payload?.Content as
+    | {FileName?: string; FileBase64?: string; MimeType?: string}
+    | undefined;
+  if (
+    payload?.Command !== 'DOWNLOAD' ||
+    !content?.FileBase64 ||
+    !content?.FileName
+  ) {
+    throw new Error(
+      extractPageActionError(payload, 'Server did not return a PDF.'),
+    );
+  }
+  return {
+    fileName: content.FileName,
+    base64: content.FileBase64,
+    mimeType: content.MimeType || 'application/pdf',
+  };
 };
 
 /** Web parity: GET `/api/financials/gl-accounts/balance-sheet/export/` */
@@ -1602,115 +1777,6 @@ export const downloadBalanceSheetPdf = async (params: {
     },
   );
   return response.data as ArrayBuffer;
-};
-
-type GlAccountForPl = {
-  no: string;
-  name: string;
-  indentation?: number;
-  income_balance?: string;
-  accountcategory?: string;
-  accounttype?: string;
-  balance?: number;
-};
-
-/** Same visibility rules as web `ProfitLossStatement.tsx`. */
-const plAccountsForCategory = (
-  accounts: GlAccountForPl[],
-  category: string,
-): GlAccountForPl[] =>
-  accounts.filter(
-    account =>
-      account.income_balance === 'Income Statement' &&
-      account.accountcategory === category &&
-      (account.accounttype !== 'Posting' || (account.balance ?? 0) !== 0),
-  );
-
-const mapPlAccountLine = (account: GlAccountForPl, displayAmount: number) => ({
-  gl_account__name: account.name,
-  gl_account__no: account.no,
-  gl_account__indentation: account.indentation ?? 0,
-  amount: displayAmount,
-});
-
-/** Web parity: chart of accounts + client-side P&L aggregation (not sales-dashboard). */
-export const fetchProfitLossStatement = async (params?: {
-  startDate?: string;
-  endDate?: string;
-  branch?: number | null;
-  requestConfig?: AxiosRequestConfig;
-}) => {
-  try {
-    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
-    const axiosInstance = createAxiosInstance(tenant) || undefined;
-    const sd = params?.startDate?.trim();
-    const ed = params?.endDate?.trim();
-    if (!sd || !ed) {
-      throw new Error('Profit & loss requires start and end dates.');
-    }
-    const query: Record<string, string> = {
-      start_date: sd,
-      end_date: ed,
-    };
-    const bp = branchParam(params?.branch);
-    if (typeof bp === 'number') {
-      query.global_dimension_1_id = String(bp);
-    }
-    const response = await axiosInstance.get('/api/financials/gl-accounts/', {
-      params: query,
-      ...(params?.requestConfig ?? branchRequestConfig(params?.branch) ?? {}),
-    });
-    const accounts: GlAccountForPl[] = Array.isArray(response?.data)
-      ? response.data
-      : [];
-
-    const revenueAccounts = plAccountsForCategory(accounts, 'Income');
-    const cogsAccounts = plAccountsForCategory(accounts, 'Cost of Goods Sold');
-    const expenseAccounts = plAccountsForCategory(accounts, 'Expense');
-
-    const revenueTotalRaw = revenueAccounts.reduce(
-      (sum, account) => sum + (account.balance ?? 0),
-      0,
-    );
-    const revenueTotal = revenueTotalRaw * -1;
-    const cogsTotal = cogsAccounts.reduce(
-      (sum, account) => sum + (account.balance ?? 0),
-      0,
-    );
-    const expensesTotal = expenseAccounts.reduce(
-      (sum, account) => sum + (account.balance ?? 0),
-      0,
-    );
-    const grossProfit = revenueTotal - cogsTotal;
-    const netIncome = grossProfit - expensesTotal;
-
-    return {
-      period: {start_date: sd, end_date: ed},
-      revenue: {
-        total: revenueTotal,
-        accounts: revenueAccounts.map(account =>
-          mapPlAccountLine(account, Math.abs(account.balance ?? 0)),
-        ),
-      },
-      cost_of_goods_sold: {
-        total: cogsTotal,
-        accounts: cogsAccounts.map(account =>
-          mapPlAccountLine(account, account.balance ?? 0),
-        ),
-      },
-      gross_profit: grossProfit,
-      operating_expenses: {
-        total: expensesTotal,
-        accounts: expenseAccounts.map(account =>
-          mapPlAccountLine(account, account.balance ?? 0),
-        ),
-      },
-      net_income: netIncome,
-    };
-  } catch (error) {
-    console.error('Error fetching profit & loss statement:', error);
-    throw error;
-  }
 };
 
 export const fetchBalanceSheetReport = async (
@@ -2306,6 +2372,7 @@ export interface PaymentMethod {
   bal_account_no: string;
   system_id: string;
   requires_amount_received: boolean;
+  blocked?: boolean;
 }
 
 /**
@@ -2339,10 +2406,15 @@ export const fetchPaymentMethods = async (): Promise<PaymentMethod[]> => {
   try {
     const {fetchPageDataAll, PAGE_IDS} = await import('./pageDataService');
     const {mapPageDataPaymentMethod} = await import('./pageDataMappers');
-    return await fetchPageDataAll({
+    const {filterCollectablePaymentMethods} = await import(
+      '../utils/paymentMethodDefaults'
+    );
+    const methods = await fetchPageDataAll({
       pageId: PAGE_IDS.PaymentMethodList,
+      filters: {blocked: false},
       mapRow: mapPageDataPaymentMethod,
     });
+    return filterCollectablePaymentMethods(methods);
   } catch (error: any) {
     console.error('Error fetching payment methods:', error);
     return [];

@@ -26,7 +26,7 @@ import {radii} from '../../design-system/theme';
 import {authOnboarding} from '../../design-system/authOnboardingTokens';
 
 const ao = authOnboarding;
-const BRAND = '#0b5cff';
+const BRAND = '#005151';
 const PIN_MAX = 6;
 
 function firstNameOrShort(name: string): string {

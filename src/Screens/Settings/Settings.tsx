@@ -17,7 +17,6 @@ import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import {QuickIconPressable} from '../../Components';
 import {COLORS, FONTS, SIZES, icons} from '../../constants';
 import {useTheme} from '../../context/ThemeContext';
-import type {ThemePreference} from '../../context/ThemeContext';
 import {useSearchMode} from '../../context/SearchModeStore';
 import {safeGoBack} from '../../hooks/NavigationService';
 import {useOffline} from '../../context/OfflineContext';
@@ -99,7 +98,7 @@ const SettingsRow = ({
 const Settings = () => {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
-  const {colors, preference, setPreference} = useTheme();
+  const {colors} = useTheme();
   const {state, dispatch} = useSearchMode();
   const offline = useOffline();
   const {auth} = useAuth();
@@ -185,12 +184,6 @@ const Settings = () => {
     });
   }, []);
 
-  const themeOptions: {key: ThemePreference; label: string}[] = [
-    {key: 'system', label: 'System'},
-    {key: 'light', label: 'Light'},
-    {key: 'dark', label: 'Dark'},
-  ];
-
   const renderSectionTitle = (title: string) => (
     <Text style={[styles.sectionTitle, {color: colors.textSecondary}]}>
       {title}
@@ -250,46 +243,6 @@ const Settings = () => {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled">
-          <View style={styles.sectionBlock}>
-            {renderSectionTitle('Appearance')}
-            {renderSectionCard(
-              <View style={styles.appearanceBody}>
-                <Text style={[styles.appearanceHint, {color: colors.textSecondary}]}>
-                  Match system or choose light or dark
-                </Text>
-                <View style={styles.themeChips}>
-                  {themeOptions.map(opt => {
-                    const active = preference === opt.key;
-                    return (
-                      <TouchableOpacity
-                        key={opt.key}
-                        onPress={() => setPreference(opt.key)}
-                        style={[
-                          styles.themeChip,
-                          {
-                            backgroundColor: active
-                              ? COLORS.primary
-                              : colors.screenMuted,
-                            borderColor: colors.border,
-                          },
-                        ]}>
-                        <Text
-                          style={[
-                            styles.themeChipText,
-                            {
-                              color: active ? COLORS.white : colors.textPrimary,
-                            },
-                          ]}>
-                          {opt.label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>,
-            )}
-          </View>
-
           <View style={styles.sectionBlock}>
             {renderSectionTitle('Regional')}
             {renderSectionCard(
@@ -586,30 +539,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
-  },
-  appearanceBody: {
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-  },
-  appearanceHint: {
-    ...FONTS.body5,
-    marginBottom: 12,
-    lineHeight: 18,
-  },
-  themeChips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  themeChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-  },
-  themeChipText: {
-    ...FONTS.body4,
-    fontWeight: '600',
   },
   row: {
     flexDirection: 'row',

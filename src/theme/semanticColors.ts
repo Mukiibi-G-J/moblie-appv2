@@ -19,21 +19,21 @@ export type SemanticColors = {
 };
 
 export const lightColors: SemanticColors = {
-  background: '#FFFFFF',
-  screenMuted: '#F5F5F5',
+  background: '#f7f7f7', // webV2 softBg
+  screenMuted: '#f7f7f7',
   surface: '#FFFFFF',
   card: '#FFFFFF',
-  textPrimary: '#000000',
-  textSecondary: '#666666',
+  textPrimary: '#060b1e', // webV2 mainTextColor
+  textSecondary: '#3b4a46', // webV2 bodyText
   textTertiary: '#999999',
-  border: '#E0E0E0',
-  borderStrong: '#000000',
+  border: '#e5e5e5', // webV2 strokeColor
+  borderStrong: '#060b1e',
   inputBackground: '#FFFFFF',
   placeholder: '#999999',
   tabBar: '#FFFFFF',
   tabInactive: '#FFFFFF',
   iconMuted: '#999999',
-  backButtonBg: '#F2F2F2',
+  backButtonBg: '#eafaf8',
 };
 
 export const darkColors: SemanticColors = {

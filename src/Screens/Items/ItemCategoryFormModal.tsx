@@ -1,4 +1,4 @@
-import React, {useState, useEffect, useMemo} from 'react';
+import React, {useState, useEffect, useMemo, useRef, useCallback} from 'react';
 import {
   View,
   Text,
@@ -7,8 +7,6 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  Alert,
-  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   FlatList,
@@ -26,11 +24,37 @@ import {
 } from '../../services/app.services';
 import Toast from 'react-native-toast-message';
 
+type CategoryFormValues = {
+  code: string;
+  description: string;
+  parent_id: string | null;
+};
+
+const emptyCategoryForm = (): CategoryFormValues => ({
+  code: '',
+  description: '',
+  parent_id: null,
+});
+
+const categoryToForm = (category: ItemCategory): CategoryFormValues => ({
+  code: category.code || '',
+  description: category.description || '',
+  parent_id: category.parent_id || null,
+});
+
+const OPTIONAL_CATEGORY_FIELDS = new Set<keyof CategoryFormValues>([
+  'description',
+  'parent_id',
+]);
+
 interface ItemCategoryFormModalProps {
   visible: boolean;
   onClose: () => void;
   category: ItemCategory | null; // null for create, ItemCategory for edit
+  /** Called after a successful auto-save so the list can refresh (does not close). */
   onSave: () => void;
+  /** Keeps parent selection in sync after create / update. */
+  onRecordChange?: (category: ItemCategory) => void;
   canCreate: boolean;
   canEdit: boolean;
   categories: ItemCategory[]; // For parent selection
@@ -41,23 +65,31 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
   onClose,
   category,
   onSave,
+  onRecordChange,
   canCreate,
   canEdit,
   categories,
 }) => {
-  const isEditMode = !!category;
-
-  // Form state
-  const [formData, setFormData] = useState({
-    code: '',
-    description: '',
-    parent_id: null as string | null,
-  });
-
-  const [loading, setLoading] = useState(false);
+  const [formData, setFormData] = useState<CategoryFormValues>(emptyCategoryForm);
+  const [currentRecord, setCurrentRecord] = useState<ItemCategory | null>(
+    category,
+  );
+  const [isSaving, setIsSaving] = useState(false);
+  const [showSaved, setShowSaved] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [parentPickerVisible, setParentPickerVisible] = useState(false);
   const [parentSearchQuery, setParentSearchQuery] = useState('');
+
+  const formDataRef = useRef(formData);
+  const currentRecordRef = useRef(currentRecord);
+  const savingRef = useRef(false);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  formDataRef.current = formData;
+  currentRecordRef.current = currentRecord;
+
+  const isEditMode = !!currentRecord?.code;
+  const canWrite = isEditMode ? canEdit : canCreate;
 
   const {colors} = useTheme();
   const topInset = useScreenTopInset();
@@ -66,6 +98,7 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
       pageRoot: {backgroundColor: colors.background},
       page: {backgroundColor: colors.background},
       pageTitle: {color: colors.textPrimary},
+      autoSaveHint: {color: colors.textSecondary},
       sectionTitle: {color: colors.textPrimary},
       input: {
         borderColor: colors.border,
@@ -102,143 +135,224 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
       helpText: {color: colors.textSecondary},
       headerIcon: {tintColor: colors.textPrimary},
       pickerCloseIcon: {tintColor: colors.textPrimary},
+      headerSaveText: {color: colors.textSecondary},
     }),
     [colors],
   );
 
-  // Initialize form when category changes
   useEffect(() => {
-    if (category) {
-      setFormData({
-        code: category.code || '',
-        description: category.description || '',
-        parent_id: category.parent_id || null,
-      });
-    } else {
-      // Reset form for new category
-      setFormData({
-        code: '',
-        description: '',
-        parent_id: null,
-      });
+    if (!visible) {
+      setCurrentRecord(null);
+      setFormData(emptyCategoryForm());
+      setErrors({});
+      setShowSaved(false);
+      return;
+    }
+    if (category?.code) {
+      if (currentRecordRef.current?.code !== category.code) {
+        setCurrentRecord(category);
+        setFormData(categoryToForm(category));
+      } else {
+        setCurrentRecord(category);
+      }
+    } else if (!currentRecordRef.current?.code) {
+      setCurrentRecord(null);
+      setFormData(emptyCategoryForm());
     }
     setErrors({});
-  }, [category, visible]);
+    setShowSaved(false);
+  }, [category?.code, visible]);
+
+  useEffect(() => {
+    if (!visible) {
+      setParentPickerVisible(false);
+      setParentSearchQuery('');
+      if (savedTimerRef.current) {
+        clearTimeout(savedTimerRef.current);
+        savedTimerRef.current = null;
+      }
+    }
+  }, [visible]);
+
+  const flashSaved = useCallback(() => {
+    setShowSaved(true);
+    if (savedTimerRef.current) {
+      clearTimeout(savedTimerRef.current);
+    }
+    savedTimerRef.current = setTimeout(() => {
+      setShowSaved(false);
+      savedTimerRef.current = null;
+    }, 2000);
+  }, []);
+
+  const buildCreatePayload = (
+    values: CategoryFormValues,
+  ): Partial<ItemCategory> => {
+    const code = values.code.trim().toUpperCase();
+    const payload: Partial<ItemCategory> = {
+      code,
+      description: values.description?.trim()
+        ? values.description.trim()
+        : code,
+    };
+    if (values.parent_id) {
+      payload.parent_id = values.parent_id;
+    } else {
+      payload.parent_id = null;
+    }
+    return payload;
+  };
+
+  const getFieldError = (field: keyof CategoryFormValues, value: unknown) => {
+    if (field === 'code') {
+      const code = String(value || '').trim();
+      if (!code) {
+        return 'Category name is required';
+      }
+      if (code.length > 255) {
+        return 'Category name must be 255 characters or less';
+      }
+    }
+    if (field === 'description') {
+      const description = String(value || '').trim();
+      if (description.length > 255) {
+        return 'Description must be 255 characters or less';
+      }
+    }
+    return null;
+  };
+
+  const autoSaveField = useCallback(
+    async (
+      field: keyof CategoryFormValues,
+      rawValue: CategoryFormValues[keyof CategoryFormValues],
+    ) => {
+      if (!visible || !canWrite || savingRef.current) {
+        return;
+      }
+
+      // Code is immutable after create.
+      if (field === 'code' && currentRecordRef.current?.code) {
+        return;
+      }
+
+      const value =
+        typeof rawValue === 'string' ? rawValue.trim() : rawValue;
+      const normalizedValue =
+        field === 'code' && typeof value === 'string'
+          ? value.toUpperCase()
+          : value;
+      const record = currentRecordRef.current;
+      const values = {...formDataRef.current, [field]: rawValue};
+
+      if (record?.code) {
+        const existing = (record as any)[field];
+        if (String(existing ?? '') === String(normalizedValue ?? '')) {
+          return;
+        }
+      }
+
+      const fieldError = getFieldError(field, normalizedValue);
+      if (fieldError) {
+        setErrors(prev => ({...prev, [field]: fieldError}));
+        return;
+      }
+
+      if (
+        !OPTIONAL_CATEGORY_FIELDS.has(field) &&
+        (normalizedValue === '' ||
+          normalizedValue === null ||
+          normalizedValue === undefined)
+      ) {
+        return;
+      }
+
+      const codeForCreate =
+        field === 'code'
+          ? String(normalizedValue || '')
+          : values.code || '';
+      if (!record?.code && !codeForCreate.trim()) {
+        return;
+      }
+
+      setErrors(prev => {
+        const next = {...prev};
+        delete next[field];
+        return next;
+      });
+
+      savingRef.current = true;
+      setIsSaving(true);
+      try {
+        if (!record?.code) {
+          const created = await createItemCategory(
+            buildCreatePayload({
+              ...values,
+              [field]: normalizedValue as any,
+            }),
+          );
+          setCurrentRecord(created);
+          setFormData(categoryToForm(created));
+          onRecordChange?.(created);
+          onSave();
+          flashSaved();
+        } else {
+          const patch: Partial<ItemCategory> = {
+            [field]:
+              field === 'description' &&
+              (normalizedValue === '' || normalizedValue == null)
+                ? record.code
+                : normalizedValue,
+          } as Partial<ItemCategory>;
+          const updated = await updateItemCategory(record.code, patch);
+          setCurrentRecord(updated);
+          if (field === 'description' || field === 'parent_id') {
+            setFormData(prev => ({
+              ...prev,
+              description: updated.description || prev.description,
+              parent_id: updated.parent_id ?? null,
+            }));
+          }
+          onRecordChange?.(updated);
+          onSave();
+          flashSaved();
+        }
+      } catch (error: any) {
+        console.error('Error auto-saving category:', error);
+        const errorMessage =
+          error?.response?.data?.errors?.[field]?.[0] ||
+          error?.response?.data?.detail ||
+          error?.response?.data?.error ||
+          error?.response?.data?.[field]?.[0] ||
+          `Failed to save ${field.replace(/_/g, ' ')}`;
+        setErrors(prev => ({...prev, [field]: String(errorMessage)}));
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: String(errorMessage),
+        });
+      } finally {
+        savingRef.current = false;
+        setIsSaving(false);
+      }
+    },
+    [visible, canWrite, onRecordChange, onSave, flashSaved],
+  );
 
   // Filter out current category and its descendants from parent options
   const getParentOptions = () => {
-    if (!isEditMode) {
+    if (!isEditMode || !currentRecord?.code) {
       return categories;
     }
-    // Exclude current category and its descendants
-    const excludeCodes = new Set<string>([category.code]);
-    // Simple check: exclude categories with this as parent (one level deep)
-    // For deeper nesting, you'd need a more sophisticated check
     return categories.filter(
-      cat => cat.code !== category.code && cat.parent_id !== category.code,
+      cat =>
+        cat.code !== currentRecord.code &&
+        cat.parent_id !== currentRecord.code,
     );
-  };
-
-  const validateForm = (): boolean => {
-    const newErrors: Record<string, string> = {};
-
-    if (!formData.code || !formData.code.trim()) {
-      newErrors.code = 'Category name is required';
-    } else if (formData.code.trim().length > 255) {
-      newErrors.code = 'Category name must be 255 characters or less';
-    }
-
-    if (formData.description && formData.description.trim().length > 255) {
-      newErrors.description =
-        'Description must be 255 characters or less';
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleSave = async () => {
-    if (!validateForm()) {
-      return;
-    }
-
-    // Check permissions
-    if (isEditMode && !canEdit) {
-      Alert.alert(
-        'Permission Denied',
-        'You do not have permission to edit item categories.',
-      );
-      return;
-    }
-
-    if (!isEditMode && !canCreate) {
-      Alert.alert(
-        'Permission Denied',
-        'You do not have permission to create item categories.',
-      );
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const categoryData: Partial<ItemCategory> = {
-        code: formData.code.trim().toUpperCase(),
-      };
-
-      // Description is optional, but if provided, include it
-      if (formData.description && formData.description.trim()) {
-        categoryData.description = formData.description.trim();
-      } else {
-        // If description is empty, backend will handle it
-        // But we can set it to code as default
-        categoryData.description = formData.code.trim().toUpperCase();
-      }
-
-      // Parent ID is optional
-      if (formData.parent_id) {
-        categoryData.parent_id = formData.parent_id;
-      } else {
-        categoryData.parent_id = null;
-      }
-
-      if (isEditMode && category) {
-        await updateItemCategory(category.code, categoryData);
-        Toast.show({
-          type: 'success',
-          text1: 'Success',
-          text2: 'Category updated successfully',
-        });
-      } else {
-        await createItemCategory(categoryData);
-        Toast.show({
-          type: 'success',
-          text1: 'Success',
-          text2: 'Category created successfully',
-        });
-      }
-
-      onSave();
-    } catch (error: any) {
-      console.error('Error saving category:', error);
-      const errorMessage =
-        error?.response?.data?.detail ||
-        error?.response?.data?.error ||
-        error?.response?.data?.code?.[0] ||
-        error?.response?.data?.description?.[0] ||
-        'Failed to save category';
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: errorMessage,
-      });
-    } finally {
-      setLoading(false);
-    }
   };
 
   const parentOptions = getParentOptions();
 
-  // Filter parent options based on search
   const filteredParentOptions = parentOptions.filter(cat => {
     if (!parentSearchQuery.trim()) return true;
     const searchLower = parentSearchQuery.toLowerCase();
@@ -251,20 +365,29 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
   const getSelectedParentLabel = () => {
     if (!formData.parent_id) return 'No parent category';
     const selected = parentOptions.find(cat => cat.code === formData.parent_id);
-    return selected ? selected.description || selected.code : 'Select parent category';
+    return selected
+      ? selected.description || selected.code
+      : 'Select parent category';
   };
 
   const previewTitle = (formData.code || 'Ca').trim();
-  const previewMonogram = previewTitle
-    .replace(/[^a-zA-Z0-9 ]/g, '')
-    .split(' ')
-    .filter(Boolean)
-    .slice(0, 2)
-    .map(part => part[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase() || previewTitle.slice(0, 2).toUpperCase() || 'CA';
-  const previewLabel = (formData.description || formData.code || 'Category').trim();
+  const previewMonogram =
+    previewTitle
+      .replace(/[^a-zA-Z0-9 ]/g, '')
+      .split(' ')
+      .filter(Boolean)
+      .slice(0, 2)
+      .map(part => part[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase() ||
+    previewTitle.slice(0, 2).toUpperCase() ||
+    'CA';
+  const previewLabel = (
+    formData.description ||
+    formData.code ||
+    'Category'
+  ).trim();
 
   return (
     <Modal
@@ -289,17 +412,18 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
               />
             </QuickIconPressable>
 
-            <TouchableOpacity
-              style={[styles.headerSaveButton, loading && styles.buttonDisabled]}
-              onPress={handleSave}
-              disabled={loading}
-              activeOpacity={0.85}>
-              {loading ? (
-                <ActivityIndicator size="small" color={COLORS.white} />
-              ) : (
-                <Text style={styles.headerSaveText}>Save</Text>
-              )}
-            </TouchableOpacity>
+            {canWrite && (isSaving || showSaved) ? (
+              <View
+                style={styles.headerSaveStatus}
+                accessibilityRole="text"
+                accessibilityLabel={isSaving ? 'Saving' : 'Saved'}>
+                <Text style={[styles.headerSaveText, catTheme.headerSaveText]}>
+                  {isSaving ? 'Saving...' : 'Saved'}
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.headerSpacer} />
+            )}
           </View>
 
           <ScrollView
@@ -309,6 +433,9 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
             keyboardShouldPersistTaps="handled">
             <Text style={[styles.pageTitle, catTheme.pageTitle]}>
               {isEditMode ? 'Edit category' : 'Create category'}
+            </Text>
+            <Text style={[styles.autoSaveHint, catTheme.autoSaveHint]}>
+              Changes save automatically when you leave a field
             </Text>
 
             <View style={styles.previewSection}>
@@ -333,14 +460,20 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
                   })
                 }
                 activeOpacity={0.8}>
-                <Text style={[styles.previewTileButtonText, catTheme.previewTileButtonText]}>
+                <Text
+                  style={[
+                    styles.previewTileButtonText,
+                    catTheme.previewTileButtonText,
+                  ]}>
                   Edit POS tile
                 </Text>
               </TouchableOpacity>
             </View>
 
             <View style={styles.section}>
-              <Text style={[styles.sectionTitle, catTheme.sectionTitle]}>Details</Text>
+              <Text style={[styles.sectionTitle, catTheme.sectionTitle]}>
+                Details
+              </Text>
 
               <TextInput
                 style={[
@@ -355,7 +488,10 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
                 onChangeText={text =>
                   setFormData({...formData, code: text.toUpperCase()})
                 }
-                editable={!isEditMode}
+                onBlur={() =>
+                  autoSaveField('code', formDataRef.current.code)
+                }
+                editable={!isEditMode && canWrite}
                 autoCapitalize="characters"
                 maxLength={255}
               />
@@ -381,6 +517,13 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
                 onChangeText={text =>
                   setFormData({...formData, description: text})
                 }
+                onBlur={() =>
+                  autoSaveField(
+                    'description',
+                    formDataRef.current.description || '',
+                  )
+                }
+                editable={canWrite}
                 autoCapitalize="sentences"
                 maxLength={255}
               />
@@ -394,29 +537,46 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
             </View>
 
             <View style={styles.section}>
-              <Text style={[styles.sectionTitle, catTheme.sectionTitle]}>Parent category</Text>
+              <Text style={[styles.sectionTitle, catTheme.sectionTitle]}>
+                Parent category
+              </Text>
               <TouchableOpacity
                 style={[styles.parentRow, catTheme.parentRow]}
-                onPress={() => setParentPickerVisible(true)}
-                activeOpacity={0.7}>
+                onPress={() => {
+                  if (canWrite) {
+                    setParentPickerVisible(true);
+                  }
+                }}
+                activeOpacity={0.7}
+                disabled={!canWrite}>
                 <Text
                   style={[
                     styles.parentRowText,
                     catTheme.parentRowText,
-                    !formData.parent_id && [styles.parentRowPlaceholder, catTheme.parentRowPlaceholder],
+                    !formData.parent_id && [
+                      styles.parentRowPlaceholder,
+                      catTheme.parentRowPlaceholder,
+                    ],
                   ]}>
                   {getSelectedParentLabel()}
                 </Text>
                 <Text style={styles.parentRowChevron}>›</Text>
               </TouchableOpacity>
+              {errors.parent_id ? (
+                <Text style={styles.errorText}>{errors.parent_id}</Text>
+              ) : null}
             </View>
 
             <View style={[styles.sectionDivider, catTheme.sectionDivider]} />
 
             <View style={styles.section}>
-              <Text style={[styles.sectionTitle, catTheme.sectionTitle]}>Channels</Text>
+              <Text style={[styles.sectionTitle, catTheme.sectionTitle]}>
+                Channels
+              </Text>
               <View style={[styles.channelsCard, catTheme.channelsCard]}>
-                <Text style={[styles.channelsTitle, catTheme.channelsTitle]}>Available in POS</Text>
+                <Text style={[styles.channelsTitle, catTheme.channelsTitle]}>
+                  Available in POS
+                </Text>
                 <Text style={[styles.channelsText, catTheme.channelsText]}>
                   This category will appear in your product flow and can be used
                   across your selling channels.
@@ -437,9 +597,12 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
           setParentSearchQuery('');
         }}>
         <View style={styles.pickerModalOverlay}>
-          <View style={[styles.pickerModalContent, catTheme.pickerModalContent]}>
-            <View style={[styles.pickerModalHeader, catTheme.pickerModalHeader]}>
-              <Text style={[styles.pickerModalTitle, catTheme.pickerModalTitle]}>
+          <View
+            style={[styles.pickerModalContent, catTheme.pickerModalContent]}>
+            <View
+              style={[styles.pickerModalHeader, catTheme.pickerModalHeader]}>
+              <Text
+                style={[styles.pickerModalTitle, catTheme.pickerModalTitle]}>
                 Select Parent Category
               </Text>
               <TouchableOpacity
@@ -456,10 +619,16 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
               </TouchableOpacity>
             </View>
 
-            {/* Search Bar */}
-            <View style={[styles.pickerSearchContainer, catTheme.pickerSearchContainer]}>
+            <View
+              style={[
+                styles.pickerSearchContainer,
+                catTheme.pickerSearchContainer,
+              ]}>
               <View
-                style={[styles.pickerSearchInputContainer, catTheme.pickerSearchInputContainer]}>
+                style={[
+                  styles.pickerSearchInputContainer,
+                  catTheme.pickerSearchInputContainer,
+                ]}>
                 <Image
                   source={icons.search}
                   style={[styles.pickerSearchIcon, catTheme.pickerSearchIcon]}
@@ -476,7 +645,6 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
               </View>
             </View>
 
-            {/* Categories List */}
             <FlatList
               data={[
                 {code: '', description: 'No parent category', isRoot: true},
@@ -494,12 +662,14 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
                     ],
                   ]}
                   onPress={() => {
+                    const nextParentId = item.code || null;
                     setFormData({
                       ...formData,
-                      parent_id: item.code || null,
+                      parent_id: nextParentId,
                     });
                     setParentPickerVisible(false);
                     setParentSearchQuery('');
+                    void autoSaveField('parent_id', nextParentId);
                   }}
                   activeOpacity={0.7}>
                   <Text
@@ -522,7 +692,8 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
               )}
               ListEmptyComponent={
                 <View style={styles.pickerEmptyContainer}>
-                  <Text style={[styles.pickerEmptyText, catTheme.pickerEmptyText]}>
+                  <Text
+                    style={[styles.pickerEmptyText, catTheme.pickerEmptyText]}>
                     No categories found
                   </Text>
                 </View>
@@ -565,24 +736,21 @@ const styles = StyleSheet.create({
     height: 20,
     tintColor: COLORS.primary3,
   },
-  headerSaveButton: {
-    minWidth: 108,
+  headerSaveStatus: {
+    minWidth: 88,
     height: 48,
-    borderRadius: 24,
-    backgroundColor: COLORS.primary2,
-    alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 24,
-    shadowColor: COLORS.primary3,
-    shadowOffset: {width: 0, height: 8},
-    shadowOpacity: 0.2,
-    shadowRadius: 16,
-    elevation: 6,
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    backgroundColor: 'transparent',
   },
   headerSaveText: {
-    color: COLORS.white,
-    fontSize: 18,
-    fontWeight: '700',
+    color: COLORS.gray2,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  headerSpacer: {
+    width: 108,
   },
   formContainer: {
     flex: 1,
@@ -596,7 +764,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: COLORS.black,
     marginTop: 22,
-    marginBottom: 28,
+    marginBottom: 4,
+  },
+  autoSaveHint: {
+    fontSize: 13,
+    color: COLORS.gray2,
+    marginBottom: 22,
   },
   previewSection: {
     alignItems: 'center',
@@ -842,10 +1015,6 @@ const styles = StyleSheet.create({
     color: COLORS.gray2,
     marginTop: 8,
   },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
 });
 
 export default ItemCategoryFormModal;
-

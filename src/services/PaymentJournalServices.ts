@@ -12,7 +12,34 @@ import {
   Customer,
   Vendor,
   GLAccount,
+  QuickCustomerPaymentPayload,
+  QuickCustomerPaymentResult,
+  QuickVendorPaymentPayload,
+  QuickVendorPaymentResult,
 } from '../@types/paymentJournal';
+
+function extractApiError(error: unknown, fallback: string): string {
+  if (error && typeof error === 'object' && 'response' in error) {
+    const data = (
+      error as {
+        response?: {data?: {error?: string; detail?: string; message?: string}};
+      }
+    ).response?.data;
+    if (data?.detail) {
+      return String(data.detail).trim();
+    }
+    if (data?.error) {
+      return String(data.error).trim();
+    }
+    if (data?.message) {
+      return String(data.message).trim();
+    }
+  }
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+  return fallback;
+}
 
 export const PaymentJournalServices = {
   // Get payment journals list with filters
@@ -283,10 +310,15 @@ export const PaymentJournalServices = {
     try {
       const {fetchPageDataAll, PAGE_IDS} = await import('./pageDataService');
       const {mapPageDataPaymentMethod} = await import('./pageDataMappers');
-      return await fetchPageDataAll({
+      const {filterCollectablePaymentMethods} = await import(
+        '../utils/paymentMethodDefaults'
+      );
+      const methods = await fetchPageDataAll({
         pageId: PAGE_IDS.PaymentMethodList,
+        filters: {blocked: false},
         mapRow: mapPageDataPaymentMethod as any,
       });
+      return filterCollectablePaymentMethods(methods as PaymentMethod[]);
     } catch (error) {
       console.error('Error fetching payment methods:', error);
       return [];
@@ -312,19 +344,24 @@ export const PaymentJournalServices = {
     }
   },
 
-  // Get vendors
+  // Get vendors (unblocked — for Quick Payment / pickers)
   async getVendors(): Promise<{results: Vendor[]; count: number}> {
     try {
       const {fetchPageDataPaginated, PAGE_IDS} = await import(
         './pageDataService'
       );
       const {mapPageDataVendor} = await import('./pageDataMappers');
-      return await fetchPageDataPaginated({
+      const response = await fetchPageDataPaginated({
         pageId: PAGE_IDS.VendorList,
         page: 1,
         pageSize: 200,
+        filters: {blocked: false},
         mapRow: mapPageDataVendor as any,
       });
+      const results = (response.results || []).filter(
+        (v: Vendor) => !v.blocked,
+      );
+      return {results, count: results.length};
     } catch (error) {
       console.error('Error fetching vendors:', error);
       return {results: [], count: 0};
@@ -343,6 +380,68 @@ export const PaymentJournalServices = {
     } catch (error) {
       console.error('Error fetching GL accounts:', error);
       return [];
+    }
+  },
+
+  /**
+   * One-shot AR collection: creates a payment journal, applies to oldest
+   * open invoice(s), and posts. Same endpoint as webV2 / desktop Quick Pay.
+   */
+  async quickCustomerPayment(
+    payload: QuickCustomerPaymentPayload,
+  ): Promise<QuickCustomerPaymentResult> {
+    try {
+      const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+      const axiosInstance = createAxiosInstance(tenant);
+
+      const response = await axiosInstance.post<QuickCustomerPaymentResult>(
+        '/api/payments/payment-journal/quick-customer-payment/',
+        {
+          customer_id: payload.customer_id,
+          amount: Math.round(Number(payload.amount)),
+          payment_method_id: payload.payment_method_id,
+          ...(payload.posting_date
+            ? {posting_date: payload.posting_date}
+            : {}),
+        },
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Error recording quick customer payment:', error);
+      throw new Error(
+        extractApiError(error, 'Failed to record customer payment'),
+      );
+    }
+  },
+
+  /**
+   * One-shot AP payment: creates a payment journal, applies to oldest
+   * open vendor invoice(s), and posts. Same endpoint as webV2 Quick Pay.
+   */
+  async quickVendorPayment(
+    payload: QuickVendorPaymentPayload,
+  ): Promise<QuickVendorPaymentResult> {
+    try {
+      const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+      const axiosInstance = createAxiosInstance(tenant);
+
+      const response = await axiosInstance.post<QuickVendorPaymentResult>(
+        '/api/payments/payment-journal/quick-vendor-payment/',
+        {
+          vendor_id: payload.vendor_id,
+          amount: Math.round(Number(payload.amount)),
+          payment_method_id: payload.payment_method_id,
+          ...(payload.posting_date
+            ? {posting_date: payload.posting_date}
+            : {}),
+        },
+      );
+      return response.data;
+    } catch (error) {
+      console.error('Error recording quick vendor payment:', error);
+      throw new Error(
+        extractApiError(error, 'Failed to record vendor payment'),
+      );
     }
   },
 };

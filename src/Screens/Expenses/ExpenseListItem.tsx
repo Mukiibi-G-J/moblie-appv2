@@ -1,16 +1,15 @@
-import React, {useMemo} from 'react';
+import React from 'react';
 import {
+  Alert,
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   Image,
-  ImageSourcePropType,
 } from 'react-native';
-import {COLORS, FONTS, SIZES, icons} from '../../constants';
+import {COLORS, FONTS, icons} from '../../constants';
 import {formatCurrencyCompact} from '../../utils/currency';
 import {Expense} from '../../@types/expense';
-import ExpenseStatusBadge from './ExpenseStatusBadge';
 import {useTheme} from '../../context/ThemeContext';
 
 interface ExpenseListItemProps {
@@ -20,6 +19,19 @@ interface ExpenseListItemProps {
   onPost?: (expense: Expense) => void;
 }
 
+const formatDate = (dateString: string) => {
+  try {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  } catch {
+    return dateString;
+  }
+};
+
 const ExpenseListItem: React.FC<ExpenseListItemProps> = ({
   expense,
   onEdit,
@@ -27,246 +39,172 @@ const ExpenseListItem: React.FC<ExpenseListItemProps> = ({
   onPost,
 }) => {
   const {colors} = useTheme();
-  const t = useMemo(
-    () => ({
-      container: {
-        backgroundColor: colors.card,
-        borderBottomColor: colors.border,
-      },
-      iconWrap: {
-        backgroundColor: colors.screenMuted,
-        borderColor: colors.border,
-      },
-      leadingIcon: {tintColor: colors.iconMuted},
-      documentNo: {color: colors.textPrimary},
-      typeText: {color: colors.textSecondary},
-      amount: {color: colors.textPrimary},
-      description: {color: colors.textSecondary},
-      metaRow: {borderTopColor: colors.border},
-      metaDivider: {backgroundColor: colors.border},
-      detailLabel: {color: colors.textSecondary},
-      detailValue: {color: colors.textPrimary},
-    }),
-    [colors],
-  );
+  const isOpen = expense.status === 'Open';
+  const title =
+    expense.expense_type_name?.trim() ||
+    expense.description?.trim() ||
+    expense.document_no ||
+    'Expense';
 
-  const formatAmount = (amount: number) => formatCurrencyCompact(amount);
+  const initials =
+    title
+      .split(' ')
+      .filter(Boolean)
+      .slice(0, 2)
+      .map(part => part[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase() || 'EX';
 
-  const formatDate = (dateString: string) => {
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
+  const secondaryLine = [
+    expense.document_no,
+    expense.payment_method_name,
+    expense.posting_date ? formatDate(expense.posting_date) : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+  const amountText = formatCurrencyCompact(expense.amount);
+  const canOpenActions = !!(onEdit || onPost || onDelete);
+
+  const handleOpenActions = () => {
+    const options: Array<{
+      text: string;
+      style?: 'cancel' | 'destructive';
+      onPress?: () => void;
+    }> = [];
+
+    if (onEdit && isOpen) {
+      options.push({
+        text: 'Edit expense',
+        onPress: () => onEdit(expense),
       });
-    } catch {
-      return dateString;
     }
+
+    if (onPost && isOpen) {
+      options.push({
+        text: 'Post expense',
+        onPress: () => onPost(expense),
+      });
+    }
+
+    if (onDelete && isOpen) {
+      options.push({
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () => onDelete(expense),
+      });
+    }
+
+    options.push({text: 'Cancel', style: 'cancel'});
+
+    if (options.length === 1) {
+      Alert.alert(expense.document_no || 'Expense', 'No actions available.', options);
+      return;
+    }
+
+    Alert.alert(title, 'Choose an action', options);
   };
 
   return (
     <TouchableOpacity
-      activeOpacity={0.7}
-      style={[styles.container, t.container]}
-      onPress={() => {
-        if (expense.status === 'Open' && onEdit) {
-          onEdit(expense);
-        }
-      }}>
-      <View style={styles.headerRow}>
-        <View style={styles.leftCol}>
-          <View style={[styles.iconWrap, t.iconWrap]}>
-            <Image
-              source={icons.coupon as ImageSourcePropType}
-              style={[styles.leadingIcon, t.leadingIcon]}
-            />
-          </View>
-          <View style={styles.textCol}>
-            <Text style={[styles.documentNo, t.documentNo]}>{expense.document_no}</Text>
-            <Text style={[styles.typeText, t.typeText]}>
-              {expense.expense_type_name || '—'}
-            </Text>
-          </View>
-        </View>
-        <View style={styles.rightCol}>
-          <ExpenseStatusBadge status={expense.status} />
-          <Text style={[styles.amount, t.amount]}>{formatAmount(expense.amount)}</Text>
-        </View>
+      activeOpacity={onEdit && isOpen ? 0.8 : 1}
+      style={[styles.container, {borderBottomColor: colors.border}]}
+      onPress={onEdit && isOpen ? () => onEdit(expense) : undefined}>
+      <View style={[styles.avatar, {backgroundColor: colors.backButtonBg}]}>
+        <Text style={styles.avatarText}>{initials}</Text>
       </View>
 
-      {expense.description ? (
-        <Text style={[styles.description, t.description]} numberOfLines={2}>
-          {expense.description}
+      <View style={styles.content}>
+        <Text
+          style={[styles.title, {color: colors.textPrimary}]}
+          numberOfLines={1}>
+          {title}
         </Text>
-      ) : null}
-
-      <View style={[styles.metaRow, t.metaRow]}>
-        <View style={styles.detailItem}>
-          <Text style={[styles.detailLabel, t.detailLabel]}>Date</Text>
-          <Text style={[styles.detailValue, t.detailValue]}>
-            {formatDate(expense.posting_date)}
-          </Text>
-        </View>
-        <View style={[styles.metaDivider, t.metaDivider]} />
-        <View style={styles.detailItem}>
-          <Text style={[styles.detailLabel, t.detailLabel]}>Payment</Text>
-          <Text style={[styles.detailValue, t.detailValue]}>
-            {expense.payment_method_name || '—'}
-          </Text>
-        </View>
+        <Text
+          style={[styles.secondaryText, {color: colors.textSecondary}]}
+          numberOfLines={1}>
+          {secondaryLine}
+        </Text>
+        <Text
+          style={[
+            styles.metaText,
+            isOpen ? styles.metaTextOpen : {color: colors.textSecondary},
+          ]}>
+          {amountText} · {expense.status}
+        </Text>
       </View>
 
-      {expense.status === 'Open' && (onEdit || onDelete || onPost) && (
-        <View style={styles.actionsRow}>
-          {onPost && (
-            <TouchableOpacity
-              style={[styles.actionChip, styles.postChip]}
-              activeOpacity={0.75}
-              onPress={() => onPost(expense)}>
-              <Text style={styles.actionChipText}>Post</Text>
-            </TouchableOpacity>
-          )}
-          {onEdit && (
-            <TouchableOpacity
-              style={[styles.actionChip, styles.editChip]}
-              activeOpacity={0.75}
-              onPress={() => onEdit(expense)}>
-              <Text style={styles.actionChipText}>Edit</Text>
-            </TouchableOpacity>
-          )}
-          {onDelete && (
-            <TouchableOpacity
-              style={[styles.actionChip, styles.deleteChip]}
-              activeOpacity={0.75}
-              onPress={() => onDelete(expense)}>
-              <Text style={styles.actionChipText}>Delete</Text>
-            </TouchableOpacity>
-          )}
-        </View>
+      {canOpenActions && (
+        <TouchableOpacity
+          onPress={handleOpenActions}
+          style={[styles.actionButton, {backgroundColor: colors.backButtonBg}]}
+          hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
+          <Image
+            source={icons.menu}
+            style={[styles.actionIcon, {tintColor: colors.textPrimary}]}
+            resizeMode="contain"
+          />
+        </TouchableOpacity>
       )}
     </TouchableOpacity>
   );
 };
 
+export default ExpenseListItem;
+
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: COLORS.white,
-    marginHorizontal: SIZES.padding,
-    paddingVertical: 14,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: COLORS.lightGray1,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  leftCol: {
     flexDirection: 'row',
     alignItems: 'center',
-    flex: 1,
-    minWidth: 0,
+    marginHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
   },
-  iconWrap: {
-    width: 44,
-    height: 44,
+  avatar: {
+    width: 48,
+    height: 48,
     borderRadius: 10,
-    backgroundColor: COLORS.lightGray2,
-    borderWidth: 1,
-    borderColor: COLORS.lightGray1,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: SIZES.base,
+    marginRight: 14,
   },
-  leadingIcon: {
-    width: 20,
-    height: 20,
-    tintColor: COLORS.gray2,
-  },
-  textCol: {
-    flex: 1,
-    minWidth: 0,
-    paddingRight: SIZES.base,
-  },
-  documentNo: {
-    ...FONTS.body3,
-    color: COLORS.black,
-    fontWeight: '700',
+  avatarText: {
+    color: COLORS.primary3,
     fontSize: 16,
-  },
-  typeText: {
-    ...FONTS.body4,
-    color: COLORS.gray2,
-    marginTop: 2,
-  },
-  rightCol: {
-    alignItems: 'flex-end',
-    justifyContent: 'flex-start',
-  },
-  amount: {
-    ...FONTS.body3,
-    color: COLORS.black,
-    marginTop: 6,
     fontWeight: '700',
   },
-  description: {
-    ...FONTS.body4,
-    color: COLORS.gray2,
-    marginTop: SIZES.base * 0.9,
-  },
-  metaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: SIZES.base,
-    paddingTop: SIZES.base,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.lightGray1,
-  },
-  detailItem: {
+  content: {
     flex: 1,
   },
-  metaDivider: {
-    width: 1,
-    height: '100%',
-    backgroundColor: COLORS.lightGray1,
-    marginHorizontal: SIZES.base,
+  title: {
+    ...FONTS.body2,
+    fontWeight: '700',
+    fontSize: 15,
+    marginBottom: 4,
   },
-  detailLabel: {
-    ...FONTS.body5,
-    color: COLORS.gray2,
-  },
-  detailValue: {
+  secondaryText: {
     ...FONTS.body4,
-    color: COLORS.black,
-    marginTop: 2,
+    fontSize: 13,
+  },
+  metaText: {
+    ...FONTS.body4,
+    fontSize: 13,
+    marginTop: 6,
     fontWeight: '600',
   },
-  actionsRow: {
-    flexDirection: 'row',
+  metaTextOpen: {
+    color: COLORS.primary2,
+  },
+  actionButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
-    marginTop: SIZES.base,
+    justifyContent: 'center',
   },
-  actionChip: {
-    paddingHorizontal: SIZES.radius * 1.2,
-    paddingVertical: SIZES.base / 1.5,
-    borderRadius: 999,
-    marginRight: 8,
-  },
-  postChip: {
-    backgroundColor: COLORS.success,
-  },
-  editChip: {
-    backgroundColor: COLORS.primary,
-  },
-  deleteChip: {
-    backgroundColor: COLORS.error,
-  },
-  actionChipText: {
-    ...FONTS.body4,
-    color: COLORS.white,
-    fontWeight: '600',
+  actionIcon: {
+    width: 16,
+    height: 16,
   },
 });
-
-export default ExpenseListItem;

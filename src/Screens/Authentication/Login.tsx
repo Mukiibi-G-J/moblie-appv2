@@ -42,7 +42,7 @@ import {useTheme} from '../../context/ThemeContext';
 const ao = authOnboarding;
 
 /** Continue CTA solid fill */
-const CONTINUE_BRAND = '#0b5cff';
+const CONTINUE_BRAND = '#005151';
 
 type LoginNav = NativeStackNavigationProp<RootStackParamList, 'SignIn'>;
 
@@ -231,11 +231,6 @@ const Login = () => {
       if (loginResult === 'home') {
         await clearStoredLoginPassword();
         await saveLoginDraft(false);
-        Toast.show({
-          type: 'success',
-          text1: 'Login successful',
-          text2: 'Redirecting to dashboard...',
-        });
         setLoading(false);
         return;
       }

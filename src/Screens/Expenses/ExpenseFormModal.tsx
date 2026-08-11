@@ -1,5 +1,8 @@
-import React, {useState, useEffect, useMemo} from 'react';
-import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
+import React, {useState, useEffect, useMemo, useRef, useCallback} from 'react';
+import {
+  formatCurrencyCompact,
+  formatCurrencyLabel,
+} from '../../utils/currency';
 import {
   View,
   Text,
@@ -29,12 +32,63 @@ import {ExpenseServices} from '../../services/ExpenseServices';
 import Toast from 'react-native-toast-message';
 import {useTheme} from '../../context/ThemeContext';
 import {useScreenTopInset} from '../../hooks/useScreenTopInset';
+import {isUnpaidPaymentMethod} from '../../utils/paymentMethodDefaults';
+
+const emptyExpenseForm = (): ExpenseFormValues => ({
+  posting_date: new Date().toISOString().split('T')[0],
+  expense_type: null,
+  description: '',
+  amount: '',
+  payment_method: null,
+  status: 'Open',
+});
+
+const expenseToForm = (expense: Expense): ExpenseFormValues => ({
+  posting_date: expense.posting_date,
+  expense_type: expense.expense_type,
+  description: expense.description || '',
+  amount: expense.amount != null ? String(expense.amount) : '',
+  payment_method: expense.payment_method || null,
+  status: expense.status === 'Posted' ? 'Posted' : 'Open',
+});
+
+const parseAmount = (value: string) =>
+  parseFloat(String(value || '').replace(/,/g, '')) || 0;
+
+const extractApiErrorMessage = (
+  error: any,
+  field: string,
+  fallback: string,
+): string => {
+  const data = error?.response?.data;
+  const fieldErrors = data?.errors?.[field] || data?.[field];
+  if (Array.isArray(fieldErrors) && fieldErrors[0]) {
+    return String(fieldErrors[0]);
+  }
+  if (typeof fieldErrors === 'string') {
+    return fieldErrors;
+  }
+  const raw = data?.error ?? data?.detail ?? data?.message;
+  if (typeof raw === 'string') {
+    const match = raw.match(/string='([^']+)'/);
+    if (match?.[1]) {
+      return match[1].replace(/^"|"$/g, '');
+    }
+    if (!raw.includes('ErrorDetail') && !raw.startsWith('{')) {
+      return raw;
+    }
+  }
+  return fallback;
+};
 
 interface ExpenseFormModalProps {
   visible: boolean;
   onClose: () => void;
-  expense: Expense | null; // null for create, Expense for edit
+  expense: Expense | null;
+  /** Called after a successful auto-save so the list can refresh (does not close). */
   onSave: () => void;
+  /** Keeps parent selection in sync after create / update. */
+  onRecordChange?: (expense: Expense) => void;
   expenseTypes: ExpenseType[];
   paymentMethods: PaymentMethod[];
   canCreate: boolean;
@@ -48,16 +102,14 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
   onClose,
   expense,
   onSave,
+  onRecordChange,
   expenseTypes,
   paymentMethods,
   canCreate,
   canEdit,
-  canDelete,
+  canDelete: _canDelete,
   canPost,
 }) => {
-  const isEditMode = !!expense;
-  const isPosted = expense?.status === 'Posted';
-
   const {colors} = useTheme();
   const topInset = useScreenTopInset();
   const expTheme = useMemo(
@@ -70,6 +122,7 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
       },
       headerIcon: {tintColor: colors.textPrimary},
       pageTitle: {color: colors.textPrimary},
+      autoSaveHint: {color: colors.textSecondary},
       sectionTitle: {color: colors.textPrimary},
       fieldLabel: {color: colors.textPrimary},
       input: {
@@ -90,15 +143,6 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
       selectRowText: {color: colors.textPrimary},
       selectRowPlaceholder: {color: colors.textSecondary},
       selectRowChevron: {color: colors.textSecondary},
-      pickerShell: {
-        borderColor: colors.border,
-        backgroundColor: colors.inputBackground,
-      },
-      picker: {
-        backgroundColor: colors.inputBackground,
-        color: colors.textPrimary,
-      },
-      pickerItemStyle: {color: colors.textPrimary},
       inlineLoadingText: {color: colors.textSecondary},
       sectionDivider: {backgroundColor: colors.border},
       infoCard: {
@@ -111,89 +155,230 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     [colors],
   );
 
-  // Form state
-  const [formData, setFormData] = useState<ExpenseFormValues>({
-    posting_date: new Date().toISOString().split('T')[0],
-    expense_type: null,
-    description: '',
-    amount: '',
-    payment_method: null,
-    status: 'Open',
-  });
-
+  const [formData, setFormData] = useState<ExpenseFormValues>(emptyExpenseForm);
+  const [currentRecord, setCurrentRecord] = useState<Expense | null>(expense);
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [expenseTypePickerVisible, setExpenseTypePickerVisible] =
     useState(false);
   const [paymentMethodPickerVisible, setPaymentMethodPickerVisible] =
     useState(false);
-  const [loading, setLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [showSaved, setShowSaved] = useState(false);
+  const [posting, setPosting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Initialize form when expense changes
+  const formDataRef = useRef(formData);
+  const currentRecordRef = useRef(currentRecord);
+  const savingRef = useRef(false);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  formDataRef.current = formData;
+  currentRecordRef.current = currentRecord;
+
+  const isPersisted = !!currentRecord?.id;
+  const isPosted =
+    currentRecord?.status === 'Posted' || expense?.status === 'Posted';
+  const canWrite = isPersisted ? canEdit : canCreate;
+
   useEffect(() => {
-    if (expense) {
-      setFormData({
-        posting_date: expense.posting_date,
-        expense_type: expense.expense_type,
-        description: expense.description || '',
-        amount: expense.amount.toString(),
-        payment_method: expense.payment_method || null,
-        status: expense.status,
-      });
-    } else {
-      // Reset form for new expense
-      setFormData({
-        posting_date: new Date().toISOString().split('T')[0],
-        expense_type: null,
-        description: '',
-        amount: '',
-        payment_method: null,
-        status: 'Open',
-      });
+    if (!visible) {
+      setCurrentRecord(null);
+      setFormData(emptyExpenseForm());
+      setErrors({});
+      setShowSaved(false);
+      setShowDatePicker(false);
+      if (savedTimerRef.current) {
+        clearTimeout(savedTimerRef.current);
+        savedTimerRef.current = null;
+      }
+      return;
+    }
+
+    if (expense?.id) {
+      if (currentRecordRef.current?.id !== expense.id) {
+        setCurrentRecord(expense);
+        setFormData(expenseToForm(expense));
+      } else {
+        setCurrentRecord(expense);
+      }
+    } else if (!currentRecordRef.current?.id) {
+      setCurrentRecord(null);
+      setFormData(emptyExpenseForm());
     }
     setErrors({});
-  }, [expense, visible]);
+    setShowSaved(false);
+  }, [expense?.id, visible]);
 
-  const validateForm = (): boolean => {
-    const newErrors: Record<string, string> = {};
-
-    if (!formData.posting_date) {
-      newErrors.posting_date = 'Posting date is required';
+  const flashSaved = useCallback(() => {
+    setShowSaved(true);
+    if (savedTimerRef.current) {
+      clearTimeout(savedTimerRef.current);
     }
+    savedTimerRef.current = setTimeout(() => {
+      setShowSaved(false);
+      savedTimerRef.current = null;
+    }, 2000);
+  }, []);
 
-    if (!formData.expense_type) {
-      newErrors.expense_type = 'Expense type is required';
-    }
+  const buildPayload = useCallback(
+    (
+      values: ExpenseFormValues,
+      options?: {forUpdate?: boolean},
+    ): Partial<Expense> => {
+      const amountValue = parseAmount(values.amount);
+      const payload: Partial<Expense> = {
+        posting_date: values.posting_date,
+        expense_type: values.expense_type!,
+        document_type: 'Expense',
+        amount: amountValue,
+        status: values.status || 'Open',
+      };
+      if (values.description?.trim()) {
+        payload.description = values.description.trim();
+      } else if (options?.forUpdate) {
+        payload.description = '';
+      }
+      if (values.payment_method) {
+        payload.payment_method = values.payment_method;
+      } else if (options?.forUpdate) {
+        (payload as any).payment_method = null;
+      }
+      return payload;
+    },
+    [],
+  );
 
-    if (
-      !formData.amount ||
-      parseFloat(formData.amount.replace(/,/g, '')) <= 0
-    ) {
-      newErrors.amount = 'Amount must be greater than 0';
-    }
+  const canCreateFromValues = (values: ExpenseFormValues) =>
+    !!values.posting_date &&
+    !!values.expense_type &&
+    parseAmount(values.amount) > 0;
 
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
+  const autoSaveField = useCallback(
+    async (field: keyof ExpenseFormValues, rawValue: any) => {
+      if (!visible || isPosted || !canWrite || savingRef.current) {
+        return;
+      }
 
-  const handleDateChange = (event: any, selectedDate?: Date) => {
-    setShowDatePicker(false);
-    if (selectedDate) {
-      setFormData({
-        ...formData,
-        posting_date: selectedDate.toISOString().split('T')[0],
+      const value =
+        typeof rawValue === 'string' && field !== 'amount'
+          ? rawValue.trim()
+          : rawValue;
+      const record = currentRecordRef.current;
+      const values = {...formDataRef.current, [field]: rawValue};
+
+      const previous = (formDataRef.current as any)[field];
+      if (field === 'amount') {
+        if (parseAmount(String(previous ?? '')) === parseAmount(String(value ?? ''))) {
+          return;
+        }
+      } else if (String(previous ?? '') === String(value ?? '')) {
+        return;
+      }
+
+      if (field === 'amount' && parseAmount(String(value ?? '')) <= 0) {
+        setErrors(prev => ({
+          ...prev,
+          amount: 'Amount must be greater than 0',
+        }));
+        return;
+      }
+      if (field === 'expense_type' && !value) {
+        setErrors(prev => ({
+          ...prev,
+          expense_type: 'Expense type is required',
+        }));
+        return;
+      }
+      if (field === 'posting_date' && !value) {
+        setErrors(prev => ({
+          ...prev,
+          posting_date: 'Posting date is required',
+        }));
+        return;
+      }
+
+      if (!record?.id && !canCreateFromValues(values)) {
+        // Wait until required fields are present before creating.
+        return;
+      }
+
+      setErrors(prev => {
+        const next = {...prev};
+        delete next[field as string];
+        return next;
       });
+
+      savingRef.current = true;
+      setIsSaving(true);
+      try {
+        if (!record?.id) {
+          const created = await ExpenseServices.createExpense(
+            buildPayload(values),
+          );
+          setCurrentRecord(created);
+          setFormData(expenseToForm(created));
+          onRecordChange?.(created);
+          onSave();
+          flashSaved();
+        } else {
+          const updated = await ExpenseServices.updateExpense(
+            record.id,
+            buildPayload(values, {forUpdate: true}),
+          );
+          setCurrentRecord(updated);
+          setFormData(expenseToForm(updated));
+          onRecordChange?.(updated);
+          onSave();
+          flashSaved();
+        }
+      } catch (error: any) {
+        console.error('Error auto-saving expense:', error);
+        const message = extractApiErrorMessage(
+          error,
+          field as string,
+          `Failed to save ${String(field).replace(/_/g, ' ')}`,
+        );
+        setErrors(prev => ({...prev, [field as string]: message}));
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: message,
+        });
+      } finally {
+        savingRef.current = false;
+        setIsSaving(false);
+      }
+    },
+    [
+      visible,
+      isPosted,
+      canWrite,
+      buildPayload,
+      onRecordChange,
+      onSave,
+      flashSaved,
+    ],
+  );
+
+  const handleDateChange = (_event: any, selectedDate?: Date) => {
+    setShowDatePicker(false);
+    if (!selectedDate) {
+      return;
     }
+    const nextDate = selectedDate.toISOString().split('T')[0];
+    setFormData(prev => ({...prev, posting_date: nextDate}));
+    void autoSaveField('posting_date', nextDate);
   };
 
   const handleAmountChange = (text: string) => {
-    // Remove non-numeric characters except decimal point
     const numericValue = text.replace(/[^0-9.]/g, '');
-    setFormData({...formData, amount: numericValue});
+    setFormData(prev => ({...prev, amount: numericValue}));
   };
 
   const formatAmount = (value: string) => {
-    if (!value) return '';
+    if (!value) {
+      return '';
+    }
     const numValue = parseFloat(value.replace(/,/g, '')) || 0;
     return numValue.toLocaleString();
   };
@@ -205,13 +390,20 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     return expenseTypes.find(t => t.id === formData.expense_type)?.name ?? null;
   }, [formData.expense_type, expenseTypes]);
 
+  const expensePaymentMethods = useMemo(
+    () => paymentMethods.filter(method => !isUnpaidPaymentMethod(method)),
+    [paymentMethods],
+  );
+
   const paymentMethodName = useMemo(() => {
     if (!formData.payment_method) {
       return null;
     }
-    const method = paymentMethods.find(m => m.id === formData.payment_method);
+    const method = expensePaymentMethods.find(
+      m => m.id === formData.payment_method,
+    );
     return method?.description || method?.code || null;
-  }, [formData.payment_method, paymentMethods]);
+  }, [formData.payment_method, expensePaymentMethods]);
 
   const expenseTypeOptions = useMemo(
     () =>
@@ -225,12 +417,12 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
 
   const paymentMethodOptions = useMemo(
     () =>
-      paymentMethods.map(method => ({
+      expensePaymentMethods.map(method => ({
         id: method.id,
         label: method.description || method.code,
         subtitle: method.code !== method.description ? method.code : undefined,
       })),
-    [paymentMethods],
+    [expensePaymentMethods],
   );
 
   const previewAmountLabel = useMemo(() => {
@@ -238,83 +430,8 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     if (!raw || parseFloat(raw) <= 0) {
       return '—';
     }
-    const n = parseFloat(raw) || 0;
-    return formatCurrencyCompact(n);
+    return formatCurrencyCompact(parseFloat(raw) || 0);
   }, [formData.amount]);
-
-  const handleSave = async () => {
-    if (!validateForm()) {
-      return;
-    }
-
-    // Check permissions
-    if (isEditMode && !canEdit) {
-      Alert.alert(
-        'Permission Denied',
-        'You do not have permission to edit expenses.',
-      );
-      return;
-    }
-
-    if (!isEditMode && !canCreate) {
-      Alert.alert(
-        'Permission Denied',
-        'You do not have permission to create expenses.',
-      );
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const amountValue = parseFloat(formData.amount.replace(/,/g, '')) || 0;
-
-      const expenseData: Partial<Expense> = {
-        posting_date: formData.posting_date,
-        expense_type: formData.expense_type!,
-        document_type: 'Expense',
-        amount: amountValue,
-        status: formData.status || 'Open',
-      };
-
-      // Only include optional fields if they have values
-      if (formData.description && formData.description.trim()) {
-        expenseData.description = formData.description.trim();
-      }
-      if (formData.payment_method) {
-        expenseData.payment_method = formData.payment_method;
-      }
-      if (isEditMode && expense) {
-        await ExpenseServices.updateExpense(expense.id, expenseData);
-        Toast.show({
-          type: 'success',
-          text1: 'Success',
-          text2: 'Expense updated successfully',
-        });
-      } else {
-        await ExpenseServices.createExpense(expenseData);
-        Toast.show({
-          type: 'success',
-          text1: 'Success',
-          text2: 'Expense created successfully',
-        });
-      }
-
-      onSave();
-    } catch (error: any) {
-      console.error('Error saving expense:', error);
-      const errorMessage =
-        error?.response?.data?.detail ||
-        error?.response?.data?.error ||
-        'Failed to save expense';
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: errorMessage,
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const handlePost = async () => {
     if (!formData.payment_method) {
@@ -325,8 +442,11 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
       return;
     }
 
-    if (!isEditMode || !expense) {
-      Alert.alert('Error', 'Cannot post a new expense. Please save it first.');
+    if (!isPersisted || !currentRecord) {
+      Alert.alert(
+        'Save first',
+        'Fill expense type and amount so the expense auto-saves, then post.',
+      );
       return;
     }
 
@@ -338,14 +458,18 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
         {
           text: 'Post',
           onPress: async () => {
-            setLoading(true);
+            setPosting(true);
             try {
-              const result = await ExpenseServices.postExpense(expense.id);
+              const result = await ExpenseServices.postExpense(currentRecord.id);
               Toast.show({
                 type: 'success',
                 text1: 'Success',
                 text2: result.message || 'Expense posted successfully',
               });
+              const refreshed = await ExpenseServices.getExpense(currentRecord.id);
+              setCurrentRecord(refreshed);
+              setFormData(expenseToForm(refreshed));
+              onRecordChange?.(refreshed);
               onSave();
             } catch (error: any) {
               Toast.show({
@@ -355,7 +479,7 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                   error?.response?.data?.detail || 'Failed to post expense',
               });
             } finally {
-              setLoading(false);
+              setPosting(false);
             }
           },
         },
@@ -376,7 +500,12 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
           style={[styles.safeArea, expTheme.safeArea]}
           edges={['left', 'right']}>
           <View style={[styles.page, expTheme.page]}>
-            <View style={[styles.pageHeader, expTheme.pageHeader, {paddingTop: topInset}]}>
+            <View
+              style={[
+                styles.pageHeader,
+                expTheme.pageHeader,
+                {paddingTop: topInset},
+              ]}>
               <QuickIconPressable
                 onPress={onClose}
                 style={styles.headerIconButton}
@@ -390,31 +519,38 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
               </QuickIconPressable>
 
               <View style={styles.headerRightActions}>
-                {canPost && isEditMode && expense?.status === 'Open' ? (
-                  <TouchableOpacity
-                    style={[styles.headerPostButton, loading && styles.buttonDisabled]}
-                    onPress={handlePost}
-                    disabled={loading}
-                    activeOpacity={0.85}>
-                    <Text style={styles.headerPostText}>Post</Text>
-                  </TouchableOpacity>
-                ) : null}
-                {(isEditMode && canEdit) || (!isEditMode && canCreate) ? (
+                {canPost && isPersisted && currentRecord?.status === 'Open' ? (
                   <TouchableOpacity
                     style={[
-                      styles.headerSaveButton,
-                      (loading || isPosted) && styles.buttonDisabled,
+                      styles.headerPostButton,
+                      posting && styles.buttonDisabled,
                     ]}
-                    onPress={handleSave}
-                    disabled={loading || isPosted}
+                    onPress={handlePost}
+                    disabled={posting || isSaving}
                     activeOpacity={0.85}>
-                    {loading ? (
+                    {posting ? (
                       <ActivityIndicator size="small" color={COLORS.white} />
                     ) : (
-                      <Text style={styles.headerSaveText}>Save</Text>
+                      <Text style={styles.headerPostText}>Post</Text>
                     )}
                   </TouchableOpacity>
                 ) : null}
+                {canWrite && !isPosted && (isSaving || showSaved) ? (
+                  <View
+                    style={styles.headerStatus}
+                    accessibilityRole="text"
+                    accessibilityLabel={isSaving ? 'Saving' : 'Saved'}>
+                    <Text
+                      style={[
+                        styles.headerStatusText,
+                        {color: colors.textSecondary},
+                      ]}>
+                      {isSaving ? 'Saving...' : 'Saved'}
+                    </Text>
+                  </View>
+                ) : (
+                  <View style={styles.headerStatusSpacer} />
+                )}
               </View>
             </View>
 
@@ -424,8 +560,13 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled">
               <Text style={[styles.pageTitle, expTheme.pageTitle]}>
-                {isEditMode ? 'Edit expense' : 'Add expense'}
+                {isPersisted ? 'Edit expense' : 'Add expense'}
               </Text>
+              {!isPosted ? (
+                <Text style={[styles.autoSaveHint, expTheme.autoSaveHint]}>
+                  Changes save automatically when you leave a field
+                </Text>
+              ) : null}
 
               <View style={styles.previewSection}>
                 <View style={styles.expensePreviewCard}>
@@ -449,11 +590,15 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
               </View>
 
               <View style={styles.section}>
-                <Text style={[styles.sectionTitle, expTheme.sectionTitle]}>Details</Text>
+                <Text style={[styles.sectionTitle, expTheme.sectionTitle]}>
+                  Details
+                </Text>
 
-                {isEditMode && expense?.document_no ? (
+                {isPersisted && currentRecord?.document_no ? (
                   <>
-                    <Text style={[styles.fieldLabel, expTheme.fieldLabel]}>Document no.</Text>
+                    <Text style={[styles.fieldLabel, expTheme.fieldLabel]}>
+                      Document no.
+                    </Text>
                     <TextInput
                       style={[
                         styles.input,
@@ -461,22 +606,27 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                         styles.inputDisabled,
                         expTheme.inputDisabled,
                       ]}
-                      value={expense.document_no}
+                      value={currentRecord.document_no}
                       editable={false}
                     />
                   </>
                 ) : null}
 
-                <Text style={[styles.fieldLabel, expTheme.fieldLabel]}>Posting date *</Text>
+                <Text style={[styles.fieldLabel, expTheme.fieldLabel]}>
+                  Posting date *
+                </Text>
                 <TouchableOpacity
                   style={[
                     styles.selectRow,
                     expTheme.selectRow,
-                    isPosted && [styles.selectRowDisabled, expTheme.selectRowDisabled],
+                    isPosted && [
+                      styles.selectRowDisabled,
+                      expTheme.selectRowDisabled,
+                    ],
                   ]}
-                  onPress={() => !isPosted && setShowDatePicker(true)}
+                  onPress={() => !isPosted && canWrite && setShowDatePicker(true)}
                   activeOpacity={0.7}
-                  disabled={isPosted}>
+                  disabled={isPosted || !canWrite}>
                   <Text
                     style={[
                       styles.selectRowText,
@@ -489,7 +639,10 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                     ]}>
                     {formData.posting_date || 'Select date'}
                   </Text>
-                  <Text style={[styles.selectRowChevron, expTheme.selectRowChevron]}>›</Text>
+                  <Text
+                    style={[styles.selectRowChevron, expTheme.selectRowChevron]}>
+                    ›
+                  </Text>
                 </TouchableOpacity>
                 {errors.posting_date ? (
                   <Text style={styles.errorText}>{errors.posting_date}</Text>
@@ -505,13 +658,21 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                 ) : null}
 
                 <Text
-                  style={[styles.fieldLabel, expTheme.fieldLabel, styles.fieldLabelSpaced]}>
+                  style={[
+                    styles.fieldLabel,
+                    expTheme.fieldLabel,
+                    styles.fieldLabelSpaced,
+                  ]}>
                   Expense type *
                 </Text>
                 {expenseTypes.length === 0 ? (
                   <View style={styles.inlineLoadingRow}>
                     <ActivityIndicator size="small" color={COLORS.primary2} />
-                    <Text style={[styles.inlineLoadingText, expTheme.inlineLoadingText]}>
+                    <Text
+                      style={[
+                        styles.inlineLoadingText,
+                        expTheme.inlineLoadingText,
+                      ]}>
                       Loading expense types…
                     </Text>
                   </View>
@@ -520,11 +681,16 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                     style={[
                       styles.selectRow,
                       expTheme.selectRow,
-                      isPosted && [styles.selectRowDisabled, expTheme.selectRowDisabled],
+                      isPosted && [
+                        styles.selectRowDisabled,
+                        expTheme.selectRowDisabled,
+                      ],
                     ]}
-                    onPress={() => !isPosted && setExpenseTypePickerVisible(true)}
+                    onPress={() =>
+                      !isPosted && canWrite && setExpenseTypePickerVisible(true)
+                    }
                     activeOpacity={0.7}
-                    disabled={isPosted}>
+                    disabled={isPosted || !canWrite}>
                     <Text
                       style={[
                         styles.selectRowText,
@@ -537,7 +703,13 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                       ]}>
                       {expenseTypeName || 'Select expense type'}
                     </Text>
-                    <Text style={[styles.selectRowChevron, expTheme.selectRowChevron]}>›</Text>
+                    <Text
+                      style={[
+                        styles.selectRowChevron,
+                        expTheme.selectRowChevron,
+                      ]}>
+                      ›
+                    </Text>
                   </TouchableOpacity>
                 )}
                 {errors.expense_type ? (
@@ -545,24 +717,38 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                 ) : null}
 
                 <Text
-                  style={[styles.fieldLabel, expTheme.fieldLabel, styles.fieldLabelSpaced]}>
+                  style={[
+                    styles.fieldLabel,
+                    expTheme.fieldLabel,
+                    styles.fieldLabelSpaced,
+                  ]}>
                   Description
                 </Text>
                 <TextInput
                   style={[styles.input, expTheme.input, styles.textArea]}
                   value={formData.description}
                   onChangeText={text =>
-                    setFormData({...formData, description: text})
+                    setFormData(prev => ({...prev, description: text}))
+                  }
+                  onBlur={() =>
+                    void autoSaveField(
+                      'description',
+                      formDataRef.current.description || '',
+                    )
                   }
                   placeholder="What was this expense for?"
                   placeholderTextColor={colors.placeholder}
                   multiline
                   numberOfLines={4}
-                  editable={!isPosted}
+                  editable={!isPosted && canWrite}
                 />
 
                 <Text
-                  style={[styles.fieldLabel, expTheme.fieldLabel, styles.fieldLabelSpaced]}>
+                  style={[
+                    styles.fieldLabel,
+                    expTheme.fieldLabel,
+                    styles.fieldLabelSpaced,
+                  ]}>
                   {formatCurrencyLabel('Amount')} *
                 </Text>
                 <TextInput
@@ -573,17 +759,27 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                   ]}
                   value={formatAmount(formData.amount)}
                   onChangeText={handleAmountChange}
+                  onBlur={() =>
+                    void autoSaveField(
+                      'amount',
+                      formDataRef.current.amount || '',
+                    )
+                  }
                   placeholder="0"
                   placeholderTextColor={colors.placeholder}
                   keyboardType="numeric"
-                  editable={!isPosted}
+                  editable={!isPosted && canWrite}
                 />
                 {errors.amount ? (
                   <Text style={styles.errorText}>{errors.amount}</Text>
                 ) : null}
 
                 <Text
-                  style={[styles.fieldLabel, expTheme.fieldLabel, styles.fieldLabelSpaced]}>
+                  style={[
+                    styles.fieldLabel,
+                    expTheme.fieldLabel,
+                    styles.fieldLabelSpaced,
+                  ]}>
                   Payment method
                   {isPosted ? '' : ' (optional)'}
                 </Text>
@@ -591,11 +787,16 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                   style={[
                     styles.selectRow,
                     expTheme.selectRow,
-                    isPosted && [styles.selectRowDisabled, expTheme.selectRowDisabled],
+                    isPosted && [
+                      styles.selectRowDisabled,
+                      expTheme.selectRowDisabled,
+                    ],
                   ]}
-                  onPress={() => !isPosted && setPaymentMethodPickerVisible(true)}
+                  onPress={() =>
+                    !isPosted && canWrite && setPaymentMethodPickerVisible(true)
+                  }
                   activeOpacity={0.7}
-                  disabled={isPosted}>
+                  disabled={isPosted || !canWrite}>
                   <Text
                     style={[
                       styles.selectRowText,
@@ -608,13 +809,18 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                     ]}>
                     {paymentMethodName || 'Select payment method'}
                   </Text>
-                  <Text style={[styles.selectRowChevron, expTheme.selectRowChevron]}>›</Text>
+                  <Text
+                    style={[styles.selectRowChevron, expTheme.selectRowChevron]}>
+                    ›
+                  </Text>
                 </TouchableOpacity>
               </View>
 
-              {isEditMode ? (
+              {isPersisted ? (
                 <View style={styles.section}>
-                  <Text style={[styles.sectionTitle, expTheme.sectionTitle]}>Status</Text>
+                  <Text style={[styles.sectionTitle, expTheme.sectionTitle]}>
+                    Status
+                  </Text>
                   <TextInput
                     style={[
                       styles.input,
@@ -622,7 +828,7 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                       styles.inputDisabled,
                       expTheme.inputDisabled,
                     ]}
-                    value={expense?.status || 'Open'}
+                    value={currentRecord?.status || 'Open'}
                     editable={false}
                   />
                 </View>
@@ -631,7 +837,9 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
               <View style={[styles.sectionDivider, expTheme.sectionDivider]} />
 
               <View style={styles.section}>
-                <Text style={[styles.sectionTitle, expTheme.sectionTitle]}>Posting</Text>
+                <Text style={[styles.sectionTitle, expTheme.sectionTitle]}>
+                  Posting
+                </Text>
                 <View style={[styles.infoCard, expTheme.infoCard]}>
                   <Text style={[styles.infoCardTitle, expTheme.infoCardTitle]}>
                     {isPosted ? 'This expense is posted' : 'Before you post'}
@@ -639,7 +847,7 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                   <Text style={[styles.infoCardBody, expTheme.infoCardBody]}>
                     {isPosted
                       ? 'Posted expenses are read-only. Create a reversal from the list if you need to adjust.'
-                      : 'Save as Open first, then use Post when you are ready to create G/L entries. A payment method is required to post.'}
+                      : 'Fill expense type and amount to auto-save as Open, then use Post when you are ready to create G/L entries. A payment method is required to post.'}
                   </Text>
                 </View>
               </View>
@@ -656,11 +864,10 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
         searchPlaceholder="Search expense types…"
         onClose={() => setExpenseTypePickerVisible(false)}
         onSelect={id => {
-          setFormData({
-            ...formData,
-            expense_type: typeof id === 'number' ? id : null,
-          });
+          const nextType = typeof id === 'number' ? id : null;
+          setFormData(prev => ({...prev, expense_type: nextType}));
           setExpenseTypePickerVisible(false);
+          void autoSaveField('expense_type', nextType);
         }}
       />
 
@@ -674,11 +881,10 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
         clearLabel="No payment method"
         onClose={() => setPaymentMethodPickerVisible(false)}
         onSelect={id => {
-          setFormData({
-            ...formData,
-            payment_method: typeof id === 'number' ? id : null,
-          });
+          const nextMethod = typeof id === 'number' ? id : null;
+          setFormData(prev => ({...prev, payment_method: nextMethod}));
           setPaymentMethodPickerVisible(false);
+          void autoSaveField('payment_method', nextMethod);
         }}
       />
     </Modal>
@@ -739,24 +945,21 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
   },
-  headerSaveButton: {
-    minWidth: 108,
+  headerStatus: {
+    minWidth: 72,
     height: 48,
-    borderRadius: 24,
-    backgroundColor: COLORS.primary2,
-    alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 24,
-    shadowColor: COLORS.primary3,
-    shadowOffset: {width: 0, height: 8},
-    shadowOpacity: 0.2,
-    shadowRadius: 16,
-    elevation: 6,
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    backgroundColor: 'transparent',
   },
-  headerSaveText: {
-    color: COLORS.white,
-    fontSize: 18,
-    fontWeight: '700',
+  headerStatusSpacer: {
+    width: 72,
+  },
+  headerStatusText: {
+    color: COLORS.gray2,
+    fontSize: 15,
+    fontWeight: '600',
   },
   buttonDisabled: {
     opacity: 0.55,
@@ -773,8 +976,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: COLORS.black,
     marginTop: 20,
-    marginBottom: 24,
+    marginBottom: 4,
     letterSpacing: -0.3,
+  },
+  autoSaveHint: {
+    ...FONTS.body5,
+    color: COLORS.gray2,
+    marginBottom: 18,
   },
   previewSection: {
     alignItems: 'center',
@@ -901,18 +1109,6 @@ const styles = StyleSheet.create({
     color: COLORS.gray2,
     fontWeight: '300',
     marginLeft: 8,
-  },
-  pickerShell: {
-    borderWidth: 1,
-    borderColor: COLORS.transparentPrimary2,
-    borderRadius: 14,
-    backgroundColor: COLORS.white,
-    overflow: 'hidden',
-  },
-  picker: {
-    width: '100%',
-    backgroundColor: COLORS.white,
-    color: COLORS.black,
   },
   inlineLoadingRow: {
     flexDirection: 'row',

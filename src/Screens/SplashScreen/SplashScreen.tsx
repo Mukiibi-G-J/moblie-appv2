@@ -7,9 +7,8 @@ import {
   Dimensions,
   StatusBar,
 } from 'react-native';
-import LinearGradient from 'react-native-linear-gradient';
 import images from '../../constants/images';
-import {gradientBrand} from '../../design-system/theme';
+import {COLORS} from '../../constants';
 
 const { width, height } = Dimensions.get('window');
 
@@ -55,11 +54,7 @@ const SplashScreen = () => {
   }, []);
 
   return (
-    <LinearGradient
-      colors={[...gradientBrand.colors]}
-      style={styles.container}
-      start={gradientBrand.start}
-      end={gradientBrand.end}>
+    <View style={styles.container}>
       <StatusBar
         translucent
         backgroundColor="transparent"
@@ -96,7 +91,7 @@ const SplashScreen = () => {
           resizeMode="contain"
         />
       </Animated.View>
-    </LinearGradient>
+    </View>
   );
 };
 
@@ -105,6 +100,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: COLORS.primary, // solid brand teal — no gradient
   },
   logoContainer: {
     alignItems: 'center',
@@ -113,7 +109,7 @@ const styles = StyleSheet.create({
   logo: {
     width: width * 0.7,
     height: height * 0.15,
-    tintColor: '#FFFFFF', // Make logo white, remove if your logo has colors
+    tintColor: '#FFFFFF',
   },
   iconContainer: {
     position: 'absolute',
@@ -122,12 +118,12 @@ const styles = StyleSheet.create({
   icon: {
     width: 60,
     height: 60,
-    tintColor: '#FFFFFF', // Make icon white, remove if your icon has colors
+    tintColor: '#FFFFFF',
   },
   logoIcon: {
     width: 40,
     height: 40,
-    tintColor: '#FFFFFF', // Make icon white, remove if your icon has colors
+    tintColor: '#FFFFFF',
   },
 });
 

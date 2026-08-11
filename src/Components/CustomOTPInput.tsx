@@ -6,7 +6,7 @@ import { useTheme } from '../context/ThemeContext';
 import { radii } from '../design-system/theme';
 
 /** Match Login / Sign-up primary CTA */
-const BRAND_FOCUS = '#0b5cff';
+const BRAND_FOCUS = '#005151';
 
 interface CustomOTPInputProps {
     pinCount: number;

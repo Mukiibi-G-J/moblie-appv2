@@ -38,46 +38,46 @@ interface Fonts {
 }
 
 export const COLORS: Colors = {
-  // Primary Colors
-  primary: '#0286FF', // Bright Blue - Your main brand color
-  primary2: '#0066CC', // Medium Blue
-  primary3: '#0047AB', // Deep Blue
+  // Primary Colors — aligned with webV2 (teal/gold)
+  primary: '#005151', // Brand teal (webV2 s1 / primary)
+  primary2: '#1a938a', // Mid teal (webV2 p1)
+  primary3: '#003d3d', // Deep teal (pressed)
 
   // Secondary Colors
-  secondary: '#2C3E50', // Dark Blue-Gray
-  secondary2: '#34495E', // Lighter Blue-Gray
+  secondary: '#060b1e', // Near-black text (webV2 mainTextColor)
+  secondary2: '#3b4a46', // Body text (webV2 bodyText)
 
   // Accent Colors
-  accent: '#00A3FF', // Light Blue
-  accent2: '#4DB6FF', // Sky Blue
+  accent: '#ffbf3f', // Gold (webV2 s2)
+  accent2: '#e8a115', // Darker gold (webV2 s3)
 
   // Status Colors
-  success: '#00B894', // Teal Green
-  warning: '#FFA133', // Warm Orange
-  error: '#FF4757', // Soft Red
-  info: '#2E86DE', // Info Blue
+  success: '#22C55E',
+  warning: '#F59E0B',
+  error: '#EF4444',
+  info: '#1a938a',
 
   // Neutral Colors
   grey: '#999',
-  gray: '#4A5568', // Dark Gray
-  gray2: '#718096', // Medium Gray
-  gray3: '#A0AEC0', // Light Gray
-  lightGray1: '#E2E8F0', // Very Light Gray
-  lightGray2: '#F7FAFC', // Almost White Gray
+  gray: '#4A5568',
+  gray2: '#718096',
+  gray3: '#A0AEC0',
+  lightGray1: '#e5e5e5', // webV2 strokeColor
+  lightGray2: '#f7f7f7', // webV2 softBg
 
   // Base Colors
   white: '#FFFFFF',
-  black: '#1A202C', // Soft Black
+  black: '#060b1e',
 
   darkGray: '#666666',
   darkGray2: '#757575',
-  red: '#FF4757',
+  red: '#EF4444',
 
   // Transparent Colors
   transparent: 'transparent',
-  transparentPrimary: 'rgba(2, 134, 255, 0.08)', // Very Light Blue
-  transparentPrimary2: 'rgba(2, 134, 255, 0.16)', // Light Blue
-  transparentPrimary3: 'rgba(2, 134, 255, 0.24)', // Medium Blue
+  transparentPrimary: 'rgba(0, 81, 81, 0.08)',
+  transparentPrimary2: 'rgba(0, 81, 81, 0.16)',
+  transparentPrimary3: 'rgba(0, 81, 81, 0.24)',
 
   // Background Overlays
   overlay: 'rgba(0, 0, 0, 0.3)',
@@ -85,13 +85,14 @@ export const COLORS: Colors = {
 
   // Card and Surface Colors
   surface: '#FFFFFF',
-  surfaceLight: '#F8FAFC',
+  surfaceLight: '#f7f7f7',
   surfaceDark: '#1A202C',
+  softBg2: '#eafaf8', // webV2 soft teal tint
 
   lightOrange: '#D4D4D4',
   lightOrange2: '#E5E5E5',
 
-  blue: '#0066CC',
+  blue: '#1a938a',
 };
 
 export const SIZES: Sizes = {
