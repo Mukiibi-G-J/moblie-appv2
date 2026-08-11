@@ -250,12 +250,9 @@ class BluetoothPrinterService {
   }
 
   /**
-   * Whether the device Bluetooth radio is on (Android).
+   * Whether the device Bluetooth radio is on.
    */
   public async isBluetoothEnabled(): Promise<boolean> {
-    if (Platform.OS !== 'android') {
-      return false;
-    }
     try {
       const state = await BluetoothStateManager.getState();
       return state === 'PoweredOn';
@@ -266,16 +263,22 @@ class BluetoothPrinterService {
   }
 
   /**
-   * Show the system dialog to turn Bluetooth on (Android).
+   * Show the system dialog to turn Bluetooth on (Android only).
+   * On iOS, apps cannot enable Bluetooth — prompt the user instead.
    * @returns true when Bluetooth is on after the request.
    */
   public async requestEnableBluetooth(): Promise<boolean> {
-    if (Platform.OS !== 'android') {
-      return false;
-    }
     try {
       if (await this.isBluetoothEnabled()) {
         return true;
+      }
+      if (Platform.OS !== 'android') {
+        Toast.show({
+          type: 'info',
+          text1: 'Turn on Bluetooth',
+          text2: 'Open Control Center or Settings and enable Bluetooth, then try again.',
+        });
+        return false;
       }
       await BluetoothStateManager.enable();
       return await this.isBluetoothEnabled();
@@ -286,7 +289,8 @@ class BluetoothPrinterService {
   }
 
   /**
-   * Request Bluetooth permissions (Android)
+   * Request Bluetooth permissions (Android runtime).
+   * On iOS, permission is requested when CoreBluetooth starts (Info.plist required).
    */
   private async requestBluetoothPermissions(): Promise<boolean> {
     if (Platform.OS !== 'android') {
@@ -334,27 +338,31 @@ class BluetoothPrinterService {
     }
   }
 
+  /** Format printer address for the native thermal-printer module. */
+  private formatNativePrinterAddress(address: string): string {
+    const raw = address.replace(/^(bt|ble):/i, '');
+    if (Platform.OS === 'ios') {
+      // iOS discovery returns BLE UUIDs — classic `bt:` is MFi-only.
+      return `ble:${raw}`;
+    }
+    return `bt:${raw}`;
+  }
+
   /**
    * Scan for available Bluetooth printers
    */
   public async scanForPrinters(): Promise<BluetoothDevice[]> {
     try {
-      if (Platform.OS !== 'android') {
-        Toast.show({
-          type: 'info',
-          text1: 'Not Supported',
-          text2: 'Bluetooth printing is only available on Android',
-        });
-        return [];
-      }
-
       console.log('Starting Bluetooth scan...');
 
       if (!(await this.isBluetoothEnabled())) {
         Toast.show({
           type: 'error',
           text1: 'Bluetooth is off',
-          text2: 'Turn on Bluetooth in Printer configuration to scan for printers.',
+          text2:
+            Platform.OS === 'ios'
+              ? 'Turn on Bluetooth in Control Center or Settings, then scan again.'
+              : 'Turn on Bluetooth in Printer configuration to scan for printers.',
         });
         return [];
       }
@@ -647,20 +655,26 @@ class BluetoothPrinterService {
   ): Promise<boolean> {
     const showToast = options?.showToast !== false;
 
-    if (Platform.OS !== 'android') {
-      return false;
-    }
-
     const hasPermissions = await this.requestBluetoothPermissions();
     if (!hasPermissions) {
       return false;
     }
 
-    let formattedAddress = device.address.replace(/^bt:/i, '');
-    if (!formattedAddress.startsWith('bt:')) {
-      formattedAddress = `bt:${formattedAddress}`;
+    if (!(await this.isBluetoothEnabled())) {
+      if (showToast) {
+        Toast.show({
+          type: 'error',
+          text1: 'Bluetooth is off',
+          text2:
+            Platform.OS === 'ios'
+              ? 'Turn on Bluetooth in Control Center or Settings, then try again.'
+              : 'Turn on Bluetooth and try again.',
+        });
+      }
+      return false;
     }
 
+    const formattedAddress = this.formatNativePrinterAddress(device.address);
     this.printerAddress = formattedAddress;
 
     try {
@@ -669,7 +683,7 @@ class BluetoothPrinterService {
         this.isConnected = true;
         this.connectedDevice = {
           name: device.name,
-          address: device.address.replace(/^bt:/i, ''),
+          address: device.address.replace(/^(bt|ble):/i, ''),
         };
         this.isInitialized = true;
         await this.persistPrinterDevice(this.connectedDevice);
@@ -709,7 +723,7 @@ class BluetoothPrinterService {
           text1: 'Connection Failed',
           text2:
             e?.message ||
-            'Failed to connect to Bluetooth printer. Please ensure the printer is paired.',
+            'Failed to connect to Bluetooth printer. Please ensure the printer is nearby and powered on.',
         });
       }
       return false;
@@ -720,9 +734,6 @@ class BluetoothPrinterService {
    * Reconnect to the last printer used (after app restart).
    */
   public async ensureConnectedFromStorage(): Promise<boolean> {
-    if (Platform.OS !== 'android') {
-      return false;
-    }
     if (this.isPrinterConnected()) {
       return true;
     }
@@ -750,9 +761,6 @@ class BluetoothPrinterService {
    * When printer type is Auto, try likely candidates from the system paired list.
    */
   public async tryAutoConnectPosBuiltin(): Promise<boolean> {
-    if (Platform.OS !== 'android') {
-      return false;
-    }
     if (this.isPrinterConnected()) {
       return true;
     }
@@ -786,7 +794,7 @@ class BluetoothPrinterService {
       for (const d of ordered) {
         const device: BluetoothDevice = {
           name: d.name || 'Printer',
-          address: d.address.replace(/^bt:/i, ''),
+          address: d.address.replace(/^(bt|ble):/i, ''),
         };
         const ok = await this.establishBluetoothConnection(device, {
           showToast: false,
