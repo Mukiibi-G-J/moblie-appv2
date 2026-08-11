@@ -38,10 +38,14 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Zentro needs local network access to load the JavaScript development server while debugging.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Zentro needs Bluetooth to find and connect to nearby receipt printers.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Zentro needs Bluetooth to find and connect to nearby receipt printers.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>Zentro uses your contacts so you can quickly add customers from your address book.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string></string>
+	<string>Location is used on some devices to help discover nearby Bluetooth printers.</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>Outfit-Bold.ttf</string>
