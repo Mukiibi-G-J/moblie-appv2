@@ -5,6 +5,7 @@ import {
   Pressable,
   StyleSheet,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import {constants, COLORS} from '../../constants';
@@ -12,6 +13,7 @@ import {PAGE_NAMES} from '../../constants/pageNames';
 import {usePermissions} from '../../hooks/usePermissions';
 import {useTheme} from '../../context/ThemeContext';
 import {useTabContext} from '../../context/Store';
+import {isWideLayout} from '../../utils/layout';
 
 type AttentionCard = {
   key: string;
@@ -24,6 +26,7 @@ type AttentionCard = {
 
 type OptionsProps = {
   lowStockCount?: number;
+  wide?: boolean;
 };
 
 const quickPressProps = {
@@ -36,14 +39,17 @@ const quickPressProps = {
  * Home attention cards only (QuickBooks-style).
  * Module shortcuts live in More — keep Home breathable.
  */
-const Options = ({lowStockCount = 0}: OptionsProps) => {
+const Options = ({lowStockCount = 0, wide}: OptionsProps) => {
   const navigation = useNavigation();
   const {setSelectedTab} = useTabContext();
-  const {isModuleVisible, hasAnyPageAccess} = usePermissions();
+  const {isModuleVisible, canAccessMobileNav} = usePermissions();
   const {colors, isDark} = useTheme();
+  const {width, height} = useWindowDimensions();
+  const isWide = wide ?? isWideLayout(width, height);
 
   const canMakeSale =
-    isModuleVisible('sales') && hasAnyPageAccess(PAGE_NAMES.SALES);
+    isModuleVisible('sales') &&
+    canAccessMobileNav('makeSale', PAGE_NAMES.SALES);
 
   const cards: AttentionCard[] = useMemo(() => {
     const next: AttentionCard[] = [];
@@ -51,7 +57,7 @@ const Options = ({lowStockCount = 0}: OptionsProps) => {
     if (
       lowStockCount > 0 &&
       isModuleVisible('items') &&
-      hasAnyPageAccess(PAGE_NAMES.ITEMS)
+      canAccessMobileNav('items', PAGE_NAMES.ITEMS)
     ) {
       next.push({
         key: 'low-stock',
@@ -85,7 +91,7 @@ const Options = ({lowStockCount = 0}: OptionsProps) => {
     canMakeSale,
     lowStockCount,
     isModuleVisible,
-    hasAnyPageAccess,
+    canAccessMobileNav,
     navigation,
     setSelectedTab,
   ]);
@@ -109,41 +115,43 @@ const Options = ({lowStockCount = 0}: OptionsProps) => {
     }),
   };
 
+  const cardNodes = cards.map(card => {
+    const accent = card.tone === 'warning' ? COLORS.warning : COLORS.primary;
+    return (
+      <View
+        key={card.key}
+            style={[styles.card, isWide && styles.cardWide, cardSurface]}>
+        <Text
+          style={[styles.title, {color: colors.textPrimary}]}
+          numberOfLines={1}>
+          {card.title}
+        </Text>
+        <Text
+          style={[styles.body, {color: colors.textSecondary}]}
+          numberOfLines={3}>
+          {card.body}
+        </Text>
+        <Pressable
+          {...quickPressProps}
+          onPress={card.onPress}
+          style={({pressed}) => [
+            styles.cta,
+            isWide && styles.ctaWide,
+            {
+              borderColor: accent,
+              opacity: pressed ? 0.85 : 1,
+            },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel={card.cta}>
+          <Text style={[styles.ctaLabel, {color: accent}]}>{card.cta}</Text>
+        </Pressable>
+      </View>
+    );
+  });
+
   return (
-    <View style={styles.container}>
-      {cards.map(card => {
-        const accent =
-          card.tone === 'warning' ? COLORS.warning : COLORS.primary;
-        return (
-          <View key={card.key} style={[styles.card, cardSurface]}>
-            <Text
-              style={[styles.title, {color: colors.textPrimary}]}
-              numberOfLines={1}>
-              {card.title}
-            </Text>
-            <Text
-              style={[styles.body, {color: colors.textSecondary}]}
-              numberOfLines={3}>
-              {card.body}
-            </Text>
-            <Pressable
-              {...quickPressProps}
-              onPress={card.onPress}
-              style={({pressed}) => [
-                styles.cta,
-                {
-                  borderColor: accent,
-                  opacity: pressed ? 0.85 : 1,
-                },
-              ]}
-              accessibilityRole="button"
-              accessibilityLabel={card.cta}>
-              <Text style={[styles.ctaLabel, {color: accent}]}>{card.cta}</Text>
-            </Pressable>
-          </View>
-        );
-      })}
-    </View>
+    <View style={isWide ? styles.grid : styles.container}>{cardNodes}</View>
   );
 };
 
@@ -151,12 +159,24 @@ const styles = StyleSheet.create({
   container: {
     gap: 14,
   },
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 14,
+    alignItems: 'stretch',
+  },
   card: {
     borderRadius: 16,
     borderWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: 18,
     paddingTop: 18,
     paddingBottom: 16,
+  },
+  cardWide: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: '47%',
+    minWidth: 280,
   },
   title: {
     fontSize: 17,
@@ -176,6 +196,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 16,
+  },
+  ctaWide: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 20,
+    minWidth: 160,
   },
   ctaLabel: {
     fontSize: 15,

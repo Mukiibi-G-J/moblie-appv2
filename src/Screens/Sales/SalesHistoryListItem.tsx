@@ -1,6 +1,5 @@
-import React from 'react';
+import React, {useMemo, useState} from 'react';
 import {
-  Alert,
   View,
   Text,
   TouchableOpacity,
@@ -11,6 +10,9 @@ import {
 import {COLORS, FONTS, icons} from '../../constants';
 import {formatCurrencyCompact} from '../../utils/currency';
 import {useTheme} from '../../context/ThemeContext';
+import ChooseActionSheet, {
+  type ChooseActionItem,
+} from '../../Components/ChooseActionSheet';
 
 export type SalesHistoryListItemData = {
   id?: number;
@@ -79,6 +81,7 @@ const SalesHistoryListItem: React.FC<Props> = ({
   posting = false,
 }) => {
   const {colors} = useTheme();
+  const [actionsVisible, setActionsVisible] = useState(false);
   const statusLower = String(item.status || '').toLowerCase();
   const isOpenish =
     (statusLower === 'open' || statusLower === 'draft') && !item.reversed;
@@ -117,50 +120,41 @@ const SalesHistoryListItem: React.FC<Props> = ({
     !!onPrintPress && statusLower === 'posted' && !item.reversed;
   const canOpenActions = canEditInPos || canPost || canPrint;
 
-  const handleOpenActions = () => {
-    if (posting) {
-      return;
-    }
-
-    const options: Array<{
-      text: string;
-      style?: 'cancel' | 'destructive';
-      onPress?: () => void;
-    }> = [];
-
-    options.push({
-      text: 'View details',
-      onPress,
-    });
-
-    if (canEditInPos) {
-      options.push({
-        text: 'Edit in POS',
+  const actionItems = useMemo(() => {
+    const items: ChooseActionItem[] = [
+      {
+        key: 'view',
+        label: 'View details',
+        onPress,
+      },
+    ];
+    if (canEditInPos && onEditInPosPress) {
+      items.push({
+        key: 'edit',
+        label: 'Edit in POS',
         onPress: onEditInPosPress,
       });
     }
-
-    if (canPost) {
-      options.push({
-        text: 'Post sale',
+    if (canPost && onPostPress) {
+      items.push({
+        key: 'post',
+        label: 'Post sale',
         onPress: onPostPress,
       });
     }
-
-    if (canPrint) {
-      options.push({
-        text: 'Print receipt',
+    if (canPrint && onPrintPress) {
+      items.push({
+        key: 'print',
+        label: 'Print receipt',
         onPress: onPrintPress,
       });
     }
-
-    options.push({text: 'Cancel', style: 'cancel'});
-
-    Alert.alert(title, 'Choose an action', options);
-  };
+    return items;
+  }, [canEditInPos, canPost, canPrint, onEditInPosPress, onPostPress, onPrintPress, onPress]);
 
   return (
-    <TouchableOpacity
+    <View>
+      <TouchableOpacity
       activeOpacity={0.8}
       style={[styles.container, {borderBottomColor: colors.border}]}
       onPress={onPress}>
@@ -202,10 +196,16 @@ const SalesHistoryListItem: React.FC<Props> = ({
 
       {canOpenActions ? (
         <TouchableOpacity
-          onPress={handleOpenActions}
+          onPress={() => {
+            if (!posting) {
+              setActionsVisible(true);
+            }
+          }}
           disabled={posting}
           style={[styles.actionButton, {backgroundColor: colors.backButtonBg}]}
-          hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
+          hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
+          accessibilityRole="button"
+          accessibilityLabel="Choose an action">
           {posting ? (
             <ActivityIndicator color={COLORS.primary} size="small" />
           ) : (
@@ -217,7 +217,15 @@ const SalesHistoryListItem: React.FC<Props> = ({
           )}
         </TouchableOpacity>
       ) : null}
-    </TouchableOpacity>
+      </TouchableOpacity>
+
+      <ChooseActionSheet
+        visible={actionsVisible}
+        title={title}
+        actions={actionItems}
+        onClose={() => setActionsVisible(false)}
+      />
+    </View>
   );
 };
 

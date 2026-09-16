@@ -1,25 +1,98 @@
-import React, {useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {
   View,
   Text,
   Modal,
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
-  ActivityIndicator,
   ScrollView,
-  Alert,
+  TextInput,
+  StyleSheet,
+  ActivityIndicator,
+  Image,
+  Platform,
 } from 'react-native';
+import {Picker} from '@react-native-picker/picker';
+import {COLORS, FONTS} from '../../constants';
+import icons from '../../constants/icons';
 import {QuickIconPressable} from '../../Components';
-import {COLORS, FONTS, SIZES, ICON_BUTTON_HIT_SLOP} from '../../constants';
+import {useScreenTopInset} from '../../hooks/useScreenTopInset';
 import {BankAccount} from '../../@types/bankAccount';
 import {BankAccountServices} from '../../services/BankAccountServices';
+import {formatCurrencyCompact} from '../../utils/currency';
 import Toast from 'react-native-toast-message';
+
+type BankAccountFormValues = {
+  no: string;
+  name: string;
+  bank_account_no: string;
+  bank_branch_no: string;
+  bank_account_posting_group: string;
+  address: string;
+  contact: string;
+  min_balance: string;
+};
+
+type PostingGroup = {
+  code?: string;
+  name?: string;
+  description?: string;
+};
+
+const emptyForm = (): BankAccountFormValues => ({
+  no: '',
+  name: '',
+  bank_account_no: '',
+  bank_branch_no: '',
+  bank_account_posting_group: '',
+  address: '',
+  contact: '',
+  min_balance: '0',
+});
+
+const accountToForm = (account: BankAccount): BankAccountFormValues => ({
+  no: account.no || '',
+  name: account.name || '',
+  bank_account_no: account.bank_account_no || '',
+  bank_branch_no: account.bank_branch_no || '',
+  bank_account_posting_group: account.bank_account_posting_group || '',
+  address: account.address || '',
+  contact: account.contact || '',
+  min_balance:
+    account.min_balance === undefined || account.min_balance === null
+      ? '0'
+      : String(account.min_balance),
+});
+
+const OPTIONAL_FIELDS = new Set<keyof BankAccountFormValues>([
+  'bank_account_no',
+  'bank_branch_no',
+  'bank_account_posting_group',
+  'address',
+  'contact',
+  'min_balance',
+]);
+
+const extractApiErrorMessage = (
+  error: any,
+  field: string,
+  fallback: string,
+): string => {
+  const data = error?.response?.data;
+  if (!data) return fallback;
+  if (typeof data === 'string') return data;
+  if (data[field]?.[0]) return String(data[field][0]);
+  if (data.errors?.[field]?.[0]) return String(data.errors[field][0]);
+  if (data.detail) return String(data.detail);
+  if (data.error) return String(data.error);
+  return fallback;
+};
 
 type Props = {
   visible: boolean;
   onClose: () => void;
-  onSaved: () => void;
+  /** Called after a successful auto-save so the list can refresh (does not close). */
+  onSave: () => void;
+  /** Keeps parent selection in sync after create / update. */
+  onRecordChange?: (account: BankAccount) => void;
   bankAccount: BankAccount | null;
   canCreate: boolean;
   canEdit: boolean;
@@ -28,323 +101,830 @@ type Props = {
 const BankAccountFormModal: React.FC<Props> = ({
   visible,
   onClose,
-  onSaved,
+  onSave,
+  onRecordChange,
   bankAccount,
   canCreate,
   canEdit,
 }) => {
-  const isEdit = !!bankAccount;
-  const [form, setForm] = useState<Partial<BankAccount>>({
-    no: '',
-    name: '',
-    bank_account_no: '',
-    bank_branch_no: '',
-    bank_account_posting_group: '',
-    address: '',
-    contact: '',
-    min_balance: 0,
-  });
-  const [postingGroups, setPostingGroups] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [loadingPG, setLoadingPG] = useState(false);
+  const topInset = useScreenTopInset();
+
+  const [formData, setFormData] = useState<BankAccountFormValues>(emptyForm);
+  const [currentRecord, setCurrentRecord] = useState<BankAccount | null>(
+    bankAccount,
+  );
+  const [isSaving, setIsSaving] = useState(false);
+  const [showSaved, setShowSaved] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [postingGroups, setPostingGroups] = useState<PostingGroup[]>([]);
+  const [loadingPG, setLoadingPG] = useState(false);
+
+  const formDataRef = useRef(formData);
+  const currentRecordRef = useRef(currentRecord);
+  const savingRef = useRef(false);
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  formDataRef.current = formData;
+  currentRecordRef.current = currentRecord;
+
+  const isEditMode = !!currentRecord?.no;
+  const canWrite = isEditMode ? canEdit : canCreate;
+
+  const previewName = formData.name.trim() || formData.no.trim() || 'Bank account';
+  const previewInitials = useMemo(() => {
+    const source = formData.name.trim() || formData.no.trim() || 'BA';
+    const parts = source.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) {
+      return `${parts[0][0] || ''}${parts[1][0] || ''}`.toUpperCase();
+    }
+    return source.slice(0, 2).toUpperCase();
+  }, [formData.name, formData.no]);
 
   useEffect(() => {
-    const init = () => {
-      if (bankAccount) {
-        setForm({
-          no: bankAccount.no,
-          name: bankAccount.name,
-          bank_account_no: bankAccount.bank_account_no,
-          bank_branch_no: bankAccount.bank_branch_no,
-          bank_account_posting_group: bankAccount.bank_account_posting_group,
-          address: bankAccount.address,
-          contact: bankAccount.contact,
-          min_balance: bankAccount.min_balance || 0,
-        });
-      } else {
-        setForm({
-          no: '',
-          name: '',
-          bank_account_no: '',
-          bank_branch_no: '',
-          bank_account_posting_group: '',
-          address: '',
-          contact: '',
-          min_balance: 0,
-        });
-      }
+    if (!visible) {
+      setCurrentRecord(null);
+      setFormData(emptyForm());
       setErrors({});
-    };
-    init();
-  }, [bankAccount, visible]);
+      setShowSaved(false);
+      return;
+    }
+    if (bankAccount?.no) {
+      if (currentRecordRef.current?.no !== bankAccount.no) {
+        setCurrentRecord(bankAccount);
+        setFormData(accountToForm(bankAccount));
+      } else {
+        setCurrentRecord(bankAccount);
+      }
+    } else if (!currentRecordRef.current?.no) {
+      setCurrentRecord(null);
+      setFormData(emptyForm());
+    }
+    setErrors({});
+    setShowSaved(false);
+  }, [bankAccount?.no, visible]);
 
   useEffect(() => {
-    const loadPG = async () => {
+    if (!visible) {
+      if (savedTimerRef.current) {
+        clearTimeout(savedTimerRef.current);
+        savedTimerRef.current = null;
+      }
+      return;
+    }
+    let cancelled = false;
+    (async () => {
       setLoadingPG(true);
       try {
         const groups = await BankAccountServices.getPostingGroups();
-        setPostingGroups(groups || []);
+        if (!cancelled) setPostingGroups(groups || []);
       } catch (error) {
         console.warn('Failed to load posting groups', error);
       } finally {
-        setLoadingPG(false);
+        if (!cancelled) setLoadingPG(false);
       }
+    })();
+    return () => {
+      cancelled = true;
     };
-    if (visible) loadPG();
   }, [visible]);
 
-  const validate = () => {
-    const newErrors: Record<string, string> = {};
-    if (!form.no) newErrors.no = 'Account number is required';
-    if (!form.name) newErrors.name = 'Name is required';
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+  const flashSaved = useCallback(() => {
+    setShowSaved(true);
+    if (savedTimerRef.current) {
+      clearTimeout(savedTimerRef.current);
+    }
+    savedTimerRef.current = setTimeout(() => {
+      setShowSaved(false);
+      savedTimerRef.current = null;
+    }, 2000);
+  }, []);
+
+  const parseMinBalance = (raw: string): number => {
+    const cleaned = String(raw || '').replace(/,/g, '').trim();
+    if (!cleaned) return 0;
+    const n = Number.parseFloat(cleaned);
+    return Number.isFinite(n) ? n : 0;
   };
 
-  const handleSave = async () => {
-    if (!validate()) return;
-    if (isEdit && !canEdit) {
-      Alert.alert('Permission', 'You do not have permission to edit.');
-      return;
+  const buildCreatePayload = (
+    values: BankAccountFormValues,
+  ): Partial<BankAccount> => {
+    const payload: Partial<BankAccount> = {
+      no: values.no.trim(),
+      name: values.name.trim(),
+      min_balance: parseMinBalance(values.min_balance),
+    };
+    if (values.bank_account_no.trim()) {
+      payload.bank_account_no = values.bank_account_no.trim();
     }
-    if (!isEdit && !canCreate) {
-      Alert.alert('Permission', 'You do not have permission to create.');
-      return;
+    if (values.bank_branch_no.trim()) {
+      payload.bank_branch_no = values.bank_branch_no.trim();
     }
-    setLoading(true);
-    try {
-      if (isEdit && bankAccount) {
-        await BankAccountServices.updateBankAccount(bankAccount.no || '', form);
-        Toast.show({type: 'success', text1: 'Updated', text2: 'Bank account updated'});
-      } else {
-        await BankAccountServices.createBankAccount(form);
-        Toast.show({type: 'success', text1: 'Created', text2: 'Bank account created'});
+    if (values.bank_account_posting_group.trim()) {
+      payload.bank_account_posting_group =
+        values.bank_account_posting_group.trim();
+    }
+    if (values.address.trim()) {
+      payload.address = values.address.trim();
+    }
+    if (values.contact.trim()) {
+      payload.contact = values.contact.trim();
+    }
+    return payload;
+  };
+
+  const normalizeFieldValue = (
+    field: keyof BankAccountFormValues,
+    rawValue: BankAccountFormValues[keyof BankAccountFormValues],
+  ) => {
+    if (field === 'min_balance') {
+      return parseMinBalance(String(rawValue ?? ''));
+    }
+    if (typeof rawValue === 'string') {
+      return rawValue.trim();
+    }
+    return rawValue;
+  };
+
+  const getComparableRecordValue = (
+    record: BankAccount,
+    field: keyof BankAccountFormValues,
+  ) => {
+    if (field === 'min_balance') {
+      return Number(record.min_balance ?? 0);
+    }
+    return String((record as any)[field] ?? '');
+  };
+
+  const getFieldError = (
+    field: keyof BankAccountFormValues,
+    value: unknown,
+  ) => {
+    if (field === 'no') {
+      const no = String(value || '').trim();
+      if (!no) return 'Account number is required';
+      if (no.length > 20) return 'Account number must be 20 characters or less';
+    }
+    if (field === 'name') {
+      const name = String(value || '').trim();
+      if (!name) return 'Name is required';
+    }
+    if (field === 'min_balance') {
+      const cleaned = String(value ?? '').replace(/,/g, '').trim();
+      if (cleaned && !Number.isFinite(Number.parseFloat(cleaned))) {
+        return 'Enter a valid amount';
       }
-      onSaved();
-      onClose();
-    } catch (error: any) {
-      Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2:
-          error?.response?.data?.detail ||
-          error?.response?.data?.error ||
-          'Failed to save bank account',
-      });
-    } finally {
-      setLoading(false);
     }
+    return null;
   };
 
-  const renderInput = (
-    label: string,
-    value: string,
-    onChange: (text: string) => void,
-    keyboardType: 'default' | 'numeric' = 'default',
-    editable = true,
-  ) => (
-    <View style={styles.field}>
-      <Text style={styles.label}>{label}</Text>
-      <TextInput
-        value={value}
-        onChangeText={onChange}
-        style={[styles.input, !editable && styles.inputDisabled]}
-        placeholderTextColor={COLORS.gray}
-        keyboardType={keyboardType}
-        editable={editable}
-      />
-    </View>
+  const autoSaveField = useCallback(
+    async (
+      field: keyof BankAccountFormValues,
+      rawValue: BankAccountFormValues[keyof BankAccountFormValues],
+    ) => {
+      if (!visible || !canWrite || savingRef.current) {
+        return;
+      }
+
+      // Account No is immutable after create.
+      if (field === 'no' && currentRecordRef.current?.no) {
+        return;
+      }
+
+      const normalizedValue = normalizeFieldValue(field, rawValue);
+      const record = currentRecordRef.current;
+      const values = {...formDataRef.current, [field]: rawValue};
+
+      if (record?.no) {
+        const existing = getComparableRecordValue(record, field);
+        if (String(existing ?? '') === String(normalizedValue ?? '')) {
+          return;
+        }
+      }
+
+      const fieldError = getFieldError(field, rawValue);
+      if (fieldError) {
+        setErrors(prev => ({...prev, [field]: fieldError}));
+        return;
+      }
+
+      if (
+        !OPTIONAL_FIELDS.has(field) &&
+        (normalizedValue === '' ||
+          normalizedValue === null ||
+          normalizedValue === undefined)
+      ) {
+        return;
+      }
+
+      const noForCreate =
+        field === 'no' ? String(normalizedValue || '') : values.no || '';
+      const nameForCreate =
+        field === 'name' ? String(normalizedValue || '') : values.name || '';
+      if (!record?.no && (!noForCreate.trim() || !nameForCreate.trim())) {
+        return;
+      }
+
+      setErrors(prev => {
+        const next = {...prev};
+        delete next[field];
+        return next;
+      });
+
+      savingRef.current = true;
+      setIsSaving(true);
+      try {
+        if (!record?.no) {
+          const created = await BankAccountServices.createBankAccount(
+            buildCreatePayload({
+              ...values,
+              [field]:
+                field === 'min_balance'
+                  ? String(normalizedValue)
+                  : (rawValue as any),
+            }),
+          );
+          setCurrentRecord(created);
+          setFormData(accountToForm(created));
+          onRecordChange?.(created);
+          onSave();
+          flashSaved();
+        } else {
+          const patch: Partial<BankAccount> = {
+            [field]: normalizedValue,
+          } as Partial<BankAccount>;
+          const updated = await BankAccountServices.updateBankAccount(
+            record.no,
+            patch,
+          );
+          setCurrentRecord(updated);
+          if (field === 'min_balance') {
+            setFormData(prev => ({
+              ...prev,
+              min_balance: String(updated.min_balance ?? 0),
+            }));
+          } else if (field !== 'no') {
+            setFormData(prev => ({
+              ...prev,
+              [field]: String((updated as any)[field] ?? prev[field] ?? ''),
+            }));
+          }
+          onRecordChange?.(updated);
+          onSave();
+          flashSaved();
+        }
+      } catch (error: any) {
+        console.error('Error auto-saving bank account:', error);
+        const errorMessage = extractApiErrorMessage(
+          error,
+          field,
+          `Failed to save ${field.replace(/_/g, ' ')}`,
+        );
+        setErrors(prev => ({...prev, [field]: errorMessage}));
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: errorMessage,
+        });
+      } finally {
+        savingRef.current = false;
+        setIsSaving(false);
+      }
+    },
+    [visible, canWrite, onRecordChange, onSave, flashSaved],
   );
 
+  const selectedPostingGroupLabel = useMemo(() => {
+    const code = formData.bank_account_posting_group;
+    if (!code) return '';
+    const match = postingGroups.find(g => g.code === code);
+    return match?.name || match?.description || code;
+  }, [formData.bank_account_posting_group, postingGroups]);
+
   return (
-    <Modal visible={visible} animationType="slide" transparent>
-      <View style={styles.overlay}>
-        <View style={styles.modal}>
-          <View style={styles.header}>
-            <Text style={styles.title}>{isEdit ? 'Edit Bank Account' : 'Create Bank Account'}</Text>
-            <QuickIconPressable
-              onPress={onClose}
-              style={styles.closeBtn}
-              hitSlop={ICON_BUTTON_HIT_SLOP}
-              accessibilityLabel="Close">
-              <Text style={styles.closeText}>✕</Text>
-            </QuickIconPressable>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      transparent={false}
+      onRequestClose={onClose}>
+      <View style={styles.pageRoot}>
+        <View style={[styles.pageHeader, {paddingTop: topInset}]}>
+          <QuickIconPressable
+            onPress={onClose}
+            style={styles.headerIconButton}
+            hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
+            accessibilityLabel="Close">
+            <Image
+              source={icons.cross}
+              style={styles.headerIcon}
+              resizeMode="contain"
+            />
+          </QuickIconPressable>
+
+          {canWrite && (isSaving || showSaved) ? (
+            <View
+              style={styles.headerSaveButton}
+              accessibilityRole="text"
+              accessibilityLabel={isSaving ? 'Saving' : 'Saved'}>
+              <Text style={styles.headerSaveText}>
+                {isSaving ? 'Saving...' : 'Saved'}
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.headerSpacer} />
+          )}
+        </View>
+
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled">
+          <Text style={styles.pageTitle}>
+            {isEditMode ? 'Edit bank account' : 'Add bank account'}
+          </Text>
+          <Text style={styles.autoSaveHint}>
+            Changes save automatically when you leave a field
+          </Text>
+
+          <View style={styles.previewSection}>
+            <View style={styles.previewAvatar}>
+              <Text style={styles.previewInitials}>{previewInitials}</Text>
+            </View>
+            <View style={styles.previewMeta}>
+              <Text
+                style={styles.previewName}
+                numberOfLines={1}
+                ellipsizeMode="tail">
+                {previewName}
+              </Text>
+              <Text style={styles.previewSubtext}>
+                {currentRecord?.balance !== undefined &&
+                currentRecord?.balance !== null
+                  ? `Balance ${formatCurrencyCompact(currentRecord.balance)}`
+                  : formData.bank_account_no?.trim() ||
+                    formData.no?.trim() ||
+                    'Account details'}
+              </Text>
+            </View>
           </View>
-          <ScrollView style={{maxHeight: '80%'}}>
-            {renderInput(
-              'Account No *',
-              form.no || '',
-              text => setForm(prev => ({...prev, no: text})),
-              'default',
-              !isEdit, // prevent changing PK on edit
-            )}
-            {renderInput(
-              'Name *',
-              form.name || '',
-              text => setForm(prev => ({...prev, name: text})),
-            )}
-            {renderInput(
-              'Bank Account No',
-              form.bank_account_no || '',
-              text => setForm(prev => ({...prev, bank_account_no: text})),
-            )}
-            {renderInput(
-              'Bank Branch No',
-              form.bank_branch_no || '',
-              text => setForm(prev => ({...prev, bank_branch_no: text})),
-            )}
-            <View style={styles.field}>
-              <Text style={styles.label}>Posting Group</Text>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Details</Text>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Account number</Text>
               <TextInput
-                value={form.bank_account_posting_group || ''}
+                style={[
+                  styles.input,
+                  errors.no && styles.inputError,
+                  isEditMode && styles.disabledInput,
+                ]}
+                value={formData.no}
                 onChangeText={text =>
-                  setForm(prev => ({...prev, bank_account_posting_group: text}))
+                  setFormData({...formData, no: text.toUpperCase()})
                 }
-                style={styles.input}
-                placeholder="Posting group code"
-                placeholderTextColor={COLORS.gray}
+                onBlur={() => autoSaveField('no', formDataRef.current.no)}
+                placeholder="e.g. BANK-01"
+                placeholderTextColor={COLORS.gray2}
+                editable={!isEditMode && canWrite}
+                autoCapitalize="characters"
               />
-              {loadingPG && (
-                <ActivityIndicator
-                  size="small"
-                  color={COLORS.primary}
-                  style={{marginTop: 4}}
-                />
-              )}
-              {postingGroups.length > 0 && (
-                <Text style={styles.helper}>
-                  Example: {postingGroups[0].code || postingGroups[0].name}
+              {errors.no ? (
+                <Text style={styles.errorText}>{errors.no}</Text>
+              ) : (
+                <Text style={styles.helpText}>
+                  {isEditMode
+                    ? 'Account number cannot be changed after creation.'
+                    : 'Short code used as the bank account ID. Required with name to create.'}
                 </Text>
               )}
             </View>
-            {renderInput(
-              'Address',
-              form.address || '',
-              text => setForm(prev => ({...prev, address: text})),
-            )}
-            {renderInput(
-              'Contact',
-              form.contact || '',
-              text => setForm(prev => ({...prev, contact: text})),
-            )}
-            {renderInput(
-              'Minimum Balance',
-              form.min_balance?.toString() || '',
-              text =>
-                setForm(prev => ({
-                  ...prev,
-                  min_balance: text ? parseFloat(text) : 0,
-                })),
-              'numeric',
-            )}
 
-            {Object.keys(errors).length > 0 && (
-              <View style={styles.errorBox}>
-                {Object.values(errors).map(msg => (
-                  <Text key={msg} style={styles.error}>
-                    {msg}
-                  </Text>
-                ))}
-              </View>
-            )}
-          </ScrollView>
-          <View style={styles.footer}>
-            <TouchableOpacity
-              style={[styles.button, styles.cancelButton]}
-              onPress={onClose}
-              disabled={loading}>
-              <Text style={styles.cancelText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.button, styles.saveButton]}
-              onPress={handleSave}
-              disabled={loading}>
-              {loading ? (
-                <ActivityIndicator size="small" color={COLORS.white} />
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Name</Text>
+              <TextInput
+                style={[styles.input, errors.name && styles.inputError]}
+                value={formData.name}
+                onChangeText={text => setFormData({...formData, name: text})}
+                onBlur={() => autoSaveField('name', formDataRef.current.name)}
+                placeholder="e.g. Main Bank UGX"
+                placeholderTextColor={COLORS.gray2}
+                editable={canWrite}
+              />
+              {errors.name ? (
+                <Text style={styles.errorText}>{errors.name}</Text>
               ) : (
-                <Text style={styles.saveText}>{isEdit ? 'Update' : 'Create'}</Text>
+                <Text style={styles.helpText}>
+                  Display name on payments, reports, and cash/bank lists.
+                </Text>
               )}
-            </TouchableOpacity>
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Bank account no</Text>
+              <TextInput
+                style={[
+                  styles.input,
+                  errors.bank_account_no && styles.inputError,
+                ]}
+                value={formData.bank_account_no}
+                onChangeText={text =>
+                  setFormData({...formData, bank_account_no: text})
+                }
+                onBlur={() =>
+                  autoSaveField(
+                    'bank_account_no',
+                    formDataRef.current.bank_account_no || '',
+                  )
+                }
+                placeholder="Account number at the bank"
+                placeholderTextColor={COLORS.gray2}
+                editable={canWrite}
+                keyboardType="default"
+              />
+              {errors.bank_account_no ? (
+                <Text style={styles.errorText}>{errors.bank_account_no}</Text>
+              ) : (
+                <Text style={styles.helpText}>
+                  The account number assigned by your bank (optional).
+                </Text>
+              )}
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Bank branch no</Text>
+              <TextInput
+                style={[
+                  styles.input,
+                  errors.bank_branch_no && styles.inputError,
+                ]}
+                value={formData.bank_branch_no}
+                onChangeText={text =>
+                  setFormData({...formData, bank_branch_no: text})
+                }
+                onBlur={() =>
+                  autoSaveField(
+                    'bank_branch_no',
+                    formDataRef.current.bank_branch_no || '',
+                  )
+                }
+                placeholder="Branch or sort code"
+                placeholderTextColor={COLORS.gray2}
+                editable={canWrite}
+              />
+              {errors.bank_branch_no ? (
+                <Text style={styles.errorText}>{errors.bank_branch_no}</Text>
+              ) : (
+                <Text style={styles.helpText}>
+                  Branch / sort code if your bank uses one.
+                </Text>
+              )}
+            </View>
           </View>
-        </View>
+
+          <View style={styles.sectionDivider} />
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Posting</Text>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Posting group</Text>
+              {loadingPG ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="small" color={COLORS.primary2} />
+                  <Text style={styles.loadingText}>Loading posting groups…</Text>
+                </View>
+              ) : (
+                <>
+                  <View style={styles.pickerContainer}>
+                    <Picker
+                      selectedValue={
+                        formData.bank_account_posting_group || ''
+                      }
+                      onValueChange={value => {
+                        const nextValue = String(value || '');
+                        setFormData({
+                          ...formData,
+                          bank_account_posting_group: nextValue,
+                        });
+                        void autoSaveField(
+                          'bank_account_posting_group',
+                          nextValue,
+                        );
+                      }}
+                      style={styles.picker}
+                      enabled={canWrite}>
+                      <Picker.Item label="Select posting group" value="" />
+                      {postingGroups.map(group => (
+                        <Picker.Item
+                          key={group.code || group.name}
+                          label={
+                            group.name ||
+                            group.description ||
+                            group.code ||
+                            'Group'
+                          }
+                          value={group.code || ''}
+                        />
+                      ))}
+                    </Picker>
+                  </View>
+                  {selectedPostingGroupLabel ? (
+                    <Text style={styles.selectedValueText}>
+                      {selectedPostingGroupLabel}
+                    </Text>
+                  ) : null}
+                </>
+              )}
+              {errors.bank_account_posting_group ? (
+                <Text style={styles.errorText}>
+                  {errors.bank_account_posting_group}
+                </Text>
+              ) : (
+                <Text style={styles.helpText}>
+                  Links this bank account to G/L posting. Set this for correct
+                  accounting when you post payments.
+                </Text>
+              )}
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Minimum balance</Text>
+              <TextInput
+                style={[styles.input, errors.min_balance && styles.inputError]}
+                value={formData.min_balance}
+                onChangeText={text =>
+                  setFormData({
+                    ...formData,
+                    min_balance: text.replace(/[^\d.,-]/g, ''),
+                  })
+                }
+                onBlur={() =>
+                  autoSaveField(
+                    'min_balance',
+                    formDataRef.current.min_balance || '0',
+                  )
+                }
+                placeholder="0"
+                placeholderTextColor={COLORS.gray2}
+                keyboardType="decimal-pad"
+                editable={canWrite}
+              />
+              {errors.min_balance ? (
+                <Text style={styles.errorText}>{errors.min_balance}</Text>
+              ) : (
+                <Text style={styles.helpText}>
+                  Soft threshold for monitoring. Does not block posting.
+                </Text>
+              )}
+            </View>
+          </View>
+
+          <View style={styles.sectionDivider} />
+
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Contact</Text>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Address</Text>
+              <TextInput
+                style={[
+                  styles.input,
+                  styles.textArea,
+                  errors.address && styles.inputError,
+                ]}
+                value={formData.address}
+                onChangeText={text => setFormData({...formData, address: text})}
+                onBlur={() =>
+                  autoSaveField('address', formDataRef.current.address || '')
+                }
+                placeholder="Bank branch address"
+                placeholderTextColor={COLORS.gray2}
+                multiline
+                numberOfLines={3}
+                editable={canWrite}
+              />
+              {errors.address ? (
+                <Text style={styles.errorText}>{errors.address}</Text>
+              ) : (
+                <Text style={styles.helpText}>
+                  Optional branch address for your records.
+                </Text>
+              )}
+            </View>
+
+            <View style={styles.fieldGroup}>
+              <Text style={styles.label}>Contact</Text>
+              <TextInput
+                style={[styles.input, errors.contact && styles.inputError]}
+                value={formData.contact}
+                onChangeText={text => setFormData({...formData, contact: text})}
+                onBlur={() =>
+                  autoSaveField('contact', formDataRef.current.contact || '')
+                }
+                placeholder="Phone or contact person"
+                placeholderTextColor={COLORS.gray2}
+                editable={canWrite}
+              />
+              {errors.contact ? (
+                <Text style={styles.errorText}>{errors.contact}</Text>
+              ) : (
+                <Text style={styles.helpText}>
+                  Optional phone or relationship manager details.
+                </Text>
+              )}
+            </View>
+          </View>
+        </ScrollView>
       </View>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
-  overlay: {
+  pageRoot: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  modal: {
     backgroundColor: COLORS.white,
-    borderTopLeftRadius: SIZES.radius * 2,
-    borderTopRightRadius: SIZES.radius * 2,
-    paddingBottom: SIZES.padding,
   },
-  header: {
+  pageHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingBottom: 8,
+  },
+  headerIconButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: COLORS.transparentPrimary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerIcon: {
+    width: 16,
+    height: 16,
+    tintColor: COLORS.primary3,
+  },
+  headerSpacer: {
+    width: 88,
+  },
+  autoSaveHint: {
+    ...FONTS.body5,
+    color: COLORS.gray2,
+    marginBottom: 12,
+  },
+  headerSaveButton: {
+    minWidth: 88,
+    height: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    backgroundColor: 'transparent',
+  },
+  headerSaveText: {
+    color: COLORS.gray2,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: 20,
+    paddingBottom: Platform.OS === 'ios' ? 40 : 28,
+  },
+  pageTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: COLORS.black,
+    marginTop: 22,
+    marginBottom: 4,
+  },
+  previewSection: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: SIZES.padding,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray2,
+    padding: 18,
+    borderRadius: 18,
+    backgroundColor: COLORS.transparentPrimary,
+    borderWidth: 1,
+    borderColor: COLORS.transparentPrimary2,
+    marginBottom: 28,
   },
-  title: {...FONTS.h2, color: COLORS.black},
-  closeBtn: {padding: 6},
-  closeText: {...FONTS.h2, color: COLORS.gray},
-  field: {
-    paddingHorizontal: SIZES.padding,
-    paddingVertical: SIZES.base,
+  previewAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: COLORS.primary3,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  previewInitials: {
+    color: COLORS.white,
+    fontSize: 22,
+    fontWeight: '700',
+  },
+  previewMeta: {
+    flex: 1,
+    marginLeft: 14,
+  },
+  previewName: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.primary3,
+    marginBottom: 4,
+  },
+  previewSubtext: {
+    ...FONTS.body4,
+    color: COLORS.secondary2,
+  },
+  section: {
+    marginBottom: 26,
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: COLORS.primary3,
+    marginBottom: 14,
+  },
+  sectionDivider: {
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: COLORS.transparentPrimary,
+    marginTop: 6,
+    marginBottom: 26,
+  },
+  fieldGroup: {
+    marginBottom: 16,
   },
   label: {
-    ...FONTS.body3,
+    ...FONTS.body4,
     color: COLORS.black,
     marginBottom: 8,
+    fontWeight: '600',
   },
   input: {
+    minHeight: 58,
     borderWidth: 1,
-    borderColor: COLORS.lightGray2,
-    borderRadius: SIZES.radius,
-    paddingHorizontal: SIZES.base,
-    height: 48,
+    borderColor: COLORS.transparentPrimary2,
+    borderRadius: 14,
+    paddingHorizontal: 18,
+    paddingVertical: 16,
     ...FONTS.body3,
     color: COLORS.black,
-    backgroundColor: '#F2F5FA',
+    backgroundColor: COLORS.white,
   },
-  inputDisabled: {backgroundColor: '#EFF2F7', color: COLORS.gray},
-  helper: {...FONTS.body5, color: COLORS.gray, marginTop: 4},
-  error: {...FONTS.body4, color: COLORS.error},
-  errorBox: {
-    paddingHorizontal: SIZES.padding,
-    paddingBottom: SIZES.base,
-    gap: 4,
+  textArea: {
+    minHeight: 88,
+    textAlignVertical: 'top',
+    paddingTop: 16,
   },
-  footer: {
+  disabledInput: {
+    backgroundColor: COLORS.lightGray2,
+    color: COLORS.gray2,
+  },
+  inputError: {
+    borderColor: COLORS.error,
+  },
+  helpText: {
+    fontSize: 13,
+    color: COLORS.gray2,
+    marginTop: 8,
+    lineHeight: 18,
+  },
+  errorText: {
+    fontSize: 13,
+    color: COLORS.error,
+    marginTop: 8,
+  },
+  selectedValueText: {
+    ...FONTS.body4,
+    color: COLORS.primary2,
+    marginTop: 8,
+  },
+  loadingContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    padding: SIZES.padding,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.lightGray2,
-  },
-  button: {
-    flex: 1,
-    height: 44,
-    borderRadius: SIZES.radius,
     alignItems: 'center',
-    justifyContent: 'center',
-    marginHorizontal: SIZES.base / 2,
+    paddingVertical: 12,
+    gap: 8,
   },
-  cancelButton: {backgroundColor: COLORS.lightGray1},
-  cancelText: {...FONTS.body3, color: COLORS.black},
-  saveButton: {backgroundColor: COLORS.primary},
-  saveText: {...FONTS.body3, color: COLORS.white, fontWeight: '600'},
+  loadingText: {
+    ...FONTS.body4,
+    color: COLORS.gray2,
+  },
+  pickerContainer: {
+    borderWidth: 1,
+    borderColor: COLORS.transparentPrimary2,
+    borderRadius: 14,
+    overflow: 'hidden',
+    backgroundColor: COLORS.white,
+  },
+  picker: {
+    width: '100%',
+    color: COLORS.black,
+  },
 });
 
 export default BankAccountFormModal;
-
-
-

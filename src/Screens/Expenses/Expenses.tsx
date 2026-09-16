@@ -43,16 +43,18 @@ import { Expense, ExpenseType, PaymentMethod } from '../../@types/expense';
 import ExpenseListItem from './ExpenseListItem';
 import ExpenseFormModal from './ExpenseFormModal';
 import { useTheme } from '../../context/ThemeContext';
+import {
+  formatDateYmdLocal,
+  localDateRangeForFilter,
+  parseLocalISODate,
+  type ExpenseDateFilter,
+} from '../../utils/localDate';
 
-type DateFilter =
-  | 'today'
-  | 'last7days'
-  | 'last30days'
-  | 'last3months'
-  | 'alltime';
+type DateFilter = Exclude<ExpenseDateFilter, 'custom'>;
 
 const DATE_FILTERS: { id: DateFilter; label: string }[] = [
   { id: 'today', label: 'Today' },
+  { id: 'yesterday', label: 'Yesterday' },
   { id: 'last7days', label: 'Last 7 days' },
   { id: 'last30days', label: 'Last 30 days' },
   { id: 'last3months', label: 'Last 3 months' },
@@ -60,32 +62,6 @@ const DATE_FILTERS: { id: DateFilter; label: string }[] = [
 ];
 
 const DEFAULT_DATE_FILTER: DateFilter = 'alltime';
-
-const getDateRangeForFilter = (filter: DateFilter) => {
-  const today = new Date();
-  const end = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-
-  if (filter === 'alltime') {
-    return { startDate: null, endDate: null };
-  }
-
-  const start = new Date(end);
-
-  if (filter === 'today') {
-    // start already set
-  } else if (filter === 'last7days') {
-    start.setDate(end.getDate() - 6);
-  } else if (filter === 'last30days') {
-    start.setDate(end.getDate() - 29);
-  } else if (filter === 'last3months') {
-    start.setMonth(end.getMonth() - 3);
-  }
-
-  return {
-    startDate: start.toISOString().split('T')[0],
-    endDate: end.toISOString().split('T')[0],
-  };
-};
 
 const Expenses = () => {
   const navigation = useNavigation < any > ();
@@ -148,7 +124,7 @@ const Expenses = () => {
     [colors],
   );
 
-  const hasAccess = canRead(PAGE_NAME);
+  const hasAccess = canRead(PAGE_NAME) || canRead('ExpenseList');
 
   // State management
   const [refreshing, setRefreshing] = useState(false);
@@ -158,14 +134,8 @@ const Expenses = () => {
   const [statusFilter, setStatusFilter] =
     useState < (typeof STATUS_FILTERS)[number] > ('Open');
   const [dateFilter, setDateFilter] = useState < DateFilter > (DEFAULT_DATE_FILTER);
-  const initialRange = useMemo(
-    () => getDateRangeForFilter(DEFAULT_DATE_FILTER),
-    [],
-  );
-  const [dateFrom, setDateFrom] = useState < string | null > (
-    initialRange.startDate,
-  );
-  const [dateTo, setDateTo] = useState < string | null > (initialRange.endDate);
+  const [dateFrom, setDateFrom] = useState < string | null >(null);
+  const [dateTo, setDateTo] = useState < string | null >(null);
   const [selectedExpenseType, setSelectedExpenseType] = useState < number | null > (
     null,
   );
@@ -185,6 +155,12 @@ const Expenses = () => {
   const invalidateExpenses = useInvalidateExpenses();
   const { data: expenseTypes = [] } = useExpenseTypesQuery(hasAccess);
   const { data: paymentMethods = [] } = usePaymentMethodsQuery(hasAccess);
+  const presetRange = useMemo(
+    () => localDateRangeForFilter(dateFilter),
+    [dateFilter],
+  );
+  const startDate = dateFilter === 'alltime' ? null : presetRange.startDate;
+  const endDate = dateFilter === 'alltime' ? null : presetRange.endDate;
   const {
     expenses,
     isLoading: loading,
@@ -197,8 +173,8 @@ const Expenses = () => {
     enabled: hasAccess,
     search: debouncedSearchQuery,
     status: statusFilter,
-    startDate: dateFrom,
-    endDate: dateTo,
+    startDate: dateFrom && dateTo ? dateFrom : startDate,
+    endDate: dateFrom && dateTo ? dateTo : endDate,
     expenseType: selectedExpenseType,
     paymentMethod: selectedPaymentMethod,
   });
@@ -226,18 +202,6 @@ const Expenses = () => {
       return description.includes(q) || code.includes(q);
     });
   }, [paymentMethods, paymentMethodFilterSearch]);
-
-  // Update date range when filter changes
-  useEffect(() => {
-    if (dateFilter === 'alltime') {
-      setDateFrom(null);
-      setDateTo(null);
-    } else {
-      const range = getDateRangeForFilter(dateFilter);
-      setDateFrom(range.startDate);
-      setDateTo(range.endDate);
-    }
-  }, [dateFilter]);
 
   // Debounce search query
   useEffect(() => {
@@ -385,8 +349,8 @@ const Expenses = () => {
     }
 
     Alert.alert(
-      'Post Expense',
-      `Are you sure you want to post expense ${expense.document_no}? This will create G/L entries and cannot be undone.`,
+      'Post expense',
+      `Are you sure you want to post expense ${expense.document_no}? This will take the amount from the selected payment method.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -400,6 +364,7 @@ const Expenses = () => {
                 text2: result.message || 'Expense posted successfully',
               });
               onRefresh();
+              navigation.navigate('ExpenseHistory');
             } catch (error: any) {
               Toast.show({
                 type: 'error',
@@ -447,6 +412,8 @@ const Expenses = () => {
 
   const handleDateFilterChange = (filter: DateFilter) => {
     setDateFilter(filter);
+    setDateFrom(null);
+    setDateTo(null);
   };
 
   const handleCustomDateRange = () => {
@@ -466,7 +433,7 @@ const Expenses = () => {
     }
 
     if (selectedDate && datePickerMode) {
-      const dateStr = selectedDate.toISOString().split('T')[0];
+      const dateStr = formatDateYmdLocal(selectedDate);
 
       if (datePickerMode === 'from') {
         setDateFrom(dateStr);
@@ -922,6 +889,12 @@ const Expenses = () => {
         }}
         expense={selectedExpense}
         onSave={handleFormSave}
+        onPosted={() => {
+          setIsFormModalVisible(false);
+          setSelectedExpense(null);
+          onRefresh();
+          navigation.navigate('ExpenseHistory');
+        }}
         onRecordChange={handleRecordChange}
         expenseTypes={expenseTypes}
         paymentMethods={paymentMethods}
@@ -936,9 +909,9 @@ const Expenses = () => {
         <DateTimePicker
           value={
             datePickerMode === 'from' && dateFrom
-              ? new Date(dateFrom)
+              ? parseLocalISODate(dateFrom) ?? new Date()
               : datePickerMode === 'to' && dateTo
-                ? new Date(dateTo)
+                ? parseLocalISODate(dateTo) ?? new Date()
                 : new Date()
           }
           mode="date"

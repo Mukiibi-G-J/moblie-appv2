@@ -16,6 +16,7 @@ import {COLORS, FONTS} from '../../constants';
 import {useScreenTopInset} from '../../hooks/useScreenTopInset';
 import {UserSetup, UserSetupFormValues} from '../../@types/userSetup';
 import {UserSetupService} from '../../services/UserSetupService';
+import {normalizeSalesUiMode, type SalesUiMode} from '../../utils/salesUiMode';
 import {UserManagementService} from '../../services/UserManagementService';
 import {User} from '../../@types/userManagement';
 
@@ -32,11 +33,13 @@ const defaultFlags = (): Omit<UserSetupFormValues, 'user' | 'notes'> => ({
   canSeeBuyingPrice: true,
   canSeeProfitMargin: true,
   canSeeItemCost: true,
+  canEditSalesPrice: false,
   canPostPreviousDates: true,
   canReversePurchaseInvoice: true,
   canReverseSalesInvoice: true,
   canReverseItemJournal: true,
   canViewOnlyTheirSales: false,
+  defaultSalesUi: 'phone',
 });
 
 const UserSetupFormModal: React.FC<UserSetupFormModalProps> = ({
@@ -70,11 +73,13 @@ const UserSetupFormModal: React.FC<UserSetupFormModalProps> = ({
         canSeeBuyingPrice: setup.canSeeBuyingPrice,
         canSeeProfitMargin: setup.canSeeProfitMargin,
         canSeeItemCost: setup.canSeeItemCost,
+        canEditSalesPrice: setup.canEditSalesPrice ?? false,
         canPostPreviousDates: setup.canPostPreviousDates,
         canReversePurchaseInvoice: setup.canReversePurchaseInvoice,
         canReverseSalesInvoice: setup.canReverseSalesInvoice,
         canReverseItemJournal: setup.canReverseItemJournal ?? true,
         canViewOnlyTheirSales: setup.canViewOnlyTheirSales,
+        defaultSalesUi: normalizeSalesUiMode(setup.defaultSalesUi),
       });
     } else {
       setUserId('');
@@ -152,10 +157,14 @@ const UserSetupFormModal: React.FC<UserSetupFormModalProps> = ({
     }
   };
 
-  const permissionRows: {key: keyof typeof flags; label: string}[] = [
+  const permissionRows: {
+    key: Exclude<keyof typeof flags, 'defaultSalesUi'>;
+    label: string;
+  }[] = [
     {key: 'canSeeBuyingPrice', label: 'Can see buying price'},
     {key: 'canSeeProfitMargin', label: 'Can see profit margin'},
     {key: 'canSeeItemCost', label: 'Can see item cost'},
+    {key: 'canEditSalesPrice', label: 'Allow edit of sales price'},
     {key: 'canPostPreviousDates', label: 'Can post previous dates'},
     {key: 'canReversePurchaseInvoice', label: 'Can reverse purchase invoice'},
     {key: 'canReverseSalesInvoice', label: 'Can reverse sales invoice'},
@@ -226,6 +235,20 @@ const UserSetupFormModal: React.FC<UserSetupFormModalProps> = ({
                 />
               </View>
             ))}
+
+            <View style={styles.field}>
+              <Text style={styles.label}>Default sales UI</Text>
+              <View style={styles.pickerWrap}>
+                <Picker
+                  selectedValue={flags.defaultSalesUi || 'phone'}
+                  onValueChange={(v: SalesUiMode) =>
+                    setFlags(prev => ({...prev, defaultSalesUi: v}))
+                  }>
+                  <Picker.Item label="Phone" value="phone" />
+                  <Picker.Item label="Point of Sale" value="pos" />
+                </Picker>
+              </View>
+            </View>
 
             <View style={styles.field}>
               <Text style={styles.label}>Notes</Text>

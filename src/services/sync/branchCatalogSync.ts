@@ -8,6 +8,11 @@ import {
 import {fetchSalesSetupBranchConfig} from '../branchProfile.service';
 import {getEffectiveIsOnline} from '../../utils/posConnectivity';
 import type {SyncProgressHandler} from './itemsSync';
+import {
+  beginCatalogSlice,
+  finishCatalogSlice,
+  reportCatalogSlice,
+} from './catalogSyncProgress';
 
 const LAST_BRANCHES_SYNC_KEY = 'last_branches_sync_at';
 
@@ -45,21 +50,37 @@ export async function syncFullBranchesToLocal(options?: {
 
   try {
     await runBranchSync(async () => {
-      options?.onProgress?.('Downloading branches…', 5);
-      const setup = await fetchSalesSetupBranchConfig();
-      const branches: BranchRow[] = (setup.branch_values || []).map(b => ({
-        id: b.id,
-        code: b.code,
-        description: b.description || b.code,
-      }));
-      if (branches.length) {
-        await saveBranches(branches);
+      beginCatalogSlice('branches', 'Downloading branches…');
+      try {
+        const onProgress = reportCatalogSlice('branches', options?.onProgress);
+        onProgress('Downloading branches…', 5);
+        const setup = await fetchSalesSetupBranchConfig();
+        const branches: BranchRow[] = (setup.branch_values || []).map(b => ({
+          id: b.id,
+          code: b.code,
+          description: b.description || b.code,
+        }));
+        if (branches.length) {
+          await saveBranches(branches);
+        }
+        await setSyncMeta(LAST_BRANCHES_SYNC_KEY, new Date().toISOString());
+        onProgress(
+          `Cached ${branches.length} branch${branches.length === 1 ? '' : 'es'}`,
+          100,
+        );
+        finishCatalogSlice(
+          'branches',
+          'done',
+          branches.length
+            ? `Cached ${branches.length} branches`
+            : 'Branch download finished',
+        );
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Branch download failed';
+        finishCatalogSlice('branches', 'error', message);
+        throw err;
       }
-      await setSyncMeta(LAST_BRANCHES_SYNC_KEY, new Date().toISOString());
-      options?.onProgress?.(
-        `Cached ${branches.length} branch${branches.length === 1 ? '' : 'es'}`,
-        100,
-      );
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

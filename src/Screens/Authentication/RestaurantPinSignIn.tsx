@@ -21,13 +21,14 @@ import {
   getRestaurantPinDeviceContext,
   restaurantPinLogin,
   mapRestaurantPinLoginError,
+  normalizePinLength,
+  type RestaurantPinLength,
 } from '../../services/restaurantPinApi';
 import {radii} from '../../design-system/theme';
 import {authOnboarding} from '../../design-system/authOnboardingTokens';
 
 const ao = authOnboarding;
 const BRAND = '#005151';
-const PIN_MAX = 6;
 
 function firstNameOrShort(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -48,6 +49,7 @@ const RestaurantPinSignIn = () => {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [resolvedStaffName, setResolvedStaffName] = useState('');
+  const [pinLength, setPinLength] = useState<RestaurantPinLength>(4);
 
   useEffect(() => {
     let cancelled = false;
@@ -78,8 +80,14 @@ const RestaurantPinSignIn = () => {
     void (async () => {
       try {
         const resp = await getRestaurantPinDeviceContext(deviceId, schemaName);
+        if (cancelled) {
+          return;
+        }
+        const nextLength = normalizePinLength(resp.pin_length);
+        setPinLength(nextLength);
+        setPin(prev => (prev.length > nextLength ? prev.slice(0, nextLength) : prev));
         const name = (resp.staff_name || '').trim();
-        if (cancelled || !name) {
+        if (!name) {
           return;
         }
         setResolvedStaffName(name);
@@ -96,37 +104,61 @@ const RestaurantPinSignIn = () => {
     };
   }, [deviceId, schemaName]);
 
-  const appendDigit = useCallback((d: string) => {
-    setMessage('');
-    setPin(prev => (prev.length >= PIN_MAX ? prev : prev + d));
-  }, []);
+  const submit = useCallback(
+    async (pinToUse: string) => {
+      if (!deviceId || !schemaName) {
+        setMessage('Device is not registered. Use full sign-in.');
+        return;
+      }
+      if (pinToUse.length !== pinLength) {
+        setMessage(`Enter ${pinLength} digits.`);
+        return;
+      }
+      setLoading(true);
+      setMessage('');
+      try {
+        await AsyncStorage.setItem('tenant', schemaName);
+        const data = await restaurantPinLogin(pinToUse, deviceId, schemaName);
+        await ctx?.loginWithTokens(data.access, data.refresh);
+      } catch (e) {
+        setMessage(mapRestaurantPinLoginError(e));
+        setPin('');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [ctx, deviceId, pinLength, schemaName],
+  );
+
+  const appendDigit = useCallback(
+    (d: string) => {
+      if (loading) {
+        return;
+      }
+      setMessage('');
+      setPin(prev => {
+        if (prev.length >= pinLength) {
+          return prev;
+        }
+        const next = prev + d;
+        if (next.length === pinLength) {
+          queueMicrotask(() => {
+            void submit(next);
+          });
+        }
+        return next;
+      });
+    },
+    [loading, pinLength, submit],
+  );
 
   const backspace = useCallback(() => {
+    if (loading) {
+      return;
+    }
     setPin(prev => prev.slice(0, -1));
-  }, []);
-
-  const submit = useCallback(async () => {
-    if (!deviceId || !schemaName) {
-      setMessage('Device is not registered. Use full sign-in.');
-      return;
-    }
-    if (pin.length < 4) {
-      setMessage('Enter at least 4 digits.');
-      return;
-    }
-    setLoading(true);
     setMessage('');
-    try {
-      await AsyncStorage.setItem('tenant', schemaName);
-      const data = await restaurantPinLogin(pin, deviceId, schemaName);
-      await ctx?.loginWithTokens(data.access, data.refresh);
-    } catch (e) {
-      setMessage(mapRestaurantPinLoginError(e));
-      setPin('');
-    } finally {
-      setLoading(false);
-    }
-  }, [ctx, deviceId, pin, schemaName]);
+  }, [loading]);
 
   const useFullSignIn = useCallback(async () => {
     await clearRestaurantDevicePrefs();
@@ -162,7 +194,7 @@ const RestaurantPinSignIn = () => {
         </Text>
       }>
       <View style={styles.dotsRow}>
-        {Array.from({length: PIN_MAX}).map((_, i) => (
+        {Array.from({length: pinLength}).map((_, i) => (
           <View
             key={i}
             style={[
@@ -207,11 +239,6 @@ const RestaurantPinSignIn = () => {
           )}
         </View>
       )}
-      {pin.length >= 4 && !loading ? (
-        <TouchableOpacity style={styles.continueBtn} onPress={() => void submit()}>
-          <Text style={styles.continueBtnText}>Continue</Text>
-        </TouchableOpacity>
-      ) : null}
       <TouchableOpacity style={styles.linkBtn} onPress={useFullSignIn}>
         <Text style={[styles.linkText, {color: colors.textPrimary}]}>
           Use full sign-in
@@ -255,20 +282,22 @@ const styles = StyleSheet.create({
   },
   spinner: {marginVertical: ao.spacing.md},
   pad: {
+    width: '100%',
+    maxWidth: 300,
+    alignSelf: 'center',
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
     marginTop: ao.spacing.md,
+    rowGap: 10,
   },
   key: {
-    width: '28%',
-    aspectRatio: 1.4,
-    maxWidth: 120,
+    width: '31%',
+    aspectRatio: 1.15,
     borderRadius: radii.md,
     borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    margin: 5,
   },
   keyHidden: {
     opacity: 0,
@@ -282,19 +311,6 @@ const styles = StyleSheet.create({
     marginTop: ao.spacing.xl,
     alignSelf: 'center',
     padding: 12,
-  },
-  continueBtn: {
-    marginTop: ao.spacing.lg,
-    minHeight: 52,
-    borderRadius: radii.full,
-    backgroundColor: BRAND,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  continueBtnText: {
-    color: COLORS.white,
-    fontWeight: '600',
-    fontSize: ao.typo.body,
   },
   linkText: {
     textDecorationLine: 'underline',

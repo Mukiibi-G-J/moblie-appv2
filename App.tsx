@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   NavigationContainer,
+  DarkTheme,
   DefaultTheme,
 } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
@@ -21,6 +22,7 @@ import { CartProvider } from './src/context/CartStore';
 import { SearchModeProvider } from './src/context/SearchModeStore';
 import { navigationRef } from './src/hooks/NavigationService';
 import Settings from './src/Screens/Settings/Settings';
+import LocalDatabase from './src/Screens/Settings/LocalDatabase';
 import ProfileScreen from './src/Screens/Profile/ProfileScreen';
 import SyncQueue from './src/Screens/Sync/SyncQueue';
 import BusinessDetails from './src/Screens/BusinessDetails/BusinessDetails';
@@ -55,6 +57,7 @@ import SearchPage from './src/Screens/Search/SearchPage';
 import NetworkManager from './src/utils/networkManager';
 import AppToastHost from './src/Components/AppToastHost';
 import Login from './src/Screens/Authentication/Login';
+import ForgotPassword from './src/Screens/Authentication/ForgotPassword';
 import SelectBranch from './src/Screens/Authentication/SelectBranch';
 import RestaurantPinSignIn from './src/Screens/Authentication/RestaurantPinSignIn';
 import RestaurantPinSetup from './src/Screens/Authentication/RestaurantPinSetup';
@@ -63,8 +66,6 @@ import PurchaseHistory from './src/Screens/Purchases/PurchaseHistory';
 import PurchaseCreation from './src/Screens/Purchases/PurchaseCreation';
 import Suppliers from './src/Screens/Suppliers/Suppliers';
 import Payments from './src/Screens/Payments/Payments';
-import Loans from './src/Screens/Loans/Loans';
-import LoanRepayments from './src/Screens/Loans/LoanRepayments';
 import Prepayments from './src/Screens/Prepayments/Prepayments';
 import BankAccounts from './src/Screens/BankAccounts/BankAccounts';
 import BankAccountLedger from './src/Screens/BankAccounts/BankAccountLedger';
@@ -72,7 +73,7 @@ import Financials from './src/Screens/Financials/Financials';
 import UserManagement from './src/Screens/UserManagement/UserManagement';
 import Users from './src/Screens/UserManagement/Users';
 import UserSetupList from './src/Screens/UserManagement/UserSetupList';
-import { ProtectedScreen } from './src/Components/ProtectedScreen';
+import { CompanyBillingGate, ProtectedScreen } from './src/Components/ProtectedScreen';
 import { PAGE_NAMES } from './src/constants/pageNames';
 import RestaurantHub from './src/Screens/Restaurant/RestaurantHub';
 import RestaurantPOS from './src/Screens/Restaurant/RestaurantPOS';
@@ -93,8 +94,33 @@ import { AppUpdateGate } from './src/Components/AppUpdateGate';
 import RestaurantPinRouteGate from './src/Components/RestaurantPinRouteGate';
 import BranchSelectModal from './src/Components/BranchSelectModal';
 import NotificationBootstrap from './src/Components/NotificationBootstrap';
+import CustomerDisplayHost from './src/Components/CustomerDisplayHost';
 
 const Stack = createStackNavigator();
+
+function guestRoute<P extends object>(
+  Inner: React.ComponentType<P>,
+): React.ComponentType<P> {
+  function Wrapped(props: P) {
+    return (
+      <AuthGuard requireAuth={false}>
+        <Inner {...props} />
+      </AuthGuard>
+    );
+  }
+  const innerName =
+    Inner.displayName ?? (Inner as {name?: string}).name ?? 'Screen';
+  Wrapped.displayName = `GuestRoute(${innerName})`;
+  return Wrapped;
+}
+
+const GuestOnBoarding = guestRoute(OnBoarding);
+const GuestLogin = guestRoute(Login);
+const GuestRestaurantPinSignIn = guestRoute(RestaurantPinSignIn);
+const GuestSignUp = guestRoute(SignUp);
+const GuestCompanyProvisioning = guestRoute(CompanyProvisioningScreen);
+const GuestOtp = guestRoute(Otp);
+const GuestForgotPassword = guestRoute(ForgotPassword);
 
 type ProtectedPageName = React.ComponentProps<typeof ProtectedScreen>['pageName'];
 
@@ -134,7 +160,25 @@ function BalanceSheetReportRoute(props: any) {
 }
 BalanceSheetReportRoute.displayName = 'BalanceSheetReportRoute';
 
+function protectCompanyBilling<P extends object>(
+  Inner: React.ComponentType<P>,
+): React.ComponentType<P> {
+  function Wrapped(props: P) {
+    return (
+      <CompanyBillingGate>
+        <Inner {...props} />
+      </CompanyBillingGate>
+    );
+  }
+  const innerName =
+    Inner.displayName ?? (Inner as {name?: string}).name ?? 'Screen';
+  Wrapped.displayName = `CompanyBillingRoute(${innerName})`;
+  return Wrapped;
+}
+
 const RouteCart = protectRoute(Cart, PAGE_NAMES.SALES);
+const RouteBusinessDetails = protectCompanyBilling(BusinessDetails);
+const RouteAvailableModules = protectCompanyBilling(AvailableModulesScreen);
 const RouteExpenses = protectRoute(Expenses, PAGE_NAMES.EXPENSES);
 const RouteExpenseHistory = protectRoute(
   ExpenseHistory,
@@ -161,7 +205,7 @@ const RouteItemJournalHistory = protectRoute(
   ItemJournalHistory,
   PAGE_NAMES.ADJUST_INVENTORY_HISTORY,
 );
-const RouteSearchPage = protectRoute(SearchPage, PAGE_NAMES.ITEMS);
+const RouteSearchPage = SearchPage;
 const RoutePurchaseHistory = protectRoute(
   PurchaseHistory,
   PAGE_NAMES.PURCHASES,
@@ -175,11 +219,6 @@ const RoutePayments = protectRoute(Payments, PAGE_NAMES.PAYMENTS);
 const RouteBankAccounts = protectRoute(
   BankAccounts,
   PAGE_NAMES.BANK_ACCOUNT_MANAGEMENT,
-);
-const RouteLoans = protectRoute(Loans, PAGE_NAMES.LOAN_REGISTRATION);
-const RouteLoanRepayments = protectRoute(
-  LoanRepayments,
-  PAGE_NAMES.LOAN_REPAYMENT,
 );
 const RoutePrepayments = protectRoute(Prepayments, PAGE_NAMES.PREPAYMENTS);
 const RouteBankAccountLedger = protectRoute(
@@ -247,6 +286,7 @@ const GUEST_STACK_ROUTES = new Set<string>([
   'SignUp',
   'CompanyProvisioning',
   'Otp',
+  'ForgotPassword',
 ]);
 
 const AppNavigator = () => {
@@ -352,20 +392,12 @@ const AppNavigator = () => {
           <>
             <Stack.Screen
               name="OnBoarding"
-              component={(props: any) => (
-                <AuthGuard requireAuth={false}>
-                  <OnBoarding {...props} />
-                </AuthGuard>
-              )}
+              component={GuestOnBoarding}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="SignIn"
-              component={(props: any) => (
-                <AuthGuard requireAuth={false}>
-                  <Login {...props} />
-                </AuthGuard>
-              )}
+              component={GuestLogin}
               options={{
                 headerShown: false,
                 gestureEnabled: false, // Disable swipe back gesture
@@ -373,38 +405,27 @@ const AppNavigator = () => {
             />
             <Stack.Screen
               name="RestaurantPinSignIn"
-              component={(props: any) => (
-                <AuthGuard requireAuth={false}>
-                  <RestaurantPinSignIn {...props} />
-                </AuthGuard>
-              )}
+              component={GuestRestaurantPinSignIn}
               options={{headerShown: false, gestureEnabled: false}}
             />
             <Stack.Screen
               name="SignUp"
-              component={(props: any) => (
-                <AuthGuard requireAuth={false}>
-                  <SignUp {...props} />
-                </AuthGuard>
-              )}
+              component={GuestSignUp}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="CompanyProvisioning"
-              component={(props: any) => (
-                <AuthGuard requireAuth={false}>
-                  <CompanyProvisioningScreen {...props} />
-                </AuthGuard>
-              )}
+              component={GuestCompanyProvisioning}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="Otp"
-              component={(props: any) => (
-                <AuthGuard requireAuth={false}>
-                  <Otp {...props} />
-                </AuthGuard>
-              )}
+              component={GuestOtp}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="ForgotPassword"
+              component={GuestForgotPassword}
               options={{ headerShown: false }}
             />
           </>
@@ -468,13 +489,18 @@ const AppNavigator = () => {
               options={{ headerShown: false }}
             />
             <Stack.Screen
+              name="LocalDatabase"
+              component={LocalDatabase}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
               name="BusinessDetails"
-              component={BusinessDetails}
+              component={RouteBusinessDetails}
               options={{ headerShown: false }}
             />
             <Stack.Screen
               name="AvailableModules"
-              component={AvailableModulesScreen}
+              component={RouteAvailableModules}
               options={{ headerShown: false }}
             />
             <Stack.Screen
@@ -593,16 +619,6 @@ const AppNavigator = () => {
               options={{ headerShown: false }}
             />
             <Stack.Screen
-              name="Loans"
-              component={RouteLoans}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
-              name="LoanRepayments"
-              component={RouteLoanRepayments}
-              options={{ headerShown: false }}
-            />
-            <Stack.Screen
               name="Prepayments"
               component={RoutePrepayments}
               options={{ headerShown: false }}
@@ -696,12 +712,12 @@ const AppNavigator = () => {
 };
 
 function ThemedNavigation() {
-  const {colors} = useTheme();
+  const {isDark, colors} = useTheme();
   const navTheme = useMemo(
     () => ({
-      ...DefaultTheme,
+      ...(isDark ? DarkTheme : DefaultTheme),
       colors: {
-        ...DefaultTheme.colors,
+        ...(isDark ? DarkTheme.colors : DefaultTheme.colors),
         primary: COLORS.primary,
         background: colors.screenMuted,
         card: colors.surface,
@@ -709,7 +725,7 @@ function ThemedNavigation() {
         border: colors.border,
       },
     }),
-    [colors],
+    [isDark, colors],
   );
   return (
     <NavigationContainer ref={navigationRef} theme={navTheme}>
@@ -734,6 +750,7 @@ function App() {
                       <AppUpdateGate>
                         <ThemedNavigation />
                         <NotificationBootstrap />
+                        <CustomerDisplayHost />
                       </AppUpdateGate>
                     </ThemeProvider>
                   </SearchModeProvider>

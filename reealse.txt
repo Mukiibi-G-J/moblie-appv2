@@ -1,0 +1,39 @@
+Issue details
+Update in review
+You've submitted an update to your app. We'll update this page when we've finished the review. Reviews typically take up to 7 days. For more information, go to Publishing overview.
+App must target Android 16 (API level 36) or higher
+To provide users with a safe and secure experience, Google Play requires all apps to meet target API level requirements.
+From Aug 31, 2026, if your target API level is not within 1 year of the latest Android release, you won't be able to update your app.
+
+
+How to fix
+Your highest non-compliant target API level is Android 15 (API level 35).
+
+To ensure that you can continue to make updates to your app you must:
+
+Update your app to target Android 16 (API level 36) or higher.
+Publish a new version of your app to production. Before you do this, you can test your app using internal, closed, or open testing.
+Go to Releases overview
+
+Once you've done this, we'll send you a notification to confirm that your app update was successful, and that your app is no longer affected.
+
+
+Is this helpful?
+Action by
+Aug 31
+Warning, Aug 31
+You won't be able to release app updates
+Related resources
+Learn more about the requirements
+Learn how to update your app
+Learn what changes you may need to make in your app
+Read the policy announcement
+
+
+echo "# zentroapp-desktop" >> README.md
+git init
+git add .
+git commit -m "first commit"
+git branch -M main
+git remote add origin git@github.com:Mukiibi-G-J/zentroapp-desktop.git
+git push -u origin main

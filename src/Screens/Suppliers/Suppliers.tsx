@@ -14,7 +14,7 @@ import {
   ScrollView,
   Image,
 } from 'react-native';
-import {useNavigation} from '@react-navigation/native';
+import {useNavigation, useRoute} from '@react-navigation/native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import {COLORS, FONTS, SIZES} from '../../constants/theme';
@@ -41,6 +41,7 @@ const isProtectedGeneralVendor = (vendor?: Vendor | null) =>
 
 const Suppliers: React.FC = () => {
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
   const insets = useSafeAreaInsets();
   const {colors, isDark} = useTheme();
   const {canRead, canCreate, canEdit, canDelete} = usePermissions();
@@ -48,8 +49,16 @@ const Suppliers: React.FC = () => {
 
   // State management
   const [refreshing, setRefreshing] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(
+    typeof route.params?.initialSearch === 'string'
+      ? route.params.initialSearch
+      : '',
+  );
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState(
+    typeof route.params?.initialSearch === 'string'
+      ? route.params.initialSearch
+      : '',
+  );
   const [selectedVendor, setSelectedVendor] = useState<Vendor | null>(null);
   const [isFormModalVisible, setIsFormModalVisible] = useState(false);
   const [filterModalVisible, setFilterModalVisible] = useState(false);

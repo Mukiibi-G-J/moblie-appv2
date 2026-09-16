@@ -12,20 +12,23 @@ function sunmiAlign(align?: string): "LEFT" | "CENTER" | "RIGHT" {
   return "LEFT";
 }
 
-function printTextNode(node: ReceiptDocumentNode): void {
+function printTextNode(node: ReceiptDocumentNode, textSize: number): void {
   const style = node.style || {};
-  const textSize = style.double ? 32 : style.bold ? 24 : 22;
   PrinterSunmi.initLine({ align: sunmiAlign(style.align) });
   PrinterSunmi.printText(node.text || "", {
-    textSize,
-    bold: !!style.bold,
+    textSize: style.double ? textSize + 4 : textSize,
+    bold: Boolean(style.bold && !style.double),
   });
 }
 
-function printRowNode(node: ReceiptDocumentNode, cols: number): void {
+function printRowNode(
+  node: ReceiptDocumentNode,
+  cols: number,
+  textSize: number,
+): void {
   const line = padReceiptColumns(node.left || "", node.right || "", cols);
   PrinterSunmi.initLine({ align: "LEFT" });
-  PrinterSunmi.printText(line, { textSize: 22, bold: !!node.style?.bold });
+  PrinterSunmi.printText(line, { textSize, bold: false });
 }
 
 export async function printSunmiDocument(document: ReceiptDocument): Promise<void> {
@@ -34,6 +37,7 @@ export async function printSunmiDocument(document: ReceiptDocument): Promise<voi
     document.paperProfile?.widthMm ?? 58,
   );
   const maxLogoW = document.paperProfile?.logoWidthPx ?? undefined;
+  const textSize = (document.paperProfile?.widthMm ?? 58) <= 58 ? 16 : 22;
 
   for (const node of document.nodes) {
     switch (node.type) {
@@ -60,10 +64,10 @@ export async function printSunmiDocument(document: ReceiptDocument): Promise<voi
         }
         break;
       case "text":
-        printTextNode(node);
+        printTextNode(node, textSize);
         break;
       case "row":
-        printRowNode(node, cols);
+        printRowNode(node, cols, textSize);
         break;
       case "rule":
         PrinterSunmi.printDividingLine("SOLID", 1);
@@ -78,6 +82,6 @@ export async function printSunmiDocument(document: ReceiptDocument): Promise<voi
     }
   }
 
-  PrinterSunmi.addText("\n\n\n\n");
+  PrinterSunmi.addText("\n");
   PrinterSunmi.printTrans();
 }

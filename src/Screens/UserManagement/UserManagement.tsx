@@ -20,15 +20,17 @@ const UserManagement: React.FC = () => {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const {colors} = useTheme();
-  const {hasAnyPageAccess, isModuleVisible} = usePermissions();
+  const {isModuleVisible, canAccessMobileNav} = usePermissions();
 
   const showUsers =
     isModuleVisible('userManagement') &&
-    hasAnyPageAccess(PAGE_NAMES.USER_MANAGEMENT);
+    canAccessMobileNav('userManagement', PAGE_NAMES.USER_MANAGEMENT);
   const showUserSetup =
     isModuleVisible('userManagement') &&
-    (hasAnyPageAccess(PAGE_NAMES.USER_SETUP) ||
-      hasAnyPageAccess(PAGE_NAMES.USER_MANAGEMENT));
+    canAccessMobileNav('userManagement', [
+      PAGE_NAMES.USER_SETUP,
+      PAGE_NAMES.USER_MANAGEMENT,
+    ]);
 
   const items = [
     showUsers

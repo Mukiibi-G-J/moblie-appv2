@@ -3,7 +3,7 @@ import {View, Text, TouchableOpacity, StyleSheet} from 'react-native';
 import {authOnboarding} from '../design-system/authOnboardingTokens';
 import {useTheme} from '../context/ThemeContext';
 
-export type LoginMethod = 'email' | 'phone';
+export type LoginMethod = 'email' | 'phone' | 'pin';
 
 type Props = {
   value: LoginMethod;
@@ -73,6 +73,32 @@ const LoginMethodToggle = ({value, onChange}: Props) => {
             },
           ]}>
           Phone
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        accessibilityRole="tab"
+        accessibilityState={{selected: value === 'pin'}}
+        style={[
+          styles.tab,
+          value === 'pin' && {
+            backgroundColor: thumbBg,
+            shadowColor: '#000',
+            shadowOffset: {width: 0, height: 1},
+            shadowOpacity: 0.08,
+            shadowRadius: 2,
+            elevation: 2,
+          },
+        ]}
+        onPress={() => onChange('pin')}
+        activeOpacity={0.85}>
+        <Text
+          style={[
+            styles.tabText,
+            {
+              color: value === 'pin' ? BRAND : colors.textSecondary,
+            },
+          ]}>
+          PIN
         </Text>
       </TouchableOpacity>
     </View>

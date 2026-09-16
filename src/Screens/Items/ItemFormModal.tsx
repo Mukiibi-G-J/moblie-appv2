@@ -23,6 +23,8 @@ import icons from '../../constants/icons';
 import {createItem, updateItem, fetchCategories} from '../../services/app.services';
 import Toast from 'react-native-toast-message';
 import {useTheme} from '../../context/ThemeContext';
+import {appToastConfig} from '../../Components/AppToast';
+import {getApiErrorMessage} from '../../utils/apiError';
 
 interface Category {
   id?: number;
@@ -227,7 +229,8 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
     }
     (navigation as any).navigate('ItemCategories', {
       pickerMode: true,
-      returnScreen: 'AllItems',
+      returnScreen: route.name || 'AllItems',
+      returnMode: isEditMode ? 'edit' : 'create',
       initialSelectedCodes: initialCodes,
     });
   };
@@ -354,15 +357,20 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
       }
     } catch (error: any) {
       console.error('Error saving item:', error);
-      const errorMessage =
-        error?.response?.data?.detail ||
-        error?.response?.data?.error ||
-        error?.response?.data?.item_name?.[0] ||
-        'Failed to save item';
+      const errorMessage = getApiErrorMessage(error, {
+        field: 'item_name',
+        itemName: formData.item_name,
+        fallback: 'Failed to save item',
+      });
+      setErrors(prev => ({
+        ...prev,
+        item_name: errorMessage,
+      }));
       Toast.show({
         type: 'error',
-        text1: 'Error',
+        text1: 'Could not save item',
         text2: errorMessage,
+        visibilityTime: 5000,
       });
     } finally {
       setLoading(false);
@@ -453,12 +461,16 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
                   onChangeText={text =>
                     setFormData({...formData, bar_code_no: text})
                   }
-                  placeholder="Scan or enter barcode"
+                  placeholder="Leave blank to auto-generate"
                   placeholderTextColor={colors.placeholder}
                   autoCapitalize="characters"
                   autoCorrect={false}
                   maxLength={100}
                 />
+                <Text style={[styles.hintText, {color: colors.textSecondary}]}>
+                  Barcode is generated automatically. Enter one only if you want
+                  to use your own.
+                </Text>
               </View>
 
               {/* Description */}
@@ -576,6 +588,7 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
           </View>
           </KeyboardAvoidingView>
         </View>
+        <Toast config={appToastConfig} position="top" topOffset={48} />
       </Modal>
     </>
   );
@@ -677,6 +690,11 @@ const styles = StyleSheet.create({
     ...FONTS.body5,
     color: COLORS.error,
     marginTop: SIZES.base / 2,
+  },
+  hintText: {
+    ...FONTS.body5,
+    marginTop: SIZES.base / 2,
+    lineHeight: 16,
   },
   loadingContainer: {
     flexDirection: 'row',

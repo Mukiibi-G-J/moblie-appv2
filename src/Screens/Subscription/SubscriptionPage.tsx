@@ -37,6 +37,7 @@ import {
 import {QuickIconPressable} from '../../Components';
 import {useTheme} from '../../context/ThemeContext';
 import {useAppContext, useAuth} from '../../context/Store';
+import {usePermissions} from '../../hooks/usePermissions';
 import {safeGoBack} from '../../hooks/NavigationService';
 import type {SubscriptionExpiryKind} from '../../utils/subscriptionExpired';
 import {USE_TEST_ENV} from '../../config/api.config';
@@ -95,6 +96,7 @@ export default function SubscriptionPage() {
   const {colors, isDark} = useTheme();
   const {logout} = useAppContext();
   const {auth} = useAuth();
+  const {canManageCompany} = usePermissions();
 
   const fromExpiredModal = !!route.params?.fromExpiredModal;
   const fromBillingRenewal = !!route.params?.fromBillingRenewal;
@@ -447,6 +449,42 @@ export default function SubscriptionPage() {
       </View>
     </View>
   );
+
+  if (!canManageCompany && !lockedEntry) {
+    return (
+      <SafeAreaView style={[styles.screen, t.screen]} edges={['left', 'right', 'bottom']}>
+        {renderTopBar()}
+        <View style={styles.centerPhase}>
+          <View style={[styles.phaseCard, t.card]}>
+            <Text style={[styles.phaseTitle, t.modalTitle]}>Access denied</Text>
+            <Text style={[styles.phaseBody, t.bodyText]}>
+              Subscription and billing are limited to users with company
+              management access.
+            </Text>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!canManageCompany && lockedEntry) {
+    return (
+      <SafeAreaView style={[styles.screen, t.screen]} edges={['left', 'right', 'bottom']}>
+        {renderTopBar()}
+        <View style={styles.centerPhase}>
+          <View style={[styles.phaseCard, t.card]}>
+            <Text style={[styles.phaseTitle, t.modalTitle]}>
+              Subscription needs attention
+            </Text>
+            <Text style={[styles.phaseBody, t.bodyText]}>
+              Ask an administrator to renew the company plan. You can log out
+              and continue after billing is updated.
+            </Text>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   if (phase === 'success') {
     return (

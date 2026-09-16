@@ -6,13 +6,16 @@ export const LOGIN_DRAFT_EMAIL = '@zentro_login_draft_email';
 export const LOGIN_DRAFT_PASSWORD = '@zentro_login_draft_password';
 export const LOGIN_DRAFT_LOGIN_METHOD = '@zentro_login_draft_login_method';
 
-export type LoginDraftMethod = 'email' | 'phone';
+export type LoginDraftMethod = 'email' | 'phone' | 'pin';
 
 /** Pick email vs phone tab from the stored credential (not stale tab preference). */
 export function resolveLoginMethodFromCredential(
   credential: string,
   storedMethod?: LoginDraftMethod | null,
 ): LoginDraftMethod {
+  if (storedMethod === 'pin') {
+    return 'pin';
+  }
   const value = credential.trim();
   if (!value) {
     return storedMethod === 'phone' ? 'phone' : 'email';
@@ -31,6 +34,7 @@ export function resolveLoginMethodFromCredential(
 export async function seedLoginCredentialsAfterSignup(
   companyName: string,
   email: string,
+  password?: string,
 ): Promise<void> {
   const schema = companyName.trim().toLowerCase();
   const normalizedEmail = email.trim();
@@ -40,5 +44,9 @@ export async function seedLoginCredentialsAfterSignup(
     [LOGIN_DRAFT_EMAIL, normalizedEmail],
     [LOGIN_DRAFT_LOGIN_METHOD, 'email'],
   ]);
-  await AsyncStorage.removeItem(LOGIN_DRAFT_PASSWORD);
+  if (password) {
+    await AsyncStorage.setItem(LOGIN_DRAFT_PASSWORD, password);
+  } else {
+    await AsyncStorage.removeItem(LOGIN_DRAFT_PASSWORD);
+  }
 }

@@ -22,17 +22,13 @@ import CustomPhoneInput, {
 import Toast from "react-native-toast-message";
 import AppToastHost from "../../Components/AppToastHost";
 import { seedLoginCredentialsAfterSignup } from "../../utils/loginCredentials";
-import { loginAndRouteAfterCredentials } from "../../utils/postAuthNavigation";
-import { useAppContext } from "../../context/Store";
 import {
     savePendingCompanyCreation,
     clearPendingCompanyCreation,
 } from "../../utils/pendingCompanyCreation";
-import { Picker } from "@react-native-picker/picker";
 import {
     createCompanyAccount,
     getOnboardingDataApi,
-    pollCompanyCreationTask,
     validateCompanyNameApi,
 } from "../../services/companyOnboarding.service";
 import type { AxiosError } from "axios";
@@ -93,8 +89,7 @@ function deriveUserNameFromEmail(email: string): string {
 }
 
 const SignUp = ({ navigation }) => {
-    const context = useAppContext();
-    const { colors, isDark } = useTheme();
+    const { colors } = useTheme();
 
     const [form, setForm] = React.useState({
         email: "",
@@ -120,6 +115,7 @@ const SignUp = ({ navigation }) => {
     const phoneInputRef = useRef(null);
 
     const [organizationSize, setOrganizationSize] = useState("");
+    const [orgSizePickerVisible, setOrgSizePickerVisible] = useState(false);
 
     const [businessCategoryId, setBusinessCategoryId] = useState("1");
     const [businessObjectiveId, setBusinessObjectiveId] = useState("1");
@@ -379,55 +375,33 @@ const SignUp = ({ navigation }) => {
 
         try {
             const response = await createCompanyAccount(payload);
-            if (response.status !== 200 || !response.data?.task_id) {
+            if (
+                response.status !== 200 ||
+                !(response.data?.signup_complete || response.data?.task_id)
+            ) {
                 throw new Error(response.data?.message || "Failed to start signup");
             }
 
-            setPhase("provisioning");
-            setStatusMessage(response.data.message || "Creating your company…");
-
             const schemaName = form.company_name.trim().toLowerCase();
-            await savePendingCompanyCreation({
-                taskId: response.data.task_id,
-                companyName: schemaName,
-                email: form.email.trim(),
-            });
+            if (response.data.task_id) {
+                await savePendingCompanyCreation({
+                    taskId: response.data.task_id,
+                    companyName: schemaName,
+                    email: form.email.trim(),
+                });
+            }
+            await seedLoginCredentialsAfterSignup(schemaName, form.email.trim(), form.password);
 
-            await pollCompanyCreationTask(response.data.task_id, {
-                onProgress: (data) => {
-                    if (data.message) {
-                        setStatusMessage(data.message);
-                    }
-                },
-            });
-
-            await seedLoginCredentialsAfterSignup(schemaName, form.email.trim());
-            await clearPendingCompanyCreation();
             Toast.show({
-                text1: "Company created",
-                text2: "Enter the verification code we sent you.",
+                text1: "Account started",
+                text2: "We're creating your login. You can sign in and verify as soon as it's ready.",
                 type: "success",
             });
-            setStatusMessage("Taking you to verification…");
-            const loginResult = await loginAndRouteAfterCredentials({
-                context,
-                navigation,
-                credential: form.email.trim(),
-                password: form.password,
+            navigation.replace("CompanyProvisioning", {
                 tenant: schemaName,
-                otpToast: false,
+                email: form.email.trim(),
+                autoLogin: true,
             });
-            if (loginResult === "otp" || loginResult === "home") {
-                return;
-            }
-            setPhase("idle");
-            setStatusMessage("");
-            Toast.show({
-                type: "error",
-                text1: "Could not start verification",
-                text2: "Sign in with your email and password.",
-            });
-            navigation.replace("SignIn");
         } catch (error: any) {
             const taskStatus = error?.taskStatus as { state?: string } | undefined;
             if (taskStatus?.state === "FAILURE") {
@@ -555,14 +529,8 @@ const SignUp = ({ navigation }) => {
               ? "Business details"
               : "Contact & finish";
 
-    const pickerShell = {
-        borderWidth: 1,
-        borderColor: colors.border,
-        borderRadius: 8,
-        marginTop: 8,
-        overflow: "hidden" as const,
-        backgroundColor: colors.inputBackground,
-    };
+    const selectedOrgSizeLabel =
+        ORG_SIZE_OPTIONS.find((o) => o.value === organizationSize)?.label ?? "";
 
     const goBackScreen = () => {
         if (navigation.canGoBack()) {
@@ -744,17 +712,32 @@ const SignUp = ({ navigation }) => {
                                 <Text style={[styles.pickerLabel, { color: colors.textSecondary }]}>
                                     Organization size
                                 </Text>
-                                <View style={pickerShell}>
-                                    <Picker
-                                        selectedValue={organizationSize}
-                                        onValueChange={(v) => setOrganizationSize(v)}
+                                <TouchableOpacity
+                                    style={[
+                                        styles.orgSizeField,
+                                        {
+                                            borderColor: colors.border,
+                                            backgroundColor: colors.inputBackground,
+                                        },
+                                    ]}
+                                    onPress={() => setOrgSizePickerVisible(true)}
+                                    activeOpacity={0.75}
+                                >
+                                    <Text
+                                        style={[
+                                            styles.orgSizeFieldText,
+                                            {
+                                                color: selectedOrgSizeLabel
+                                                    ? colors.textPrimary
+                                                    : colors.textTertiary,
+                                            },
+                                        ]}
+                                        numberOfLines={1}
                                     >
-                                        <Picker.Item label="Select size..." value="" />
-                                        {ORG_SIZE_OPTIONS.map((o) => (
-                                            <Picker.Item key={o.value} label={o.label} value={o.value} />
-                                        ))}
-                                    </Picker>
-                                </View>
+                                        {selectedOrgSizeLabel || "Select size..."}
+                                    </Text>
+                                    <Image source={icons.down_arrow} style={iconMuted} />
+                                </TouchableOpacity>
                             </View>
 
                             <View style={{ marginTop: gap }}>
@@ -898,6 +881,64 @@ const SignUp = ({ navigation }) => {
             <AppToastHost />
 
             <Modal
+                visible={orgSizePickerVisible}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setOrgSizePickerVisible(false)}
+            >
+                <View style={styles.orgSizeModalRoot}>
+                    <Pressable
+                        style={styles.orgSizeModalBackdrop}
+                        onPress={() => setOrgSizePickerVisible(false)}
+                    />
+                    <View
+                        style={[
+                            styles.orgSizeModalSheet,
+                            {
+                                backgroundColor: colors.surface,
+                                borderColor: colors.border,
+                            },
+                        ]}
+                    >
+                        <Text style={[styles.orgSizeModalTitle, { color: colors.textPrimary }]}>
+                            Organization size
+                        </Text>
+                        {ORG_SIZE_OPTIONS.map((o) => {
+                            const selected = o.value === organizationSize;
+                            return (
+                                <TouchableOpacity
+                                    key={o.value}
+                                    style={[
+                                        styles.orgSizeOption,
+                                        selected
+                                            ? { backgroundColor: colors.inputBackground }
+                                            : null,
+                                    ]}
+                                    onPress={() => {
+                                        setOrganizationSize(o.value);
+                                        setOrgSizePickerVisible(false);
+                                    }}
+                                    activeOpacity={0.75}
+                                >
+                                    <Text
+                                        style={[
+                                            styles.orgSizeOptionText,
+                                            {
+                                                color: colors.textPrimary,
+                                                fontWeight: selected ? "700" : "500",
+                                            },
+                                        ]}
+                                    >
+                                        {o.label}
+                                    </Text>
+                                </TouchableOpacity>
+                            );
+                        })}
+                    </View>
+                </View>
+            </Modal>
+
+            <Modal
                 visible={busy}
                 transparent={false}
                 animationType="fade"
@@ -912,68 +953,15 @@ const SignUp = ({ navigation }) => {
                 }}
             >
                 <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
-                    <View style={styles.processingRoot}>
-                        <View
-                            style={[
-                                styles.processingCard,
-                                {
-                                    backgroundColor: colors.surface,
-                                    borderColor: colors.border,
-                                },
-                            ]}
-                            accessibilityViewIsModal
-                        >
-                            <View
-                                style={[
-                                    styles.processingSpinnerRing,
-                                    { backgroundColor: colors.inputBackground },
-                                ]}
-                            >
-                                <ActivityIndicator size="large" color={SIGNUP_PRIMARY} />
-                            </View>
-
-                            <Text style={[styles.processingKicker, { color: colors.textTertiary }]}>
-                                {phase === "submitting" ? "Starting" : "Provisioning"}
-                            </Text>
-
-                            <Text style={[styles.processingTitle, { color: colors.textPrimary }]}>
-                                {statusMessage ||
-                                    (phase === "submitting"
-                                        ? "Starting company setup…"
-                                        : "Creating your company…")}
-                            </Text>
-
-                            <Text style={[styles.processingBody, { color: colors.textSecondary }]}>
-                                This can take several minutes. Keep this screen open and do not close
-                                the app. We will notify you when it is done.
-                            </Text>
-
-                            <View
-                                style={[
-                                    styles.processingEmailPanel,
-                                    {
-                                        backgroundColor: isDark
-                                            ? "rgba(11, 92, 255, 0.14)"
-                                            : "rgba(11, 92, 255, 0.08)",
-                                        borderColor: isDark
-                                            ? "rgba(11, 92, 255, 0.35)"
-                                            : "rgba(11, 92, 255, 0.2)",
-                                    },
-                                ]}
-                            >
-                                <Text
-                                    style={[styles.processingEmailLead, { color: colors.textSecondary }]}
-                                >
-                                    Confirmation email will be sent to
-                                </Text>
-                                <Text
-                                    style={[styles.processingEmailValue, { color: colors.textPrimary }]}
-                                    numberOfLines={2}
-                                >
-                                    {form.email.trim() || "the address you entered"}
-                                </Text>
-                            </View>
-                        </View>
+                    <View style={styles.processingRoot} accessibilityViewIsModal>
+                        <ActivityIndicator size="large" color={SIGNUP_PRIMARY} />
+                        <Text style={[styles.processingTitle, { color: colors.textPrimary }]}>
+                            Creating your account
+                        </Text>
+                        <Text style={[styles.processingBody, { color: colors.textSecondary }]}>
+                            This only takes a moment. You can sign in and verify as soon as
+                            your account is ready.
+                        </Text>
                     </View>
                 </SafeAreaView>
             </Modal>
@@ -986,65 +974,70 @@ const styles = StyleSheet.create({
         flex: 1,
         alignItems: "center",
         justifyContent: "center",
-        paddingHorizontal: authOnboarding.spacing.lg,
-    },
-    processingCard: {
-        width: "100%",
-        maxWidth: 380,
-        borderRadius: radii.lg,
-        borderWidth: StyleSheet.hairlineWidth * 2,
-        paddingHorizontal: 24,
-        paddingVertical: 28,
-        alignItems: "center",
-    },
-    processingSpinnerRing: {
-        width: 72,
-        height: 72,
-        borderRadius: 36,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-    processingKicker: {
-        ...FONTS.body4,
-        marginTop: 20,
-        letterSpacing: 1.2,
-        textTransform: "uppercase",
-        fontWeight: "600",
+        paddingHorizontal: authOnboarding.screenPadding.horizontal,
     },
     processingTitle: {
-        ...FONTS.h3,
-        marginTop: 8,
+        ...FONTS.h2,
+        marginTop: 24,
         textAlign: "center",
         fontWeight: "700",
-        lineHeight: 26,
     },
     processingBody: {
-        ...FONTS.body4,
-        marginTop: 14,
+        ...FONTS.body3,
+        marginTop: 12,
         textAlign: "center",
         lineHeight: 22,
-    },
-    processingEmailPanel: {
-        marginTop: 22,
-        width: "100%",
-        borderRadius: radii.md,
-        borderWidth: 1,
-        paddingVertical: 14,
-        paddingHorizontal: 16,
-    },
-    processingEmailLead: {
-        ...FONTS.body4,
-        textAlign: "center",
-    },
-    processingEmailValue: {
-        ...FONTS.body3,
-        marginTop: 6,
-        textAlign: "center",
-        fontWeight: "700",
+        maxWidth: 320,
     },
     pickerLabel: {
         ...FONTS.body4,
         marginBottom: 4,
+    },
+    orgSizeField: {
+        marginTop: 8,
+        minHeight: authOnboarding.form.inputMinHeight,
+        borderWidth: 1,
+        borderRadius: authOnboarding.form.inputRadius,
+        paddingHorizontal: authOnboarding.spacing.md,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+    },
+    orgSizeFieldText: {
+        flex: 1,
+        fontSize: authOnboarding.typo.body,
+    },
+    orgSizeModalRoot: {
+        flex: 1,
+        justifyContent: "center",
+        paddingHorizontal: 24,
+    },
+    orgSizeModalBackdrop: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: "rgba(0,0,0,0.45)",
+    },
+    orgSizeModalSheet: {
+        borderRadius: radii.md,
+        borderWidth: 1,
+        paddingVertical: 12,
+        paddingHorizontal: 8,
+        zIndex: 1,
+    },
+    orgSizeModalTitle: {
+        ...FONTS.h3,
+        fontWeight: "700",
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+    },
+    orgSizeOption: {
+        minHeight: 48,
+        borderRadius: 8,
+        paddingHorizontal: 12,
+        justifyContent: "center",
+    },
+    orgSizeOptionText: {
+        fontSize: authOnboarding.typo.body,
     },
     fieldError: {
         ...FONTS.body4,

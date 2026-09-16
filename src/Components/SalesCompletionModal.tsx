@@ -1,5 +1,10 @@
 import React, {useState, useEffect, useMemo, useRef} from 'react';
-import {pickDefaultCashPaymentMethod} from '../utils/paymentMethodDefaults';
+import {
+  pickDefaultCashPaymentMethod,
+  paymentMethodRequiresTransactionId,
+  TRANSACTION_ID_MAX_LENGTH,
+  TRANSACTION_ID_REQUIRED_MESSAGE,
+} from '../utils/paymentMethodDefaults';
 import {
   View,
   Text,
@@ -9,9 +14,9 @@ import {
   ScrollView,
   ActivityIndicator,
   Image,
-  Dimensions,
   KeyboardAvoidingView,
   Platform,
+  useWindowDimensions,
 } from 'react-native';
 import ReactNativeModal from 'react-native-modal';
 import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -43,14 +48,17 @@ import {
 } from '../services/app.services';
 import {completeOfflineSale} from '../services/offline/OfflineSaleService';
 import {loadReceiptBusinessInfo} from '../services/companyInfoCache';
+import {tenantCompanyToReceiptInfo} from '../utils/companyReceiptInfo';
 import {useOfflineOptional} from '../context/OfflineContext';
 import {getEffectiveIsOnline} from '../utils/posConnectivity';
 import {getCartTrackingMode} from '../utils/posConnectivity';
 import {usePosPaymentMethodsQuery} from '../hooks/useSaleCustomersQuery';
 import PrintService, {CompanyInfo} from '../services/PrintService';
 import {useTheme} from '../context/ThemeContext';
-
-const SHEET_MAX_HEIGHT = Math.round(Dimensions.get('window').height * 0.92);
+import {
+  constrainedWidthStyle,
+  SHEET_MAX_WIDTH,
+} from '../utils/layout';
 
 interface SalesCompletionModalProps {
   isVisible: boolean;
@@ -77,6 +85,13 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
 }) => {
   const {colors, isDark} = useTheme();
   const insets = useSafeAreaInsets();
+  const {width: windowWidth, height: windowHeight} = useWindowDimensions();
+  const sheetMaxHeight = Math.round(windowHeight * 0.92);
+  const sheetWidthStyle = constrainedWidthStyle(
+    windowWidth,
+    SHEET_MAX_WIDTH,
+    windowHeight,
+  );
   const offlineCtx = useOfflineOptional();
   const isPosOnline = offlineCtx?.isOnline ?? getEffectiveIsOnline();
   const st = useMemo(
@@ -166,6 +181,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
   );
   const [amountReceived, setAmountReceived] = useState('');
   const [amountReceivedDisplay, setAmountReceivedDisplay] = useState('');
+  const [transactionId, setTransactionId] = useState('');
   const [printReceipt, setPrintReceipt] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [paymentDropdownOpen, setPaymentDropdownOpen] = useState(false);
@@ -179,6 +195,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
 
   const formatTotalDisplay = () => formatCurrencyCompact(total);
   const needsAmountReceived = Boolean(paymentMethod?.requires_amount_received);
+  const needsTransactionId = paymentMethodRequiresTransactionId(paymentMethod);
 
   const didAutoSelectPaymentRef = useRef(false);
 
@@ -188,6 +205,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
       setPaymentMethod(null);
       setAmountReceived('');
       setAmountReceivedDisplay('');
+      setTransactionId('');
       setPaymentDropdownOpen(false);
       didAutoSelectPaymentRef.current = false;
       refetchPaymentMethods();
@@ -277,6 +295,11 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
       return;
     }
 
+    if (needsTransactionId && !transactionId.trim()) {
+      setErrorMessage(TRANSACTION_ID_REQUIRED_MESSAGE);
+      return;
+    }
+
     const trackingMode = getCartTrackingMode(isPosOnline);
     if (trackingMode === 'strict') {
       const trackingValidation = validateCartTracking(cartItems);
@@ -307,6 +330,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
               ? 0
               : Math.max(0, (parseFloat(amountReceived) || total) - total),
           documentDate: finalDocumentDate,
+          transactionId: needsTransactionId ? transactionId.trim() : '',
         });
 
         if (printReceipt) {
@@ -320,14 +344,9 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
                 const company = (cached as {company?: Record<string, string>})
                   ?.company;
                 if (company) {
-                  companyInfo = {
-                    name: company.name || 'ZENTRO APP',
-                    logo: company.logo || '',
-                    address: company.address || '',
-                    phone: company.phone || '',
-                    email: company.email || '',
-                    tin: company.tin || '',
-                  };
+                  companyInfo = tenantCompanyToReceiptInfo(
+                    company as Record<string, unknown>,
+                  );
                 }
               } catch {
                 /* optional */
@@ -407,6 +426,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
             ? 0
             : Math.max(0, (parseFloat(amountReceived) || total) - total),
         payment_method: paymentMethod?.id || 1,
+        transaction_id: needsTransactionId ? transactionId.trim() : '',
         user: userId, // Add user ID
         lines: cartItems.map((item, index) => {
           // Debug logging for each item
@@ -562,15 +582,9 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
                 console.log('🏢 Fetching company information...');
                 const companyResponse = await getCompanyInfo();
                 if (companyResponse.data && companyResponse.data.company) {
-                  const company = companyResponse.data.company;
-                  companyInfo = {
-                    name: company.name || 'ZENTRO APP',
-                    logo: company.logo || '',
-                    address: company.address || 'Address',
-                    phone: company.phone || 'Phone',
-                    email: company.email || 'Email',
-                    tin: company.tin || 'TIN',
-                  };
+                  companyInfo = tenantCompanyToReceiptInfo(
+                    companyResponse.data.company,
+                  );
                   console.log('✅ Company info fetched:', companyInfo);
                 } else {
                   console.log('⚠️ No company info found, using defaults');
@@ -665,6 +679,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
       setPaymentMethod(null);
       setAmountReceived('');
       setAmountReceivedDisplay('');
+      setTransactionId('');
       setPaymentDropdownOpen(false);
       setPrintReceipt(true);
       setErrorMessage(null);
@@ -688,6 +703,9 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
     setErrorMessage(null);
     setAmountReceived('');
     setAmountReceivedDisplay('');
+    if (!paymentMethodRequiresTransactionId(method)) {
+      setTransactionId('');
+    }
   };
 
   const change = calculateChange();
@@ -698,12 +716,15 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
     (amountReceived !== '' && parseFloat(amountReceived) >= total);
 
   const canCompleteSale =
-    Boolean(paymentMethod) && tenderAmountOk && !isProcessing;
+    Boolean(paymentMethod) &&
+    tenderAmountOk &&
+    (!needsTransactionId || Boolean(transactionId.trim())) &&
+    !isProcessing;
 
   /** Leave room for close row + action footer inside the sheet */
   const scrollMaxHeight = Math.max(
     220,
-    SHEET_MAX_HEIGHT - insets.bottom - 130,
+    sheetMaxHeight - insets.bottom - 130,
   );
 
   return (
@@ -721,8 +742,9 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
         style={[
           styles.modalView,
           st.modalView,
+          sheetWidthStyle,
           {
-            maxHeight: SHEET_MAX_HEIGHT,
+            maxHeight: sheetMaxHeight,
             paddingBottom: insets.bottom,
           },
         ]}>
@@ -742,7 +764,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
         <KeyboardAvoidingView
           style={[
             styles.mainKeyboardView,
-            {maxHeight: SHEET_MAX_HEIGHT - insets.bottom},
+            {maxHeight: sheetMaxHeight - insets.bottom},
           ]}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 24 : 0}>
@@ -919,6 +941,32 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
               </View>
             ) : null}
 
+            {needsTransactionId ? (
+              <View style={styles.amountFaceSection}>
+                <Text
+                  style={[
+                    styles.sectionTitle,
+                    st.sectionTitle,
+                    styles.amountFaceTitle,
+                  ]}>
+                  Transaction ID *
+                </Text>
+                <View style={[styles.tenderInputShell, st.tenderShell]}>
+                  <TextInput
+                    style={[styles.tenderInput, st.tenderInput]}
+                    placeholder="Enter provider transaction ID"
+                    placeholderTextColor={colors.placeholder}
+                    value={transactionId}
+                    onChangeText={setTransactionId}
+                    autoCapitalize="characters"
+                    autoCorrect={false}
+                    maxLength={TRANSACTION_ID_MAX_LENGTH}
+                    editable={!isProcessing}
+                  />
+                </View>
+              </View>
+            ) : null}
+
             {/* Sale Summary */}
             <View style={styles.section}>
               <Text style={[styles.sectionTitle, st.sectionTitle]}>
@@ -1025,7 +1073,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: SHEET_MAX_HEIGHT,
+    maxHeight: '92%',
     width: '100%',
     overflow: 'hidden',
   },

@@ -2,6 +2,7 @@ import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   RefreshControl,
   StyleSheet,
@@ -22,6 +23,9 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import ReactNativeModal from 'react-native-modal';
 import {Expense} from '../../@types/expense';
 import ExpenseListItem from './ExpenseListItem';
+import ExpenseFormModal from './ExpenseFormModal';
+import {ExpenseServices} from '../../services/ExpenseServices';
+import Toast from 'react-native-toast-message';
 import {
   COLORS,
   FONTS,
@@ -40,10 +44,18 @@ import {usePaymentMethodsQuery} from '../../hooks/useCustomersQuery';
 import {PAGE_NAMES} from '../../constants/pageNames';
 import {QuickIconPressable} from '../../Components';
 import {useTheme} from '../../context/ThemeContext';
+import {
+  formatDateYmdLocal,
+  localDateRangeForFilter,
+  parseLocalISODate,
+  type ExpenseDateFilter,
+} from '../../utils/localDate';
 
-type DateFilter = 'today' | 'last7days' | 'last30days' | 'last3months' | 'alltime';
-const DATE_FILTERS: {id: DateFilter; label: string}[] = [
+type DateFilter = ExpenseDateFilter;
+const DATE_FILTERS: {id: Exclude<DateFilter, 'custom'>; label: string}[] = [
   {id: 'today', label: 'Today'},
+  {id: 'yesterday', label: 'Yesterday'},
+  {id: 'thismonth', label: 'This month'},
   {id: 'last7days', label: 'Last 7 days'},
   {id: 'last30days', label: 'Last 30 days'},
   {id: 'last3months', label: 'Last 3 months'},
@@ -54,9 +66,13 @@ const STATUS_OPTIONS = ['Posted', 'Reversed', 'All'] as const;
 const ExpenseHistory = () => {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
-  const {canRead} = usePermissions();
+  const {canRead, canEdit} = usePermissions();
   const PAGE_NAME = PAGE_NAMES.EXPENSE_HISTORY;
-  const hasAccess = canRead(PAGE_NAME);
+  const hasAccess =
+    canRead(PAGE_NAME) ||
+    canRead('PaymentHistoryList') ||
+    canRead(PAGE_NAMES.EXPENSES) ||
+    canRead('ExpenseList');
   const {colors, isDark} = useTheme();
   const t = useMemo(
     () => ({
@@ -123,7 +139,7 @@ const ExpenseHistory = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
-  const [dateFilter, setDateFilter] = useState<DateFilter>('last30days');
+  const [dateFilter, setDateFilter] = useState<DateFilter>('thismonth');
   const [dateFrom, setDateFrom] = useState<string | null>(null);
   const [dateTo, setDateTo] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] =
@@ -138,9 +154,29 @@ const ExpenseHistory = () => {
   const [datePickerMode, setDatePickerMode] = useState<'from' | 'to' | null>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
+  const [isFormModalVisible, setIsFormModalVisible] = useState(false);
   const invalidateExpenses = useInvalidateExpenses();
   const {data: paymentMethods = []} = usePaymentMethodsQuery(hasAccess);
   const {data: expenseTypes = []} = useExpenseTypesQuery(hasAccess);
+
+  const presetRange = useMemo(
+    () => localDateRangeForFilter(dateFilter),
+    [dateFilter],
+  );
+  const startDate =
+    dateFilter === 'alltime'
+      ? null
+      : dateFilter === 'custom'
+        ? dateFrom
+        : presetRange.startDate;
+  const endDate =
+    dateFilter === 'alltime'
+      ? null
+      : dateFilter === 'custom'
+        ? dateTo
+        : presetRange.endDate;
+
   const {
     expenses,
     isLoading: loading,
@@ -152,48 +188,11 @@ const ExpenseHistory = () => {
     enabled: hasAccess,
     search: debouncedSearchQuery,
     status: statusFilter,
-    startDate: dateFrom,
-    endDate: dateTo,
+    startDate,
+    endDate,
     paymentMethod: paymentMethodIdFilter,
     expenseType: expenseTypeIdFilter,
   });
-
-  const {startDate, endDate} = useMemo(() => {
-    const today = new Date();
-    const end = new Date(
-      today.getFullYear(),
-      today.getMonth(),
-      today.getDate(),
-    );
-    let start = new Date(end);
-
-    if (dateFilter === 'today') {
-      start = new Date(end);
-    } else if (dateFilter === 'last7days') {
-      start.setDate(end.getDate() - 6);
-    } else if (dateFilter === 'last30days') {
-      start.setDate(end.getDate() - 29);
-    } else if (dateFilter === 'last3months') {
-      start.setMonth(end.getMonth() - 3);
-    } else {
-      return {startDate: null, endDate: null};
-    }
-
-    return {
-      startDate: start.toISOString().split('T')[0],
-      endDate: end.toISOString().split('T')[0],
-    };
-  }, [dateFilter]);
-
-  useEffect(() => {
-    if (dateFilter === 'alltime') {
-      setDateFrom(null);
-      setDateTo(null);
-    } else {
-      setDateFrom(startDate);
-      setDateTo(endDate);
-    }
-  }, [dateFilter, startDate, endDate]);
 
   useEffect(() => {
     if (searchTimeoutRef.current) {
@@ -218,6 +217,69 @@ const ExpenseHistory = () => {
       setRefreshing(false);
     }
   }, [invalidateExpenses, refetchExpenses]);
+
+  const canModify =
+    canEdit(PAGE_NAMES.EXPENSES) ||
+    canEdit(PAGE_NAME) ||
+    canEdit('ExpenseList') ||
+    canEdit('PaymentHistoryList');
+
+  const handleOpenExpense = useCallback((expense: Expense) => {
+    setSelectedExpense(expense);
+    setIsFormModalVisible(true);
+  }, []);
+
+  const handleCloseForm = useCallback(() => {
+    setIsFormModalVisible(false);
+    setSelectedExpense(null);
+  }, []);
+
+  const handleReverse = useCallback(
+    (expense: Expense) => {
+      if (expense.status !== 'Posted') {
+        Alert.alert(
+          'Cannot reverse',
+          'Only posted expenses can be reversed.',
+        );
+        return;
+      }
+
+      Alert.alert(
+        'Reverse entries',
+        'To reverse these entries, correcting entries will be posted.\n\nDo you want to reverse the entries?',
+        [
+          {text: 'No', style: 'cancel'},
+          {
+            text: 'Yes',
+            onPress: async () => {
+              try {
+                const result = await ExpenseServices.reverseExpense(expense.id);
+                Toast.show({
+                  type: 'success',
+                  text1: 'Reversed',
+                  text2:
+                    result.message ||
+                    'Correcting G/L entries were posted for this expense.',
+                });
+                handleCloseForm();
+                await onRefresh();
+              } catch (error: any) {
+                Toast.show({
+                  type: 'error',
+                  text1: 'Error',
+                  text2:
+                    error?.response?.data?.error ||
+                    error?.response?.data?.detail ||
+                    'Failed to reverse expense',
+                });
+              }
+            },
+          },
+        ],
+      );
+    },
+    [handleCloseForm, onRefresh],
+  );
 
   const handleLoadMore = () => {
     if (!loading && !isFetchingNextPage && hasMore) {
@@ -248,7 +310,7 @@ const ExpenseHistory = () => {
     }
 
     if (selectedDate && datePickerMode) {
-      const dateStr = selectedDate.toISOString().split('T')[0];
+      const dateStr = formatDateYmdLocal(selectedDate);
       if (datePickerMode === 'from') {
         setDateFrom(dateStr);
         if (Platform.OS === 'ios') {
@@ -263,7 +325,7 @@ const ExpenseHistory = () => {
         setDateTo(dateStr);
         setDatePickerMode(null);
         setIsDatePickerVisible(false);
-        setDateFilter('alltime');
+        setDateFilter('custom');
       }
     }
   };
@@ -272,11 +334,11 @@ const ExpenseHistory = () => {
     const parts: string[] = [];
     
     let dateLabel = 'All time';
-    if (dateFilter !== 'alltime') {
+    if (dateFilter === 'custom' && dateFrom && dateTo) {
+      dateLabel = `${dateFrom} → ${dateTo}`;
+    } else if (dateFilter !== 'alltime') {
       const match = DATE_FILTERS.find(filter => filter.id === dateFilter);
       dateLabel = match ? match.label : 'Custom range';
-    } else if (dateFrom && dateTo) {
-      dateLabel = `${dateFrom} → ${dateTo}`;
     }
     parts.push(dateLabel);
     
@@ -321,6 +383,8 @@ const ExpenseHistory = () => {
             ]}
             onPress={() => {
               setDateFilter(filter.id);
+              setDateFrom(null);
+              setDateTo(null);
             }}>
             <Text
               style={[
@@ -363,7 +427,7 @@ const ExpenseHistory = () => {
           <View style={styles.bottomSheetHeaderActions}>
             <TouchableOpacity
               onPress={() => {
-                setDateFilter('last30days');
+                setDateFilter('thismonth');
                 setStatusFilter('Posted');
                 setPaymentMethodIdFilter(null);
                 setExpenseTypeIdFilter(null);
@@ -624,7 +688,13 @@ const ExpenseHistory = () => {
         <FlatList
           data={expenses}
           keyExtractor={item => item.id.toString()}
-          renderItem={({item}) => <ExpenseListItem expense={item} />}
+          renderItem={({item}) => (
+            <ExpenseListItem
+              expense={item}
+              onView={handleOpenExpense}
+              onReverse={canModify ? handleReverse : undefined}
+            />
+          )}
           ListEmptyComponent={!loading ? renderEmptyState : null}
           refreshControl={
             <RefreshControl
@@ -653,9 +723,9 @@ const ExpenseHistory = () => {
         <DateTimePicker
           value={
             datePickerMode === 'from' && dateFrom
-              ? new Date(dateFrom)
+              ? parseLocalISODate(dateFrom) ?? new Date()
               : datePickerMode === 'to' && dateTo
-              ? new Date(dateTo)
+              ? parseLocalISODate(dateTo) ?? new Date()
               : new Date()
           }
           mode="date"
@@ -667,6 +737,25 @@ const ExpenseHistory = () => {
 
       {/* Filter Bottom Sheet */}
       {renderFilterBottomSheet()}
+
+      <ExpenseFormModal
+        visible={isFormModalVisible}
+        onClose={handleCloseForm}
+        expense={selectedExpense}
+        onSave={() => {
+          void onRefresh();
+        }}
+        onReversed={() => {
+          handleCloseForm();
+          void onRefresh();
+        }}
+        expenseTypes={expenseTypes}
+        paymentMethods={paymentMethods}
+        canCreate={false}
+        canEdit={false}
+        canDelete={false}
+        canPost={canModify}
+      />
     </SafeAreaView>
   );
 };

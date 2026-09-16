@@ -5,6 +5,7 @@ import type {BankAccount, BankAccountLedgerEntry} from '../@types/bankAccount';
 import type {PaymentJournal} from '../@types/paymentJournal';
 import type {User, UserGroup} from '../@types/userManagement';
 import type {PageDataRecord} from './pageDataService';
+import {paymentMethodRequiresTransactionId} from '../utils/paymentMethodDefaults';
 
 function asString(value: unknown, fallback = ''): string {
   if (value == null) {
@@ -126,7 +127,7 @@ export function mapPageDataExpense(row: PageDataRecord): Expense {
     document_no: asString(row.document_no),
     posting_date: asString(row.posting_date),
     description: asString(row.description) || undefined,
-    expense_type: asNumber(expenseTypeRaw),
+    expense_type: asOptionalNumber(expenseTypeRaw) ?? 0,
     expense_type_name: expenseTypeName,
     amount: asNumber(row.amount),
     status: (asString(row.status, 'Open') as Expense['status']) || 'Open',
@@ -223,8 +224,15 @@ export function mapPageDataBankAccount(row: PageDataRecord): BankAccount {
     no: asString(row.no),
     name: asString(row.name),
     bank_account_no: asString(row.bank_account_no) || undefined,
+    bank_branch_no: asString(row.bank_branch_no) || undefined,
     bank_account_posting_group:
       asString(row.bank_account_posting_group) || undefined,
+    address: asString(row.address) || undefined,
+    contact: asString(row.contact) || undefined,
+    min_balance: asOptionalNumber(row.min_balance),
+    debit_amount: asOptionalNumber(row.debit_amount),
+    credit_amount: asOptionalNumber(row.credit_amount),
+    balance: asOptionalNumber(row.balance),
   };
 }
 
@@ -254,6 +262,9 @@ export function mapPageDataPaymentMethod(row: PageDataRecord) {
     bal_account_no: asString(row.bal_account_no),
     system_id: systemIdOf(row),
     requires_amount_received: Boolean(row.requires_amount_received),
+    requires_transaction_id: paymentMethodRequiresTransactionId({
+      requires_transaction_id: row.requires_transaction_id,
+    }),
     blocked: Boolean(row.blocked),
   };
 }
@@ -283,20 +294,62 @@ export function mapPageDataUnitOfMeasure(row: PageDataRecord) {
 }
 
 export function mapPageDataItemJournal(row: PageDataRecord) {
+  const itemRaw = row.item;
+  const itemFromObject =
+    itemRaw && typeof itemRaw === 'object'
+      ? asString(
+          (itemRaw as {no?: unknown; item_no?: unknown}).no ??
+            (itemRaw as {item_no?: unknown}).item_no,
+        )
+      : '';
+  const itemNo =
+    asString(row.item_no ?? row.item__no) ||
+    (typeof itemRaw === 'string' || typeof itemRaw === 'number'
+      ? asString(itemRaw)
+      : itemFromObject);
+  const itemNameFromObject =
+    itemRaw && typeof itemRaw === 'object'
+      ? asString((itemRaw as {item_name?: unknown}).item_name)
+      : '';
+  const uomRaw = row.item_unit_of_measure;
+  const uomId =
+    typeof uomRaw === 'number'
+      ? uomRaw
+      : uomRaw && typeof uomRaw === 'object'
+        ? asOptionalNumber((uomRaw as {id?: unknown}).id)
+        : asOptionalNumber(row.item_unit_of_measure_id);
+
   return {
     id: asOptionalNumber(row.id),
     system_id: systemIdOf(row),
     document_no: asString(row.document_no),
     entry_type: asString(row.entry_type),
-    item: row.item,
-    item_no: asString(row.item ?? row.item_no),
-    item_name: asString(row.item_name ?? row.item),
+    item: itemNo,
+    item_no: itemNo,
+    item_name: asString(
+      row.item_name ??
+        row.item__item_name ??
+        itemNameFromObject ??
+        row.description ??
+        itemNo,
+    ),
     quantity: asNumber(row.quantity),
-    unit_amount: asNumber(row.unit_amount),
+    unit_amount: asNumber(row.unit_amount ?? row.unit_cost),
+    unit_cost:
+      row.unit_cost ?? row.unit_amount ?? null,
     amount: asNumber(row.amount),
     date: asString(row.date ?? row.posting_date),
     status: asString(row.status, 'Open') || 'Open',
     adjustment_type: asString(row.adjustment_type) || undefined,
+    item_unit_of_measure: uomId ?? uomRaw ?? null,
+    unit_of_measure_code: asString(
+      row.unit_of_measure_code ??
+        row['item_unit_of_measure__unit_of_measure__code'] ??
+        (uomRaw && typeof uomRaw === 'object'
+          ? (uomRaw as {unit_of_measure?: unknown}).unit_of_measure
+          : ''),
+    ),
+    description: asString(row.description),
   };
 }
 

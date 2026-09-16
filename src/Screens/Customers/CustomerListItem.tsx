@@ -1,15 +1,11 @@
-import React from 'react';
-import {
-  Alert,
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Image,
-} from 'react-native';
-import {COLORS, FONTS, SIZES, icons} from '../../constants';
+import React, {useMemo, useState} from 'react';
+import {View, Text, TouchableOpacity, StyleSheet, Image} from 'react-native';
+import {COLORS, FONTS, icons} from '../../constants';
 import {Customer} from '../../@types/customer';
 import {formatCurrencyCompact} from '../../utils/currency';
+import ChooseActionSheet, {
+  type ChooseActionItem,
+} from '../../Components/ChooseActionSheet';
 
 const isProtectedGeneralCustomer = (customer: Customer) => {
   const normalizedName = customer.name?.trim().toLowerCase();
@@ -29,6 +25,7 @@ const CustomerListItem: React.FC<CustomerListItemProps> = ({
   onDelete,
   onBalancePress,
 }) => {
+  const [actionsVisible, setActionsVisible] = useState(false);
   const isGeneralCustomer = isProtectedGeneralCustomer(customer);
   const initials =
     customer.name
@@ -50,78 +47,78 @@ const CustomerListItem: React.FC<CustomerListItemProps> = ({
     customer.city ||
     'No phone number';
 
-  const handleOpenActions = () => {
-    const options: Array<{text: string; style?: 'cancel' | 'destructive'; onPress?: () => void}> = [];
-
+  const actionItems = useMemo(() => {
+    const items: ChooseActionItem[] = [];
     if (onEdit && !isGeneralCustomer) {
-      options.push({
-        text: 'Edit customer',
+      items.push({
+        key: 'edit',
+        label: 'Edit customer',
         onPress: () => onEdit(customer),
       });
     }
-
     if (onDelete && !isGeneralCustomer) {
-      options.push({
-        text: 'Delete customer',
-        style: 'destructive',
+      items.push({
+        key: 'delete',
+        label: 'Delete customer',
+        destructive: true,
         onPress: () => onDelete(customer),
       });
     }
-
-    options.push({text: 'Cancel', style: 'cancel'});
-
-    if (options.length === 1) {
-      Alert.alert(
-        customer.name || 'Customer',
-        'The General Customer cannot be edited or deleted.',
-        options,
-      );
-      return;
-    }
-
-    Alert.alert(customer.name || 'Customer', 'Choose an action', options);
-  };
+    return items;
+  }, [customer, isGeneralCustomer, onDelete, onEdit]);
 
   return (
-    <TouchableOpacity
-      activeOpacity={onEdit && !isGeneralCustomer ? 0.8 : 1}
-      style={styles.container}
-      onPress={onEdit && !isGeneralCustomer ? () => onEdit(customer) : undefined}>
-      <View style={styles.avatar}>
-        <Text style={styles.avatarText}>{initials}</Text>
-      </View>
+    <View>
+      <TouchableOpacity
+        activeOpacity={onEdit && !isGeneralCustomer ? 0.8 : 1}
+        style={styles.container}
+        onPress={onEdit && !isGeneralCustomer ? () => onEdit(customer) : undefined}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>{initials}</Text>
+        </View>
 
-      <View style={styles.content}>
-        <Text style={styles.customerName} numberOfLines={1}>
-          {customer.name}
-        </Text>
-        <Text style={styles.secondaryText} numberOfLines={1}>
-          {secondaryLine}
-        </Text>
-        <TouchableOpacity
-          disabled={!hasBalance || !onBalancePress}
-          onPress={() => onBalancePress?.(customer)}
-          activeOpacity={hasBalance ? 0.7 : 1}
-          style={styles.balanceLinkWrap}>
-          <Text
-            style={[
-              styles.balanceText,
-              hasBalance ? styles.balanceTextInteractive : styles.balanceTextMuted,
-            ]}>
-            Balance: {formattedBalance}
+        <View style={styles.content}>
+          <Text style={styles.customerName} numberOfLines={1}>
+            {customer.name}
           </Text>
-        </TouchableOpacity>
-      </View>
+          <Text style={styles.secondaryText} numberOfLines={1}>
+            {secondaryLine}
+          </Text>
+          <TouchableOpacity
+            disabled={!hasBalance || !onBalancePress}
+            onPress={() => onBalancePress?.(customer)}
+            activeOpacity={hasBalance ? 0.7 : 1}
+            style={styles.balanceLinkWrap}>
+            <Text
+              style={[
+                styles.balanceText,
+                hasBalance ? styles.balanceTextInteractive : styles.balanceTextMuted,
+              ]}>
+              Balance: {formattedBalance}
+            </Text>
+          </TouchableOpacity>
+        </View>
 
-      {(onEdit || onDelete) && (
-        <TouchableOpacity
-          onPress={handleOpenActions}
-          style={styles.actionButton}
-          hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
-          <Image source={icons.menu} style={styles.actionIcon} resizeMode="contain" />
-        </TouchableOpacity>
-      )}
-    </TouchableOpacity>
+        {(onEdit || onDelete) && (
+          <TouchableOpacity
+            onPress={() => setActionsVisible(true)}
+            style={styles.actionButton}
+            hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
+            accessibilityRole="button"
+            accessibilityLabel="Choose an action">
+            <Image source={icons.menu} style={styles.actionIcon} resizeMode="contain" />
+          </TouchableOpacity>
+        )}
+      </TouchableOpacity>
+
+      <ChooseActionSheet
+        visible={actionsVisible}
+        title={customer.name || 'Customer'}
+        actions={actionItems}
+        onClose={() => setActionsVisible(false)}
+        emptyText="The General Customer cannot be edited or deleted."
+      />
+    </View>
   );
 };
 
@@ -195,8 +192,3 @@ const styles = StyleSheet.create({
 });
 
 export default CustomerListItem;
-
-
-
-
-

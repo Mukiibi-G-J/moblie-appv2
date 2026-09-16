@@ -1,12 +1,17 @@
 import React, {
   createContext,
+  useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useState,
 } from 'react';
-import {StatusBar} from 'react-native';
-import {lightColors, type SemanticColors} from '../theme/semanticColors';
+import {useColorScheme, StatusBar} from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import {darkColors, lightColors, type SemanticColors} from '../theme/semanticColors';
 
-/** Kept for type compatibility; app is light-only. */
+const STORAGE_KEY = '@zentro_theme_preference';
+
 export type ThemePreference = 'system' | 'light' | 'dark';
 
 type ThemeContextValue = {
@@ -19,28 +24,66 @@ type ThemeContextValue = {
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
-/**
- * Light theme only — dark / system appearance is disabled.
- */
+function resolveScheme(
+  preference: ThemePreference,
+  system: 'light' | 'dark' | null | undefined,
+): 'light' | 'dark' {
+  if (preference === 'light') {
+    return 'light';
+  }
+  if (preference === 'dark') {
+    return 'dark';
+  }
+  return system === 'dark' ? 'dark' : 'light';
+}
+
 export function ThemeProvider({children}: {children: React.ReactNode}) {
+  const systemScheme = useColorScheme();
+  const [preference, setPreferenceState] = useState<ThemePreference>('system');
+
+  useEffect(() => {
+    AsyncStorage.getItem(STORAGE_KEY)
+      .then(raw => {
+        if (raw === 'light' || raw === 'dark' || raw === 'system') {
+          setPreferenceState(raw);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const setPreference = useCallback((p: ThemePreference) => {
+    setPreferenceState(p);
+    AsyncStorage.setItem(STORAGE_KEY, p).catch(() => {});
+  }, []);
+
+  const resolvedScheme = useMemo(
+    () => resolveScheme(preference, systemScheme),
+    [preference, systemScheme],
+  );
+
+  const isDark = resolvedScheme === 'dark';
+  const colors = isDark ? darkColors : lightColors;
+
   const value = useMemo<ThemeContextValue>(
     () => ({
-      preference: 'light',
-      setPreference: () => {
-        /* Dark theme removed — no-op */
-      },
-      resolvedScheme: 'light',
-      isDark: false,
-      colors: lightColors,
+      preference,
+      setPreference,
+      resolvedScheme,
+      isDark,
+      colors,
     }),
-    [],
+    [preference, setPreference, resolvedScheme, isDark, colors],
   );
+
+  /** Match app background — avoids a saturated branded status strip. */
+  const statusBarBg = colors.background;
+  const statusBarStyle = isDark ? 'light-content' : 'dark-content';
 
   return (
     <ThemeContext.Provider value={value}>
       <StatusBar
-        barStyle="dark-content"
-        backgroundColor={lightColors.background}
+        barStyle={statusBarStyle}
+        backgroundColor={statusBarBg}
         translucent
       />
       {children}

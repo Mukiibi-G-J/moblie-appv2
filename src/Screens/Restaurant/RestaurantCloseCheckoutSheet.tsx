@@ -9,13 +9,19 @@ import {
   ActivityIndicator,
   ScrollView,
   Platform,
+  TextInput,
 } from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import {FONTS} from '../../constants';
 import type {PaymentMethod} from '../../services/app.services';
 import {fetchPaymentMethods} from '../../services/app.services';
-import {pickDefaultCashPaymentMethod} from '../../utils/paymentMethodDefaults';
+import {
+  pickDefaultCashPaymentMethod,
+  paymentMethodRequiresTransactionId,
+  TRANSACTION_ID_MAX_LENGTH,
+  TRANSACTION_ID_REQUIRED_MESSAGE,
+} from '../../utils/paymentMethodDefaults';
 
 export type RestaurantCloseCheckoutChrome = {
   surface: string;
@@ -37,6 +43,7 @@ type Props = {
   onConfirm: (
     shouldPrint: boolean,
     paymentMethodId: number,
+    transactionId?: string,
   ) => void | Promise<void>;
 };
 
@@ -57,6 +64,7 @@ export default function RestaurantCloseCheckoutSheet(props: Props) {
   const [loadingPm, setLoadingPm] = useState(false);
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [pmId, setPmId] = useState<number | null>(null);
+  const [transactionId, setTransactionId] = useState('');
 
   useEffect(() => {
     if (!visible) {
@@ -73,6 +81,7 @@ export default function RestaurantCloseCheckoutSheet(props: Props) {
             Array.isArray(list) ? list : [],
           );
           setPmId(cash?.id != null ? Number(cash.id) : null);
+          setTransactionId('');
           if (!list?.length) {
             Toast.show({
               type: 'error',
@@ -91,6 +100,32 @@ export default function RestaurantCloseCheckoutSheet(props: Props) {
       cancelled = true;
     };
   }, [visible]);
+
+  const selected = methods.find(m => m.id === pmId);
+  const requiresTransactionId = paymentMethodRequiresTransactionId(selected);
+  const payBlocked =
+    pmId == null ||
+    loadingPm ||
+    (requiresTransactionId && !transactionId.trim());
+
+  const confirm = (shouldPrint: boolean) => {
+    if (pmId == null) {
+      return;
+    }
+    if (requiresTransactionId && !transactionId.trim()) {
+      Toast.show({
+        type: 'error',
+        text1: 'Missing Transaction ID',
+        text2: TRANSACTION_ID_REQUIRED_MESSAGE,
+      });
+      return;
+    }
+    void onConfirm(
+      shouldPrint,
+      pmId,
+      requiresTransactionId ? transactionId.trim() : undefined,
+    );
+  };
 
   return (
     <Modal
@@ -145,7 +180,12 @@ export default function RestaurantCloseCheckoutSheet(props: Props) {
                   return (
                     <Pressable
                       key={pm.id}
-                      onPress={() => setPmId(pm.id)}
+                      onPress={() => {
+                        setPmId(pm.id);
+                        if (!paymentMethodRequiresTransactionId(pm)) {
+                          setTransactionId('');
+                        }
+                      }}
                       style={[
                         styles.pmChip,
                         {
@@ -164,6 +204,33 @@ export default function RestaurantCloseCheckoutSheet(props: Props) {
               </View>
             )}
 
+            {requiresTransactionId ? (
+              <View>
+                <Text style={[styles.sectionLabel, {color: chrome.text}]}>
+                  Transaction ID *
+                </Text>
+                <TextInput
+                  value={transactionId}
+                  onChangeText={setTransactionId}
+                  placeholder="Enter provider transaction ID"
+                  placeholderTextColor={chrome.muted}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                  maxLength={TRANSACTION_ID_MAX_LENGTH}
+                  style={{
+                    marginTop: 8,
+                    borderWidth: 1,
+                    borderColor: chrome.border,
+                    borderRadius: 10,
+                    paddingHorizontal: 14,
+                    paddingVertical: 12,
+                    color: chrome.text,
+                    fontSize: 15,
+                  }}
+                />
+              </View>
+            ) : null}
+
             {submitting ? (
               <View style={{alignItems: 'center', paddingVertical: 20, gap: 8}}>
                 <ActivityIndicator color={primaryButtonColor} />
@@ -174,22 +241,22 @@ export default function RestaurantCloseCheckoutSheet(props: Props) {
             ) : (
               <>
                 <Pressable
-                  disabled={pmId == null || loadingPm}
-                  onPress={() => void onConfirm(true, pmId!)}
+                  disabled={payBlocked}
+                  onPress={() => confirm(true)}
                   style={[
                     styles.primaryBtn,
-                    {backgroundColor: primaryButtonColor, opacity: pmId == null ? 0.45 : 1},
+                    {backgroundColor: primaryButtonColor, opacity: payBlocked ? 0.45 : 1},
                   ]}>
                   <Text style={styles.primaryBtnTxt}>Close & print receipt</Text>
                 </Pressable>
                 <Pressable
-                  disabled={pmId == null || loadingPm}
-                  onPress={() => void onConfirm(false, pmId!)}
+                  disabled={payBlocked}
+                  onPress={() => confirm(false)}
                   style={[
                     styles.outlineBtn,
                     {
                       borderColor: chrome.border,
-                      opacity: pmId == null ? 0.45 : 1,
+                      opacity: payBlocked ? 0.45 : 1,
                     },
                   ]}>
                   <Text style={[styles.outlineBtnTxt, {color: chrome.text}]}>

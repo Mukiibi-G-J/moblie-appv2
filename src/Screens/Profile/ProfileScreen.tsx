@@ -61,6 +61,7 @@ const ProfileScreen = () => {
   const app = useAppContext();
   const auth = app?.auth;
   const patchAuth = app?.patchAuth;
+  const refreshRoleCentreSession = app?.refreshRoleCentreSession;
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -154,6 +155,7 @@ const ProfileScreen = () => {
         );
         setRoleModalVisible(false);
         invalidateQueryCache();
+        await refreshRoleCentreSession?.();
         Toast.show({
           type: 'success',
           text1: 'Role Centre updated',
@@ -172,7 +174,7 @@ const ProfileScreen = () => {
         setSwitchingRole(false);
       }
     },
-    [roleCentre, switchingRole],
+    [roleCentre, switchingRole, refreshRoleCentreSession],
   );
 
   const avatarSrc = useMemo(

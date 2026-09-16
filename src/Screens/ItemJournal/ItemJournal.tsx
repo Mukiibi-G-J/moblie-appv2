@@ -11,7 +11,7 @@ import {
   Image,
   RefreshControl,
 } from 'react-native';
-import {useNavigation} from '@react-navigation/native';
+import {useNavigation, useRoute} from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
 import {StackScreenLayout} from '../../Components';
 import {showUserError} from '../../utils/userFeedback';
@@ -123,6 +123,7 @@ const ItemJournalScreen = ({
   config?: ItemJournalScreenConfig;
 }) => {
   const navigation = useNavigation<any>();
+  const route = useRoute<any>();
   const {colors} = useTheme();
   const {auth} = useAuth();
   const {canRead, canCreate, canEdit, canDelete} = usePermissions();
@@ -164,6 +165,14 @@ const ItemJournalScreen = ({
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    const nextSearch = route.params?.initialSearch as string | undefined;
+    if (typeof nextSearch === 'string' && nextSearch.trim()) {
+      setSearchQuery(nextSearch);
+      setDebouncedSearch(nextSearch);
+    }
+  }, [route.params?.initialSearch]);
+
+  useEffect(() => {
     if (searchTimer.current) {
       clearTimeout(searchTimer.current);
     }
@@ -185,7 +194,10 @@ const ItemJournalScreen = ({
       const p = pageOverride ?? page;
       try {
         setLoading(true);
-        const response = await fetchItemJournal(p, debouncedSearch, {status: 'Open'});
+        const response = await fetchItemJournal(p, debouncedSearch, {
+          status: 'Open',
+          adjustment_type: screenConfig.lockedAdjustmentType,
+        });
         const rawList = response.results || [];
         const parsed = rawList
           .map(r => normalizeLine(r as Record<string, unknown>))
@@ -219,7 +231,7 @@ const ItemJournalScreen = ({
         setRefreshing(false);
       }
     },
-    [page, debouncedSearch],
+    [page, debouncedSearch, screenConfig.lockedAdjustmentType],
   );
 
   useEffect(() => {
@@ -338,9 +350,7 @@ const ItemJournalScreen = ({
     );
   };
 
-  const handleFormSave = () => {
-    setFormVisible(false);
-    setEditingLine(null);
+  const handleFormSaved = () => {
     setPage(1);
     loadJournals(1);
   };
@@ -513,9 +523,11 @@ const ItemJournalScreen = ({
         onClose={() => {
           setFormVisible(false);
           setEditingLine(null);
+          setPage(1);
+          loadJournals(1);
         }}
         line={editingLine}
-        onSave={handleFormSave}
+        onSaved={handleFormSaved}
         userId={userId}
         canCreate={canCreate(PAGE_NAME)}
         canEdit={canEdit(PAGE_NAME)}

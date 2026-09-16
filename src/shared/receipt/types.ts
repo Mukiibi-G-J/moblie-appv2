@@ -148,6 +148,8 @@ export type ReceiptNodeType =
 export interface ReceiptTextStyle {
   align?: "left" | "center" | "right";
   bold?: boolean;
+  /** Keep bold on 58mm printers that otherwise skip emphasis to save paper. */
+  forceBold?: boolean;
   double?: boolean;
   size?: number;
 }

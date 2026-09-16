@@ -1,4 +1,5 @@
 import type {CartItem} from '../@types/types.dto';
+import {normalizeTransactionId} from './paymentMethodDefaults';
 
 export interface CartLineForPayload {
   id?: string;
@@ -52,11 +53,13 @@ export function buildSalesInvoicePayload(options: {
   changeAmount: number;
   lines: CartLineForPayload[];
   documentDate?: string;
+  transactionId?: string | null;
 }) {
   const totalAmount = options.lines.reduce((sum, line) => {
     const unitPrice = line.unit_price ?? line.price ?? 0;
     return sum + unitPrice * line.quantity;
   }, 0);
+  const transactionId = normalizeTransactionId(options.transactionId);
 
   return {
     system_id: options.systemId,
@@ -69,6 +72,7 @@ export function buildSalesInvoicePayload(options: {
     amount_received: options.amountReceived,
     change_amount: options.changeAmount,
     payment_method: options.paymentMethodId,
+    transaction_id: transactionId,
     invoice_discount_amount: '0',
     invoice_discount_percentage: '0',
     lines: options.lines.map((item, index) => {

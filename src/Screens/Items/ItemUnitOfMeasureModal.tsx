@@ -1,5 +1,4 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
-import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
 import {
   View,
   Text,
@@ -59,14 +58,12 @@ type FormState = {
   unit_of_measure: string;
   quantity_per_unit: string;
   default: boolean;
-  price: string;
 };
 
 const EMPTY_FORM: FormState = {
   unit_of_measure: '',
   quantity_per_unit: '1',
   default: false,
-  price: '',
 };
 
 interface ItemUnitOfMeasureModalProps {
@@ -200,10 +197,6 @@ const ItemUnitOfMeasureModal: React.FC<ItemUnitOfMeasureModalProps> = ({
       unit_of_measure: row.unit_of_measure,
       quantity_per_unit: String(row.quantity_per_unit ?? 1),
       default: row.default,
-      price:
-        row.price != null && row.price !== undefined
-          ? String(Math.round(Number(row.price)))
-          : '',
     });
   };
 
@@ -233,24 +226,12 @@ const ItemUnitOfMeasureModal: React.FC<ItemUnitOfMeasureModalProps> = ({
       return;
     }
 
-    const payload: {
-      item: string;
-      unit_of_measure: string;
-      quantity_per_unit: number;
-      default: boolean;
-      price?: number;
-    } = {
+    const payload = {
       item: itemNo,
       unit_of_measure: form.unit_of_measure,
       quantity_per_unit: qty,
       default: form.default,
     };
-    if (form.price.trim() !== '') {
-      const price = Number(form.price.replace(/,/g, ''));
-      if (Number.isFinite(price) && price >= 0) {
-        payload.price = price;
-      }
-    }
 
     setSaving(true);
     try {
@@ -397,7 +378,6 @@ const ItemUnitOfMeasureModal: React.FC<ItemUnitOfMeasureModalProps> = ({
                     </Text>
                     <Text style={[styles.rowMeta, theme.rowMeta]}>
                       Qty per unit: {row.quantity_per_unit}
-                      {row.price != null ? ` · Price: ${formatCurrencyCompact(Math.round(Number(row.price)))}` : ''}
                     </Text>
                   </View>
                   {row.default ? (
@@ -511,16 +491,6 @@ const ItemUnitOfMeasureModal: React.FC<ItemUnitOfMeasureModalProps> = ({
                   }
                   keyboardType="numeric"
                   placeholder="1"
-                  placeholderTextColor={colors.placeholder}
-                />
-
-                <Text style={[styles.fieldLabel, theme.label]}>{formatCurrencyLabel('Price')}, optional</Text>
-                <TextInput
-                  style={[styles.input, theme.input]}
-                  value={form.price}
-                  onChangeText={text => setForm(prev => ({...prev, price: text}))}
-                  keyboardType="numeric"
-                  placeholder="Uses item price if empty"
                   placeholderTextColor={colors.placeholder}
                 />
 

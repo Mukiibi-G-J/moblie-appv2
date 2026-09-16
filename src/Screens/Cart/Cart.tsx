@@ -20,10 +20,12 @@ import {
   Dimensions,
   InteractionManager,
   DeviceEventEmitter,
+  useWindowDimensions,
 } from 'react-native';
 import { Camera, CameraType } from 'react-native-camera-kit';
 import {GestureHandlerRootView} from 'react-native-gesture-handler';
 import {
+  fetchSalesSetupPriceFlags,
   createSales,
   fetchDraftSales,
   getSalesInvoice,
@@ -41,6 +43,8 @@ import {
 import {searchItems as catalogSearchItems} from '../../services/itemCatalogService';
 import {useOfflineOptional} from '../../context/OfflineContext';
 import {PosConnectivityBadge} from '../../Components/PosConnectivityBadge';
+import {PosSaleCartPanel} from '../../Components/PosSaleCartPanel';
+import {SalesUiSwitch} from '../../Components/SalesUiSwitch';
 import {
   getCartTrackingMode,
   getPosConnectivityMode,
@@ -57,6 +61,7 @@ import {
   COLORS,
   icons,
   dummyData,
+  constants,
   ICON_BUTTON_HIT_SLOP,
   ICON_BUTTON_QUICK_PRESS,
 } from '../../constants';
@@ -68,10 +73,15 @@ import {
   QuickIconPressable,
 } from '../../Components';
 import TodayMySalesBar from '../../Components/TodayMySalesBar';
-import { useAppContext } from '../../context/Store';
+import { useAppContext, useTabContext } from '../../context/Store';
 import { usePermissions } from '../../hooks/usePermissions';
+import { useSalesUiMode } from '../../hooks/useSalesUiMode';
 import { useSaleCustomersQuery } from '../../hooks/useSaleCustomersQuery';
-import { useInvalidateSales } from '../../hooks/useSalesQuery';
+import {
+  constrainedWidthStyle,
+  SHEET_MAX_WIDTH,
+} from '../../utils/layout';
+import { useInvalidateSales, useUserSetupQuery } from '../../hooks/useSalesQuery';
 import { useInvalidateItems } from '../../hooks/useItemsQuery';
 import { PAGE_NAMES } from '../../constants/pageNames';
 import { useCart } from '../../context/CartStore';
@@ -113,7 +123,21 @@ import {
   resolvePricesForUoms,
   withCartUomDefaults,
 } from '../../utils/posUom';
+import {
+  canEditSalesUnitPrice,
+  formatSalesPriceInput,
+  parseSalesPriceInput,
+  resolveEditedSalesPrice,
+  type SalesPriceEditFlags,
+} from '../../utils/salesPriceEdit';
 import { playBarcodeBeep } from '../../utils/barcodeFeedback';
+import { useCompanyInfo } from '../../hooks/useCompanyInfo';
+import { usePublishCustomerDisplay } from '../../hooks/usePublishCustomerDisplay';
+import {
+  buildIdleCustomerDisplay,
+  linesFromCartItems,
+  publishCustomerDisplay,
+} from '../../services/customerDisplay';
 // import {SaleResult} from '../../services/SalesService';
 // PrinterTestButton import removed - keeping test code in PrintService
 
@@ -290,18 +314,41 @@ const Cart = ({
   const appContext = useAppContext();
   const { cartItems } = state;
   const auth = appContext?.auth;
+  const {storeLabel, logoUri} = useCompanyInfo();
+  const {selectedTab} = useTabContext();
   const { canRead, canCreate, canEdit, canDelete, hasAnyPageAccess } =
     usePermissions();
   const SALES_PAGE = PAGE_NAMES.SALES;
   const canViewSales = canRead(SALES_PAGE);
   const canOpenSalesHistory = hasAnyPageAccess(PAGE_NAMES.SALES_HISTORY);
   const [todayMySalesRefreshKey, setTodayMySalesRefreshKey] = useState(0);
+  const [catalogRefreshKey, setCatalogRefreshKey] = useState(0);
+  const [soldItemsForStockRefresh, setSoldItemsForStockRefresh] = useState<CartItem[]>([]);
   const canInsertSale = canCreate(SALES_PAGE);
   const showTodayMySales = canViewSales || canInsertSale;
   const canModifySale = canEdit(SALES_PAGE);
   const canRemoveSale = canDelete(SALES_PAGE);
   const canMutateCart = canInsertSale || canModifySale;
   const canUseDrafts = canInsertSale || canModifySale;
+  const {data: userSetup} = useUserSetupQuery(true);
+  const [salesPriceFlags, setSalesPriceFlags] = useState<SalesPriceEditFlags>({
+    disablePriceEditing: false,
+    preventBelowOriginal: false,
+  });
+  const [priceDraft, setPriceDraft] = useState('');
+  const canEditPrice = canEditSalesUnitPrice({
+    canEditSalesPrice:
+      userSetup?.canEditSalesPrice ??
+      auth?.userPermissions?.canEditSalesPrice,
+    disablePriceEditing: salesPriceFlags.disablePriceEditing,
+  });
+  const {mode: salesUiMode, isPosUi, setMode: setSalesUiMode} = useSalesUiMode();
+  const {width: windowWidth, height: windowHeight} = useWindowDimensions();
+  const sheetWidthStyle = constrainedWidthStyle(
+    windowWidth,
+    SHEET_MAX_WIDTH,
+    windowHeight,
+  );
   const isFocused = useIsFocused();
   const [isPlacingOrder, setIsPlacingOrder] = useState(false);
   const [showSalesModal, setShowSalesModal] = useState(false);
@@ -367,6 +414,63 @@ const Cart = ({
     new Set() as Set<string>,
   );
 
+  const customerDisplayPayload = useMemo(() => {
+    const qty = cartItems.reduce(
+      (sum, item) => sum + (Number(item.quantity) || 0),
+      0,
+    );
+    const total = cartItems.reduce(
+      (sum, item) =>
+        sum + (Number(item.unit_price) || 0) * (Number(item.quantity) || 0),
+      0,
+    );
+    if (showSalesModal || reviewSaleVisible) {
+      return {
+        mode: 'paying' as const,
+        companyName: storeLabel,
+        companyLogo: logoUri,
+        heading: 'Please pay',
+        message: selectedSaleCustomer?.name
+          ? selectedSaleCustomer.name
+          : 'Pay at the counter',
+        lines: linesFromCartItems(cartItems),
+        totalLabel: 'AMOUNT DUE',
+        totalAmount: formatCurrencyCompact(total),
+        footer: `${qty} item${qty === 1 ? '' : 's'}`,
+      };
+    }
+    if (cartItems.length === 0) {
+      return buildIdleCustomerDisplay(storeLabel, logoUri);
+    }
+    return {
+      mode: 'cart' as const,
+      companyName: storeLabel,
+      companyLogo: logoUri,
+      heading: 'Your order',
+      lines: linesFromCartItems(cartItems),
+      totalLabel: 'TOTAL',
+      totalAmount: formatCurrencyCompact(total),
+      footer: `${qty} item${qty === 1 ? '' : 's'}`,
+    };
+  }, [
+    cartItems,
+    logoUri,
+    reviewSaleVisible,
+    selectedSaleCustomer?.name,
+    showSalesModal,
+    storeLabel,
+  ]);
+  const customerScreenActive = isTabMode
+    ? selectedTab === constants.screens.makeSale
+    : isFocused;
+  const idleCustomerDisplay = useMemo(
+    () => buildIdleCustomerDisplay(storeLabel, logoUri),
+    [logoUri, storeLabel],
+  );
+  usePublishCustomerDisplay(
+    customerScreenActive ? customerDisplayPayload : idleCustomerDisplay,
+  );
+
   /** Android embedded scanner */
   const [cameraPermission, setCameraPermission] = useState < boolean | null > (
     Platform.OS === 'android' ? null : false,
@@ -416,6 +520,21 @@ const Cart = ({
       }
     }, [showTodayMySales]),
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchSalesSetupPriceFlags().then(flags => {
+      if (!cancelled) {
+        setSalesPriceFlags({
+          disablePriceEditing: flags.disablePriceEditing,
+          preventBelowOriginal: flags.preventPriceBelowOriginal,
+        });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   cartItemsRef.current = cartItems;
 
@@ -811,6 +930,7 @@ const Cart = ({
     }
     const opened = withCartUomDefaults({...item});
     setEditingCartItem(opened);
+    setPriceDraft(formatSalesPriceInput(Number(opened.unit_price) || 0));
     setCartItemEditorVisible(true);
     void enrichCartItemTracking(opened);
   };
@@ -818,6 +938,7 @@ const Cart = ({
   const closeCartItemEditor = () => {
     setCartItemEditorVisible(false);
     setEditingCartItem(null);
+    setPriceDraft('');
     setUomModalVisible(false);
     setUomOptions([]);
     setUomResolvedPrices({});
@@ -897,6 +1018,7 @@ const Cart = ({
       unit_price: optimisticPrice,
     });
     setEditingCartItem(updated);
+    setPriceDraft(formatSalesPriceInput(optimisticPrice));
     dispatch({type: 'CART_UPDATE_ITEM', payload: updated});
     setUomModalVisible(false);
 
@@ -925,6 +1047,7 @@ const Cart = ({
           ? confirmed
           : previous,
       );
+      setPriceDraft(formatSalesPriceInput(resolvedPrice));
       dispatch({type: 'CART_UPDATE_ITEM', payload: confirmed});
     });
   };
@@ -949,6 +1072,78 @@ const Cart = ({
     };
     setEditingCartItem(updated);
     dispatch({ type: 'CART_UPDATE_ITEM', payload: updated });
+  };
+
+  const commitEditingCartItemPrice = () => {
+    if (!canModifySale || !canEditPrice || !editingCartItem) {
+      if (editingCartItem) {
+        setPriceDraft(
+          formatSalesPriceInput(Number(editingCartItem.unit_price) || 0),
+        );
+      }
+      return;
+    }
+
+    const original =
+      editingCartItem.original_price != null &&
+      Number.isFinite(Number(editingCartItem.original_price))
+        ? Number(editingCartItem.original_price)
+        : Number(editingCartItem.unit_price) || 0;
+    const resolved = resolveEditedSalesPrice({
+      requested: parseSalesPriceInput(priceDraft),
+      originalPrice: original,
+      preventBelowOriginal: salesPriceFlags.preventBelowOriginal,
+    });
+
+    if (resolved.blockedBelowOriginal) {
+      Toast.show({
+        type: 'info',
+        text1: 'Price too low',
+        text2: `Cannot set price below original (${formatCurrencyCompact(
+          original,
+        )})`,
+        visibilityTime: 2500,
+        position: 'top',
+      });
+    }
+
+    const updated: CartItem = {
+      ...editingCartItem,
+      unit_price: resolved.price,
+    };
+    setEditingCartItem(updated);
+    setPriceDraft(formatSalesPriceInput(resolved.price));
+    dispatch({type: 'CART_UPDATE_ITEM', payload: updated});
+  };
+
+  const changeCartLineQuantity = (item: CartItem, delta: number) => {
+    if (!canModifySale) {
+      return;
+    }
+    const currentQty = Number(item.quantity) || 1;
+    const maxQty = posItemMaxSaleQuantity(item, currentQty);
+    const nextQty = Math.min(maxQty, Math.max(1, currentQty + delta));
+    if (nextQty === currentQty) {
+      return;
+    }
+    const updated: CartItem = {...item, quantity: nextQty};
+    dispatch({type: 'CART_UPDATE_ITEM', payload: updated});
+    if (editingCartItem?.system_id === item.system_id) {
+      setEditingCartItem(updated);
+    }
+  };
+
+  const removeCartLine = (item: CartItem) => {
+    if (!canModifySale) {
+      return;
+    }
+    dispatch({
+      type: 'REMOVE_FROM_CART',
+      payload: {system_id: String(item.system_id)},
+    });
+    if (editingCartItem?.system_id === item.system_id) {
+      closeCartItemEditor();
+    }
   };
 
   const removeEditingCartItem = () => {
@@ -1238,6 +1433,25 @@ const Cart = ({
   };
   
   const handleSaleSuccess = (_result: any) => {
+    const soldLines = (cartItemsRef.current?.length
+      ? cartItemsRef.current
+      : cartItems
+    ).map(item => ({...item}));
+    const paidTotal = soldLines.reduce(
+      (sum, item) =>
+        sum + (Number(item.unit_price) || 0) * (Number(item.quantity) || 0),
+      0,
+    );
+    publishCustomerDisplay({
+      mode: 'thanks',
+      companyName: storeLabel,
+      companyLogo: logoUri,
+      heading: 'Thank you',
+      message: 'Please take your receipt',
+      totalAmount: formatCurrencyCompact(paidTotal),
+    });
+    setSoldItemsForStockRefresh(soldLines);
+
     // Clear cart after successful sale
     dispatch({ type: 'CLEAR_CART' });
     // Clear current draft ID and system_id if set
@@ -1247,6 +1461,7 @@ const Cart = ({
     // Refresh drafts after successful sale
     loadDrafts();
     setTodayMySalesRefreshKey(k => k + 1);
+    setCatalogRefreshKey(k => k + 1);
     invalidateSales();
     invalidateItems();
   
@@ -1929,7 +2144,7 @@ const Cart = ({
   
   /** Bottom sheet when opened outside Current sale (standalone Modal). */
   const renderSaleCustomerPickerSheet = () => (
-    <View style={[styles.saleCustomerPickerSheet, ct.modalSheet]}>
+    <View style={[styles.saleCustomerPickerSheet, ct.modalSheet, sheetWidthStyle]}>
       <View style={[styles.modalHeader, ct.modalHdr]}>
         <Text style={[styles.modalTitle, ct.modalTitle]}>Select customer</Text>
         <QuickIconPressable
@@ -2028,7 +2243,7 @@ const Cart = ({
           dismissReviewSaleSheet();
           return true;
         }}>
-        <View style={[styles.currentSalePanel, ct.currentSalePanel]}>
+        <View style={[styles.currentSalePanel, ct.currentSalePanel, sheetWidthStyle]}>
           <View style={styles.currentSaleHandle} />
   
           <View style={[styles.currentSaleHeader, ct.currentSaleHdr]}>
@@ -2336,7 +2551,13 @@ const Cart = ({
                     <View style={styles.cartEditorHeaderSpacer} />
                   </View>
   
-                  <View style={[styles.cartEditorBody, ct.cartEditorBody]}>
+                  <KeyboardAvoidingView
+                    style={{flex: 1}}
+                    behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+                  <ScrollView
+                    style={[styles.cartEditorBody, ct.cartEditorBody]}
+                    keyboardShouldPersistTaps="handled"
+                    contentContainerStyle={styles.cartEditorBodyContent}>
                     <TouchableOpacity
                       style={[styles.cartEditorInfoCard, ct.cartEditorInfo]}
                       onPress={openUomModal}
@@ -2366,7 +2587,7 @@ const Cart = ({
                                 styles.cartEditorUomHint,
                                 ct.cartEditorTrackHint,
                               ]}>
-                              Tap to change unit / price
+                              Tap to change unit
                             </Text>
                           )}
                         </View>
@@ -2377,6 +2598,50 @@ const Cart = ({
                       </View>
                     </TouchableOpacity>
   
+                    <Text style={styles.cartEditorSectionLabel}>
+                      {formatCurrencyLabel('Unit price')}
+                    </Text>
+                    {canEditPrice && canModifySale ? (
+                      <View
+                        style={[styles.cartEditorPriceRow, ct.cartEditorQtyValBr]}>
+                        <Text
+                          style={[
+                            styles.cartEditorPricePrefix,
+                            {color: colors.textSecondary},
+                          ]}>
+                          {getLocalCurrencyCode()}
+                        </Text>
+                        <TextInput
+                          style={[
+                            styles.cartEditorPriceInput,
+                            {color: colors.textPrimary},
+                          ]}
+                          value={priceDraft}
+                          onChangeText={text => {
+                            const cleaned = text.replace(/[^\d.,]/g, '');
+                            setPriceDraft(cleaned);
+                          }}
+                          onBlur={commitEditingCartItemPrice}
+                          onSubmitEditing={commitEditingCartItemPrice}
+                          keyboardType="decimal-pad"
+                          selectTextOnFocus
+                          placeholder="0"
+                          placeholderTextColor={COLORS.gray}
+                          accessibilityLabel="Unit price"
+                        />
+                      </View>
+                    ) : (
+                      <Text
+                        style={[
+                          styles.cartEditorPriceReadOnly,
+                          {color: colors.textPrimary},
+                        ]}>
+                        {formatCurrencyCompact(
+                          Number(editingCartItem?.unit_price) || 0,
+                        )}
+                      </Text>
+                    )}
+
                     <Text style={styles.cartEditorSectionLabel}>QUANTITY</Text>
   
                     <View style={styles.cartEditorQuantityRow}>
@@ -2503,7 +2768,8 @@ const Cart = ({
                       ]}>
                       <Text style={styles.cartEditorRemoveText}>Remove Item</Text>
                     </Pressable>
-                  </View>
+                  </ScrollView>
+                  </KeyboardAvoidingView>
                 </SafeAreaView>
               </View>
             </View>
@@ -2933,8 +3199,7 @@ const Cart = ({
             />
           ) : null}
 
-          {isTabMode || showTodayMySales ? (
-            <View style={styles.posToolbarRow}>
+          <View style={styles.posToolbarRow}>
               {isTabMode ? (
                 <PosConnectivityBadge
                   compact
@@ -2955,9 +3220,9 @@ const Cart = ({
                   />
                 ) : null}
               </View>
+              <SalesUiSwitch mode={salesUiMode} onChange={setSalesUiMode} />
               {isTabMode && canUseDrafts ? renderDraftsAccessButton() : null}
             </View>
-          ) : null}
   
           {Platform.OS === 'android' && searchModeState.barcodeScannerEnabled && (
             <View style={styles.embeddedScannerSection}>
@@ -3027,26 +3292,76 @@ const Cart = ({
             </View>
           )}
   
-          <View style={{ flex: 1, minHeight: 0 }}>
-            <SalesItemBrowser
-              onAddItem={item => {
-                if (!canMutateCart) {
-                  Toast.show({
-                    type: 'info',
-                    text1: 'Permission denied',
-                    text2: 'You cannot add items to this sale.',
-                    visibilityTime: 3000,
-                    position: 'top',
-                  });
-                  return;
+          <View style={[styles.salesBody, isPosUi && styles.salesBodyPos]}>
+            <View style={[styles.salesItemsPane, isPosUi && styles.salesItemsPanePos]}>
+              <SalesItemBrowser
+                onAddItem={item => {
+                  if (!canMutateCart) {
+                    Toast.show({
+                      type: 'info',
+                      text1: 'Permission denied',
+                      text2: 'You cannot add items to this sale.',
+                      visibilityTime: 3000,
+                      position: 'top',
+                    });
+                    return;
+                  }
+                  handleSalesBrowserAddItem(item);
+                }}
+                onScanPress={handleSalesBrowserScanPress}
+                showScanButton={showScanShortcutButton}
+                onOpenCreateItem={handleOpenCreateInventory}
+                onOpenCreateService={handleOpenCreateService}
+                catalogRefreshKey={catalogRefreshKey}
+                soldItemsForStockRefresh={soldItemsForStockRefresh}
+                preferGrid={isPosUi}
+              />
+            </View>
+            {isPosUi ? (
+              <PosSaleCartPanel
+                items={cartItems}
+                customerLabel={selectedSaleCustomer?.name || 'General'}
+                customerSubtitle={
+                  selectedSaleCustomer
+                    ? isGeneralSaleCustomer
+                      ? 'Default customer'
+                      : selectedSaleCustomer.no
+                    : 'Choose a customer'
                 }
-                handleSalesBrowserAddItem(item);
-              }}
-              onScanPress={handleSalesBrowserScanPress}
-              showScanButton={showScanShortcutButton}
-              onOpenCreateItem={handleOpenCreateInventory}
-              onOpenCreateService={handleOpenCreateService}
-            />
+                onPressCustomer={() => setCustomerPickerVisible(true)}
+                onPressLine={item => {
+                  setReviewSaleVisible(true);
+                  openCartItemEditor(item);
+                }}
+                onChangeQuantity={changeCartLineQuantity}
+                onRemoveLine={removeCartLine}
+                onCharge={() => {
+                  const total = cartItems.reduce(
+                    (sum, item) =>
+                      sum +
+                      (Number(item.quantity) || 0) *
+                        (Number(item.unit_price) || 0),
+                    0,
+                  );
+                  void handlePlaceOrder(total);
+                }}
+                onClear={
+                  canModifySale && cartItems.length > 0
+                    ? () => {
+                        dispatch({type: 'CLEAR_CART'});
+                        setCurrentDraftId(null);
+                        setCurrentDraftSystemId(null);
+                      }
+                    : undefined
+                }
+                canMutate={canMutateCart}
+                canModify={canModifySale}
+                canCharge={canInsertSale}
+                isLoading={isPlacingOrder}
+                printReceipt={printReceipt}
+                setPrintReceipt={setPrintReceipt}
+              />
+            ) : null}
           </View>
   
           {loadingDraftIntoCart && (
@@ -3058,8 +3373,7 @@ const Cart = ({
             </View>
           )}
   
-          {/* Footer */}
-          {cartItems.length > 0 && !isKeyboardVisible && (
+          {!isPosUi && cartItems.length > 0 && !isKeyboardVisible && (
             <View style={[styles.footerContainer, ct.footerWrap]}>{renderFooter()}</View>
           )}
   
@@ -3450,6 +3764,21 @@ const styles = StyleSheet.create({
   saleActionsMenuRowTextPrimary: {
     color: COLORS.primary2,
   },
+  salesBody: {
+    flex: 1,
+    minHeight: 0,
+  },
+  salesBodyPos: {
+    flexDirection: 'row',
+  },
+  salesItemsPane: {
+    flex: 1,
+    minHeight: 0,
+    minWidth: 0,
+  },
+  salesItemsPanePos: {
+    flex: 58,
+  },
   posToolbarRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -3779,6 +4108,9 @@ const styles = StyleSheet.create({
     paddingTop: 28,
     backgroundColor: COLORS.white,
   },
+  cartEditorBodyContent: {
+    paddingBottom: 24,
+  },
   cartEditorInfoCard: {
     borderWidth: 1,
     borderColor: COLORS.transparentPrimary2,
@@ -3821,6 +4153,31 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: 14,
     letterSpacing: 0.5,
+  },
+  cartEditorPriceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 68,
+    marginBottom: 28,
+    borderBottomWidth: 2,
+    borderBottomColor: COLORS.transparentPrimary3,
+    paddingHorizontal: 4,
+  },
+  cartEditorPricePrefix: {
+    ...FONTS.body3,
+    fontWeight: '700',
+    marginRight: 8,
+  },
+  cartEditorPriceInput: {
+    flex: 1,
+    ...FONTS.h3,
+    fontWeight: '700',
+    paddingVertical: 8,
+  },
+  cartEditorPriceReadOnly: {
+    ...FONTS.h3,
+    fontWeight: '700',
+    marginBottom: 28,
   },
   cartEditorQuantityRow: {
     flexDirection: 'row',

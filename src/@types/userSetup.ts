@@ -8,11 +8,13 @@ export interface UserSetup {
   canSeeBuyingPrice: boolean;
   canSeeProfitMargin: boolean;
   canSeeItemCost: boolean;
+  canEditSalesPrice?: boolean;
   canPostPreviousDates: boolean;
   canReversePurchaseInvoice: boolean;
   canReverseSalesInvoice: boolean;
   canReverseItemJournal?: boolean;
   canViewOnlyTheirSales: boolean;
+  defaultSalesUi?: 'phone' | 'pos';
   notes: string;
   createdAt: string;
   updatedAt: string;
@@ -23,11 +25,13 @@ export interface UserSetupFormValues {
   canSeeBuyingPrice: boolean;
   canSeeProfitMargin: boolean;
   canSeeItemCost: boolean;
+  canEditSalesPrice?: boolean;
   canPostPreviousDates: boolean;
   canReversePurchaseInvoice: boolean;
   canReverseSalesInvoice: boolean;
   canReverseItemJournal?: boolean;
   canViewOnlyTheirSales: boolean;
+  defaultSalesUi?: 'phone' | 'pos';
   notes: string;
 }
 

@@ -107,6 +107,7 @@ export interface PaymentMethod {
   bal_account_object_id?: number;
   blocked?: boolean;
   requires_amount_received?: boolean;
+  requires_transaction_id?: boolean;
 }
 
 export interface Customer {
@@ -123,6 +124,7 @@ export interface QuickCustomerPaymentPayload {
   amount: number;
   payment_method_id: number;
   posting_date?: string;
+  transaction_id?: string;
 }
 
 export interface QuickCustomerPaymentResult {

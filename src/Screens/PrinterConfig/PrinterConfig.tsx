@@ -281,7 +281,13 @@ const PrinterConfig: React.FC = () => {
           type: 'info',
           text1: 'No USB printers found',
           text2:
-            'Make sure the printer is powered on and the USB cable is connected',
+            'Power on the Xprinter, plug in USB, then scan again. Use a data USB cable, not charge-only.',
+        });
+      } else {
+        Toast.show({
+          type: 'success',
+          text1: 'USB devices found',
+          text2: `Found ${devices.length} device(s). Select the Xprinter.`,
         });
       }
     } catch (error: any) {
@@ -424,7 +430,7 @@ const PrinterConfig: React.FC = () => {
   const showHelpInfo = () => {
     Alert.alert(
       'Printer setup',
-      '1. Choose Auto detect, Bluetooth, or USB (AOCOM built-in).\n2. Bluetooth: pair your printer in Android Bluetooth settings, then tap "Scan for printers".\n3. USB: plug the printer in via USB, tap "Scan for USB printers", select the printer and grant USB permission when Android asks — prints directly, no dialog.\n4. Tap Test printer and choose Quick test (short slip) or Sales receipt test (full sample sale).',
+      '1. Choose Auto detect, Bluetooth, or USB.\n2. Bluetooth: pair your printer in Android Bluetooth settings, then tap "Scan for printers".\n3. USB (Xprinter XP-58IIT): plug the printer USB-B cable into the POS, turn the printer on, tap "Scan for USB printers", select it, and tap Allow when Android asks.\n4. Tap Quick test or Sales receipt to print.',
       [{text: 'OK'}],
     );
   };
@@ -553,8 +559,8 @@ const PrinterConfig: React.FC = () => {
               )}
               {renderTypeOption(
                 'usb',
-                'USB Printer (AOCOM built-in)',
-                '58mm internal USB printer — prints directly via USB, no dialog',
+                'USB printer',
+                'USB thermal printer (Xprinter XP-58IIT and other 58mm ESC/POS)',
               )}
             </View>
           </View>
@@ -701,10 +707,10 @@ const PrinterConfig: React.FC = () => {
                   styles.sectionTitleSpaced,
                   {color: COLORS.primary3},
                 ]}>
-                AOCOM built‑in USB printer
+                USB thermal printer
               </Text>
               <Text style={[styles.sectionSubtitle, {color: colors.textSecondary}]}>
-                Prints directly to the 58mm thermal printer via USB — no system dialog
+                Connect the Xprinter XP-58IIT (or another 58mm USB ESC/POS printer) with the USB-B cable
               </Text>
 
               {connectedUsbDevice ? (
@@ -820,10 +826,10 @@ const PrinterConfig: React.FC = () => {
                   Setup tips
                 </Text>
                 <Text style={[styles.infoCardBody, {color: colors.textSecondary}]}>
-                  Plug the USB cable into the AOCOM machine, power the printer on, then tap
-                  "Scan for USB printers". Tap the printer in the list. When Android asks for
-                  USB permission, tap Allow. The printer will appear as Connected above.
-                  Tap Test printer to verify (quick or sales receipt).
+                  Power on the Xprinter, connect USB-B to the POS USB port, then tap
+                  "Scan for USB printers". Select the printer (often labeled Xprinter). When
+                  Android asks for USB permission, tap Allow and choose Always if shown.
+                  Then tap Quick test — a short slip should print.
                 </Text>
               </View>
             </>

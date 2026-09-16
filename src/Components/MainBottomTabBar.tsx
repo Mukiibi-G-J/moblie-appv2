@@ -5,9 +5,14 @@ import {
   TouchableOpacity,
   Image,
   StyleSheet,
+  useWindowDimensions,
 } from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import {COLORS, FONTS, SIZES, icons, constants} from '../constants';
+import {COLORS, FONTS, icons, constants} from '../constants';
+import {
+  constrainedWidthStyle,
+  TAB_BAR_CONTENT_MAX_WIDTH,
+} from '../utils/layout';
 
 export type BottomTabDef = (typeof constants.bottom_tabs)[number];
 import {useTheme} from '../context/ThemeContext';
@@ -80,7 +85,13 @@ const MainBottomTabBar: React.FC<MainBottomTabBarProps> = ({
 }) => {
   const {colors} = useTheme();
   const insets = useSafeAreaInsets();
+  const {width, height} = useWindowDimensions();
   const tabList = tabs?.length ? tabs : constants.bottom_tabs;
+  const tabRowWidthStyle = constrainedWidthStyle(
+    width,
+    TAB_BAR_CONTENT_MAX_WIDTH,
+    height,
+  );
 
   return (
     <View
@@ -92,7 +103,7 @@ const MainBottomTabBar: React.FC<MainBottomTabBarProps> = ({
           paddingBottom: Math.max(insets.bottom, 4),
         },
       ]}>
-      <View style={styles.tabBarRow}>
+      <View style={[styles.tabBarRow, tabRowWidthStyle]}>
         {tabList.map(tab => {
           const label = tab.label;
           const icon =

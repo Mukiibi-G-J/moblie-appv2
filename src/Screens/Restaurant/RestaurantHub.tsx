@@ -22,6 +22,7 @@ type Tile = {
     | 'RestaurantSettings'
     | 'PrinterConfig';
   pageNames: string[];
+  enginePages: string[];
 };
 
 const TILES: Tile[] = [
@@ -31,6 +32,7 @@ const TILES: Tile[] = [
     subtitle: 'Tables, checks, menu',
     route: 'RestaurantPOS',
     pageNames: [PAGE_NAMES.RESTAURANT_POS],
+    enginePages: ['RestaurantPOS'],
   },
   {
     key: 'printer',
@@ -38,6 +40,7 @@ const TILES: Tile[] = [
     subtitle: 'Configure receipt printer',
     route: 'PrinterConfig',
     pageNames: [PAGE_NAMES.RESTAURANT_POS],
+    enginePages: ['RestaurantPOS'],
   },
   {
     key: 'orders',
@@ -45,6 +48,7 @@ const TILES: Tile[] = [
     subtitle: 'Open checks & service',
     route: 'RestaurantOrders',
     pageNames: [PAGE_NAMES.RESTAURANT_ORDERS],
+    enginePages: ['RestaurantOrderList'],
   },
   {
     key: 'kitchen',
@@ -52,12 +56,14 @@ const TILES: Tile[] = [
     subtitle: 'KDS tickets',
     route: 'RestaurantKitchen',
     pageNames: [PAGE_NAMES.RESTAURANT_KITCHEN_DISPLAY],
+    enginePages: ['KitchenDisplay', 'KitchenDisplayList'],
   },
   {
     key: 'dash',
     label: 'Dashboard',
     route: 'RestaurantDashboard',
     pageNames: [PAGE_NAMES.RESTAURANT_DASHBOARD],
+    enginePages: ['RestaurantDashboard'],
   },
   {
     key: 'tables',
@@ -65,12 +71,14 @@ const TILES: Tile[] = [
     subtitle: 'Table management',
     route: 'RestaurantTables',
     pageNames: [PAGE_NAMES.RESTAURANT_TABLE_MANAGEMENT],
+    enginePages: ['TableList'],
   },
   {
     key: 'res',
     label: 'Reservations',
     route: 'RestaurantReservations',
     pageNames: [PAGE_NAMES.RESTAURANT_RESERVATIONS],
+    enginePages: ['ReservationList'],
   },
   {
     key: 'menus',
@@ -81,12 +89,14 @@ const TILES: Tile[] = [
       PAGE_NAMES.RESTAURANT_MENU_MANAGEMENT,
       PAGE_NAMES.RESTAURANT_MENU_LAYOUT_EDITOR,
     ],
+    enginePages: ['MenuList', 'MenuBuilder', 'MenuItemList'],
   },
   {
     key: 'settings',
     label: 'Restaurant settings',
     route: 'RestaurantSettings',
     pageNames: [PAGE_NAMES.RESTAURANT_SETTINGS],
+    enginePages: ['RestaurantSettings'],
   },
 ];
 
@@ -95,14 +105,18 @@ const BRAND = '#005151';
 const RestaurantHub = () => {
   const {colors} = useTheme();
   const navigation = useNavigation<any>();
-  const {isModuleVisible, hasAnyPageAccess} = usePermissions();
+  const {isModuleVisible, hasAnyPageAccess, canAccessMobileScreen} = usePermissions();
 
   const visibleTiles = useMemo(() => {
     if (!isModuleVisible('restaurant')) {
       return [];
     }
-    return TILES.filter(t => t.pageNames.some(p => hasAnyPageAccess(p)));
-  }, [isModuleVisible, hasAnyPageAccess]);
+    return TILES.filter(
+      t =>
+        canAccessMobileScreen(t.enginePages) &&
+        t.pageNames.some(p => hasAnyPageAccess(p)),
+    );
+  }, [isModuleVisible, hasAnyPageAccess, canAccessMobileScreen]);
 
   return (
     <RestaurantScreenLayout title="Restaurant">

@@ -9,10 +9,6 @@ function wrapCenter(text: string): string {
   return `<C>${text}</C>\n`;
 }
 
-function wrapBold(text: string): string {
-  return `<B>${text}</B>\n`;
-}
-
 function nodeToUsb(node: ReceiptDocumentNode, cols: number): string {
   const style = node.style || {};
   switch (node.type) {
@@ -20,21 +16,22 @@ function nodeToUsb(node: ReceiptDocumentNode, cols: number): string {
       return "";
     case "text": {
       const t = node.text || "";
+      // XP-58IIT maps <B> to double-width/height, which wraps the company name.
       if (style.align === "center") {
-        return style.bold ? `<C><B>${t}</B></C>\n` : wrapCenter(t);
+        return wrapCenter(t);
       }
-      return style.bold ? wrapBold(t) : `${t}\n`;
+      return `${t}\n`;
     }
     case "row":
-      return (style.bold ? wrapBold : (s: string) => s + "\n")(
-        padReceiptColumns(node.left || "", node.right || "", cols),
-      );
+      return `${padReceiptColumns(node.left || "", node.right || "", cols)}\n`;
     case "rule":
-      return `${wrapCenter(LINE)}`;
+      // Full-width dashes; do not wrap in <C> (extra feed on XP-58IIT).
+      return `${LINE}\n`;
     case "feed":
-      return "\n".repeat(node.lines || 1);
+      return "\n".repeat(Math.min(1, Math.max(0, node.lines || 1)));
     case "cut":
-      return "\n\n\n";
+      // Tear-bar printers: a trailing newline after the last line wastes paper.
+      return "";
     default:
       return "";
   }
@@ -50,5 +47,6 @@ export function compileDocumentToUsbText(document: ReceiptDocument): string {
 
 export async function printUsbDocument(document: ReceiptDocument): Promise<void> {
   const text = compileDocumentToUsbText(document);
-  await USBPrinter.printText(text);
+  // XP-58IIT is tear-bar: extra tailingLine/cut feeds waste paper.
+  await USBPrinter.printText(text, {tailingLine: false, cut: false});
 }

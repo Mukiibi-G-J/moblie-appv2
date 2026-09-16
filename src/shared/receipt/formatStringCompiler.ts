@@ -1,5 +1,6 @@
 import {
   cleanPaymentMethodLabel,
+  fitReceiptCompanyName,
   formatReceiptAmount,
   formatReceiptDate,
 } from "./formatters";
@@ -43,7 +44,7 @@ function saleVariables(
     address: branding.address || "",
     phone: branding.phone || "",
     email: branding.email || "",
-    tin: branding.tin || "",
+    tin: "",
     vat_no: branding.vatNo || "",
     branch,
     invoice_no: payload.invoiceNo || "",
@@ -202,9 +203,24 @@ export function compileFormatStringToNodes(
 
     const block = trimmed.toLowerCase();
     if (block === "{logo}") {
-      if (branding.logo) {
+      if (branding.logo && !String(branding.logo).includes("company_logos/default.png")) {
         nodes.push({ type: "image", src: branding.logo, style: { align: "center" } });
         nodes.push({ type: "feed", lines: 1 });
+      }
+      continue;
+    }
+
+    if (block === "{company_name}" || block === "{display_name}") {
+      const name = fitReceiptCompanyName(
+        vars.company_name || vars.display_name || "",
+        cols,
+      );
+      if (name) {
+        nodes.push({
+          type: "text",
+          text: name,
+          style: { align: "center" },
+        });
       }
       continue;
     }

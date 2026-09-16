@@ -1,3 +1,42 @@
+export const TRANSACTION_ID_MAX_LENGTH = 100;
+export const TRANSACTION_ID_REQUIRED_MESSAGE =
+  'Transaction ID is required for this payment method.';
+
+/** True only when the payment-method master flag is explicitly on. */
+function isExplicitTrueFlag(value: unknown): boolean {
+  if (value === true || value === 1) {
+    return true;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized === 'true' || normalized === 'yes' || normalized === '1';
+  }
+  return false;
+}
+
+export function paymentMethodRequiresTransactionId(
+  method: {requires_transaction_id?: unknown} | null | undefined,
+): boolean {
+  return isExplicitTrueFlag(method?.requires_transaction_id);
+}
+
+export function withNormalizedTransactionIdFlag<
+  T extends {requires_transaction_id?: unknown},
+>(method: T): T & {requires_transaction_id: boolean} {
+  return {
+    ...method,
+    requires_transaction_id: paymentMethodRequiresTransactionId(method),
+  };
+}
+
+export function normalizeTransactionId(
+  value: string | null | undefined,
+): string {
+  return String(value ?? '')
+    .trim()
+    .slice(0, TRANSACTION_ID_MAX_LENGTH);
+}
+
 /**
  * Prefer Cash CST (then CASH / description match) as the default POS tender.
  */

@@ -176,6 +176,14 @@ const BankAccounts: React.FC = () => {
     );
   };
 
+  const handleFormSave = () => {
+    handleRefresh();
+  };
+
+  const handleRecordChange = (record: BankAccount) => {
+    setSelected(record);
+  };
+
   const renderItem = ({item}: {item: BankAccount}) => (
     <TouchableOpacity
       style={styles.card}
@@ -187,12 +195,12 @@ const BankAccounts: React.FC = () => {
       </View>
       <Text style={styles.cardSub}>{item.bank_account_no || '—'}</Text>
       <View style={styles.cardRow}>
-        <Text style={styles.cardLabel}>Posting Group</Text>
-        <Text style={styles.cardValue}>{item.bank_account_posting_group || '—'}</Text>
+        <Text style={styles.cardLabel}>Balance</Text>
+        <Text style={styles.cardValue}>{formatAmount(item.balance)}</Text>
       </View>
       <View style={styles.cardRow}>
-        <Text style={styles.cardLabel}>Min Balance</Text>
-        <Text style={styles.cardValue}>{formatAmount(item.min_balance)}</Text>
+        <Text style={styles.cardLabel}>Posting Group</Text>
+        <Text style={styles.cardValue}>{item.bank_account_posting_group || '—'}</Text>
       </View>
       <View style={styles.cardActions}>
         {canDelete(PAGE_NAME) && (
@@ -279,8 +287,10 @@ const BankAccounts: React.FC = () => {
         onClose={() => {
           setIsFormVisible(false);
           setSelected(null);
+          handleRefresh();
         }}
-        onSaved={handleRefresh}
+        onSave={handleFormSave}
+        onRecordChange={handleRecordChange}
         bankAccount={selected}
         canCreate={canCreate(PAGE_NAME)}
         canEdit={canEdit(PAGE_NAME)}

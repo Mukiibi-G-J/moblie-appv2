@@ -1,9 +1,13 @@
-import {useCallback, useMemo, useState} from 'react';
+import {useCallback, useEffect, useMemo, useState} from 'react';
 import {useFocusEffect} from '@react-navigation/native';
 import {getCompanyInfo, TenantCompanyApi} from '../services/app.services';
 import {useTenantContext} from '../context/TenantContext';
 import {formatTenantLabel} from '../utils/tenantLabel';
 import {isSubscriptionExpiredError} from '../utils/subscriptionExpired';
+import {
+  extractCompanyLogo,
+  prepareCompanyLogoForDisplay,
+} from '../utils/companyLogoUrl';
 
 /**
  * Loads tenant company from GET /api/sales/company-info/ on screen focus.
@@ -59,12 +63,27 @@ export function useCompanyInfo() {
   const refetch = useCallback(() => load(), [load]);
 
   const storeLabel = useMemo(() => {
-    const name = data?.name?.trim();
+    const name = data?.displayName?.trim() || data?.name?.trim();
     if (name) {
       return name;
     }
     return formatTenantLabel(currentTenant);
   }, [data, currentTenant]);
 
-  return {data, loading, error, storeLabel, refetch};
+  const [logoUri, setLogoUri] = useState<string | undefined>();
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const logo = extractCompanyLogo(data);
+      const uri = await prepareCompanyLogoForDisplay(logo);
+      if (!cancelled) {
+        setLogoUri(uri || undefined);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [data]);
+
+  return {data, loading, error, storeLabel, logoUri, refetch};
 }

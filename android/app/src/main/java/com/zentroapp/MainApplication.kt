@@ -11,6 +11,7 @@ import com.facebook.react.defaults.DefaultReactHost.getDefaultReactHost
 import com.facebook.react.defaults.DefaultReactNativeHost
 import com.facebook.react.soloader.OpenSourceMergedSoMapping
 import com.facebook.soloader.SoLoader
+import com.zentroapp.customerdisplay.CustomerDisplayPackage
 import com.zentroapp.pdf.PdfDownloadPackage
 
 class MainApplication : Application(), ReactApplication {
@@ -20,6 +21,7 @@ class MainApplication : Application(), ReactApplication {
         override fun getPackages(): List<ReactPackage> =
             PackageList(this).packages.apply {
               add(PdfDownloadPackage())
+              add(CustomerDisplayPackage())
             }
 
         override fun getJSMainModuleName(): String = "index"

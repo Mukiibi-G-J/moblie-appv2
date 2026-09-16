@@ -1,14 +1,10 @@
-import React from 'react';
-import {
-  Alert,
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Image,
-} from 'react-native';
+import React, {useMemo, useState} from 'react';
+import {View, Text, TouchableOpacity, StyleSheet, Image} from 'react-native';
 import {COLORS, FONTS, icons} from '../../constants';
 import {useTheme} from '../../context/ThemeContext';
+import ChooseActionSheet, {
+  type ChooseActionItem,
+} from '../../Components/ChooseActionSheet';
 
 export type ItemJournalLine = {
   id: number;
@@ -58,6 +54,7 @@ const ItemJournalListItem: React.FC<Props> = ({
   canRemove = false,
 }) => {
   const {colors} = useTheme();
+  const [actionsVisible, setActionsVisible] = useState(false);
   const isOpen = line.status === 'Open';
   const initials =
     line.item_name
@@ -81,46 +78,37 @@ const ItemJournalListItem: React.FC<Props> = ({
     line.unit_of_measure_code ? ` ${line.unit_of_measure_code}` : ''
   }`;
 
-  const handleOpenActions = () => {
-    const options: Array<{
-      text: string;
-      style?: 'cancel' | 'destructive';
-      onPress?: () => void;
-    }> = [];
-
+  const actionItems = useMemo(() => {
+    const items: ChooseActionItem[] = [];
     if (canOpenLine && isOpen) {
-      options.push({
-        text: 'Edit line',
-        onPress: onPress,
+      items.push({
+        key: 'edit',
+        label: 'Edit line',
+        onPress,
       });
     }
-
     if (canPost && isOpen) {
-      options.push({
-        text: 'Post to inventory',
+      items.push({
+        key: 'post',
+        label: 'Post to inventory',
         onPress: onPost,
       });
     }
-
     if (canRemove && isOpen && onRemove) {
-      options.push({
-        text: 'Remove',
-        style: 'destructive',
+      items.push({
+        key: 'remove',
+        label: 'Remove',
+        destructive: true,
         onPress: onRemove,
       });
     }
+    return items;
+  }, [canOpenLine, canPost, canRemove, isOpen, onPress, onPost, onRemove]);
 
-    options.push({text: 'Cancel', style: 'cancel'});
-
-    if (options.length === 1) {
-      Alert.alert(line.document_no || 'Journal line', 'No actions available.', options);
-      return;
-    }
-
-    Alert.alert(line.item_name || 'Journal line', 'Choose an action', options);
-  };
+  const closeActions = () => setActionsVisible(false);
 
   return (
+    <View>
     <TouchableOpacity
       activeOpacity={canOpenLine && isOpen ? 0.8 : 1}
       style={[styles.container, {borderBottomColor: colors.border}]}
@@ -133,7 +121,7 @@ const ItemJournalListItem: React.FC<Props> = ({
         <Text
           style={[styles.itemName, {color: colors.textPrimary}]}
           numberOfLines={1}>
-          {line.item_name}
+          {line.item_name || line.item || line.document_no || 'Journal line'}
         </Text>
         <Text
           style={[styles.secondaryText, {color: colors.textSecondary}]}
@@ -151,9 +139,11 @@ const ItemJournalListItem: React.FC<Props> = ({
 
       {(canOpenLine || canPost || (canRemove && isOpen)) && (
         <TouchableOpacity
-          onPress={handleOpenActions}
+          onPress={() => setActionsVisible(true)}
           style={[styles.actionButton, {backgroundColor: colors.backButtonBg}]}
-          hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
+          hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
+          accessibilityRole="button"
+          accessibilityLabel="Choose an action">
           <Image
             source={icons.menu}
             style={[styles.actionIcon, {tintColor: colors.textPrimary}]}
@@ -162,6 +152,14 @@ const ItemJournalListItem: React.FC<Props> = ({
         </TouchableOpacity>
       )}
     </TouchableOpacity>
+
+      <ChooseActionSheet
+        visible={actionsVisible}
+        title={line.item_name || 'Journal line'}
+        actions={actionItems}
+        onClose={closeActions}
+      />
+    </View>
   );
 };
 

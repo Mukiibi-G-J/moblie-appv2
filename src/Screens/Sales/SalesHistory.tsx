@@ -58,6 +58,7 @@ import PrintService, {
   CompanyInfo,
   PrintReceiptData,
 } from '../../services/PrintService';
+import {tenantCompanyToReceiptInfo} from '../../utils/companyReceiptInfo';
 import {useAuth, useTabContext} from '../../context/Store';
 import {usePermissions} from '../../hooks/usePermissions';
 import {usePaymentMethodsQuery} from '../../hooks/useCustomersQuery';
@@ -370,7 +371,12 @@ const SalesHistory = () => {
     ) {
       setDateFilter(nextDate);
     }
-  }, [route?.params?.status, route?.params?.dateFilter]);
+    const nextSearch = route?.params?.initialSearch as string | undefined;
+    if (typeof nextSearch === 'string' && nextSearch.trim()) {
+      setSearchQuery(nextSearch);
+      setDebouncedSearchQuery(nextSearch);
+    }
+  }, [route?.params?.status, route?.params?.dateFilter, route?.params?.initialSearch]);
   const [paymentMethodIdFilter, setPaymentMethodIdFilter] = useState('');
   const [reversing, setReversing] = useState(false);
   const [postingId, setPostingId] = useState<number | null>(null);
@@ -689,14 +695,7 @@ const SalesHistory = () => {
           const companyResponse = await getCompanyInfo();
           const c = companyResponse.data?.company;
           if (c) {
-            companyInfo = {
-              name: c.name || 'ZENTRO APP',
-              logo: c.logo || '',
-              address: c.address || '',
-              phone: c.phone || '',
-              email: c.email || '',
-              tin: c.tin || '',
-            };
+            companyInfo = tenantCompanyToReceiptInfo(c);
           }
         } catch {
           /* optional */

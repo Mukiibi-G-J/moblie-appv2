@@ -14,8 +14,8 @@ export async function loadReceiptBusinessInfo(): Promise<Record<string, unknown>
 }
 
 async function fetchAndCacheCompanyInfo(): Promise<Record<string, unknown>> {
-  const info = await getCompanyInfo();
-  const payload = {company: info};
+  const res = await getCompanyInfo();
+  const payload = (res?.data ?? {company: res}) as Record<string, unknown>;
   await saveBootstrapCache({company_info: payload});
   return payload;
 }

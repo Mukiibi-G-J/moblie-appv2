@@ -1,13 +1,15 @@
 import {
   getItemCount,
   getSyncMeta,
-  saveItemsBatch,
   setSyncMeta,
-  type LocalItem,
 } from '../../db/sqlite';
 import {getEffectiveIsOnline} from '../../utils/posConnectivity';
+import {
+  beginCatalogSlice,
+  finishCatalogSlice,
+  reportCatalogSlice,
+} from './catalogSyncProgress';
 import {syncAllItemData, type SyncProgressHandler} from './itemsSync';
-import SyncApi from './SyncApi';
 
 export type {SyncProgressHandler};
 
@@ -68,11 +70,28 @@ export async function syncFullCatalogToLocal(options?: {
 
   try {
     await runCatalogSync(async () => {
-      await syncAllItemData(options?.onProgress, {
-        bulkListOnly: options?.bulkListOnly,
-      });
-      await setLastCatalogSyncAt();
-      await setItemsCatalogUpdatedSince(new Date().toISOString());
+      beginCatalogSlice('items', 'Downloading items…');
+      try {
+        await syncAllItemData(reportCatalogSlice('items', options?.onProgress), {
+          bulkListOnly: options?.bulkListOnly,
+        });
+        const itemCount = await getItemCount();
+        if (itemCount > 0) {
+          await setLastCatalogSyncAt();
+          await setItemsCatalogUpdatedSince(new Date().toISOString());
+        }
+        finishCatalogSlice(
+          'items',
+          itemCount > 0 ? 'done' : 'error',
+          itemCount
+            ? `Cached ${itemCount} items`
+            : 'No items were returned. Tap Download catalog now to retry.',
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Item download failed';
+        finishCatalogSlice('items', 'error', message);
+        throw err;
+      }
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

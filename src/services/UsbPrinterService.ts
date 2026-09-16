@@ -1,51 +1,63 @@
-import {NativeModules} from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {USBPrinter} from 'react-native-thermal-receipt-printer';
-import {
-  prepareCompanyLogoForPrint,
-  resolveCompanyLogoUri,
-  isPlaceholderCompanyLogo,
-} from '../utils/companyLogoUrl';
 import type {PrintReceiptData} from './PrintService';
 import {printUsbDocument} from '../shared/receipt/compileToUsb';
 import {
   buildKotReceiptDocument,
   buildSaleReceiptDocument,
 } from './receiptPrintOrchestrator';
+import {prepareCompanyLogoForPrint} from '../utils/companyLogoUrl';
 import {
   buildSampleSaleReceiptData,
   fetchCompanyInfoForReceipt,
+  receiptCompanyName,
 } from '../utils/companyReceiptInfo';
-
-const RNUSBPrinter = NativeModules.RNUSBPrinter as
-  | {
-      printImageData?: (
-        imageUrl: string,
-        errorCallback: (error: string) => void,
-      ) => void;
-    }
-  | undefined;
-
-function printUsbLogoFromUrl(imageUrl: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (!RNUSBPrinter?.printImageData) {
-      reject(new Error('USB image print not available'));
-      return;
-    }
-    RNUSBPrinter.printImageData(imageUrl, (error: string) => {
-      if (error) {
-        reject(new Error(error));
-      } else {
-        resolve();
-      }
-    });
-  });
-}
 
 export interface UsbDevice {
   device_name: string;
   vendor_id: number;
   product_id: number;
+}
+
+/** Common USB vendor IDs used by Xprinter / generic 58mm ESC/POS printers. */
+const XPRINTER_VENDOR_IDS = new Set([
+  1155, // 0x0483 STMicroelectronics
+  1046, // 0x0416 Winbond
+  8137, // 0x1FC9 NXP
+  10473, // 0x28E9 GigaDevice
+  1659, // 0x067B Prolific
+  6790, // 0x1A86 QinHeng CH340
+  26728, // 0x6868
+  4070, // 0x0FE6
+  1317, // 0x0525
+  1137, // 0x0471
+  5380, // 0x1504
+  3540, // 0x0DD4
+]);
+
+function looksLikeUsbPath(name: string): boolean {
+  return name.startsWith('/dev/') || /bus\/usb/i.test(name);
+}
+
+function formatUsbDeviceName(device: UsbDevice): string {
+  const raw = (device.device_name || '').trim();
+  if (raw && !looksLikeUsbPath(raw)) {
+    return raw;
+  }
+  if (XPRINTER_VENDOR_IDS.has(device.vendor_id)) {
+    return `Xprinter USB (${device.vendor_id}:${device.product_id})`;
+  }
+  return raw || `USB device (${device.vendor_id}:${device.product_id})`;
+}
+
+function isLikelyThermalPrinter(device: UsbDevice): boolean {
+  const name = (device.device_name || '').toLowerCase();
+  return (
+    XPRINTER_VENDOR_IDS.has(device.vendor_id) ||
+    name.includes('print') ||
+    name.includes('xprinter') ||
+    name.includes('pos')
+  );
 }
 
 const STORAGE_KEY = 'zentro_usb_printer_v1';
@@ -90,10 +102,14 @@ function normalizeUsbDevice(raw: {
   vendor_id?: string | number;
   product_id?: string | number;
 }): UsbDevice {
-  return {
+  const device = {
     device_name: raw.device_name,
     vendor_id: Number(raw.vendor_id),
     product_id: Number(raw.product_id),
+  };
+  return {
+    ...device,
+    device_name: formatUsbDeviceName(device),
   };
 }
 
@@ -139,7 +155,13 @@ class UsbPrinterService {
     try {
       const devices = await USBPrinter.getDeviceList();
       const list = Array.isArray(devices) ? devices : [];
-      return list.map(d => normalizeUsbDevice(d));
+      return list
+        .map(d => normalizeUsbDevice(d))
+        .sort((a, b) => {
+          const aLikely = isLikelyThermalPrinter(a) ? 0 : 1;
+          const bLikely = isLikelyThermalPrinter(b) ? 0 : 1;
+          return aLikely - bLikely;
+        });
     } catch (err: unknown) {
       const msg =
         typeof err === 'string'
@@ -213,7 +235,7 @@ class UsbPrinterService {
   }
 
   private printCompactReceiptUsb(data: PrintReceiptData): string {
-    const companyName = data.companyInfo?.name || 'ZENTRO APP';
+    const companyName = receiptCompanyName(data.companyInfo);
     const receiptId = data.receiptId || `R${Date.now()}`;
     const saleDateRaw = data.saleDate || new Date().toISOString();
     let text = '';
@@ -223,10 +245,7 @@ class UsbPrinterService {
       text += `<C>${data.companyInfo.address}</C>\n`;
     }
     if (data.companyInfo?.phone) {
-      text += `<C>Tel: ${data.companyInfo.phone}</C>\n`;
-    }
-    if (data.companyInfo?.tin) {
-      text += `<C>TIN: ${data.companyInfo.tin}</C>\n`;
+      text += `<C>${data.companyInfo.phone}</C>\n`;
     }
     if (data.companyInfo?.vatNo) {
       text += `<C>VAT No: ${data.companyInfo.vatNo}</C>\n`;
@@ -284,18 +303,37 @@ class UsbPrinterService {
     return text;
   }
 
-  private async printReceiptLogo(logo?: string): Promise<void> {
-    if (!logo?.trim() || isPlaceholderCompanyLogo(logo)) {
+  private async printReceiptLogo(document: {
+    nodes: Array<{type?: string; src?: string}>;
+    paperProfile?: {logoWidthPx?: number};
+  }): Promise<void> {
+    const src = document.nodes.find(node => node.type === 'image')?.src;
+    if (!src) {
       return;
     }
-
-    const prepared = await prepareCompanyLogoForPrint(logo);
-    const imageUrl = prepared?.url ?? (await resolveCompanyLogoUri(logo));
-    if (!imageUrl) {
-      return;
+    try {
+      const prepared = await prepareCompanyLogoForPrint(src);
+      if (!prepared) {
+        return;
+      }
+      const usb = USBPrinter as {
+        printImage?: (path: string, opts?: {imageWidth?: number}) => Promise<void>;
+        printImageData?: Function;
+      };
+      const printImage = usb.printImage || usb.printImageData;
+      if (typeof printImage !== 'function') {
+        console.warn('USB receipt logo skipped: printer has no image API');
+        return;
+      }
+      const path = prepared.localPath.startsWith('file://')
+        ? prepared.localPath
+        : `file://${prepared.localPath}`;
+      await printImage.call(USBPrinter, path, {
+        imageWidth: document.paperProfile?.logoWidthPx ?? 96,
+      });
+    } catch (error) {
+      console.warn('USB receipt logo skipped:', error);
     }
-
-    await printUsbLogoFromUrl(imageUrl);
   }
 
   async printReceipt(data: PrintReceiptData): Promise<boolean> {
@@ -304,18 +342,11 @@ class UsbPrinterService {
         return false;
       }
 
-      if (data.companyInfo?.logo) {
-        try {
-          await this.printReceiptLogo(data.companyInfo.logo);
-        } catch (logoError) {
-          console.warn('[UsbPrinter] receipt logo skipped:', logoError);
-        }
-      }
-
       const process = data.compactReceipt
         ? 'sales_history_reprint'
         : 'pos_sale';
       const document = await buildSaleReceiptDocument(data, process, 'usb');
+      await this.printReceiptLogo(document);
       await printUsbDocument(document);
       return true;
     } catch (error) {
@@ -345,9 +376,9 @@ class UsbPrinterService {
       }
       const text =
         `<C><B>ZENTRO APP - TEST</B></C>\n` +
-        `<C>Printer test OK</C>\n` +
-        `<C>${new Date().toLocaleString()}</C>\n\n\n`;
-      await USBPrinter.printText(text);
+        `<C>Xprinter USB test OK</C>\n` +
+        `<C>${new Date().toLocaleString()}</C>\n`;
+      await USBPrinter.printText(text, {tailingLine: false, cut: false});
       return true;
     } catch (error) {
       console.error('USB quick test failed:', error);

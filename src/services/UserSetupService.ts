@@ -7,6 +7,7 @@ import {
   UserSetupListParams,
   UserWithoutSetup,
 } from '../@types/userSetup';
+import {normalizeSalesUiMode} from '../utils/salesUiMode';
 
 export const UserSetupService = {
   async getUserSetups(
@@ -30,6 +31,31 @@ export const UserSetupService = {
           allow_posting_to: row.allow_posting_to as any,
           sales_resp_ctr_filter: row.sales_resp_ctr_filter as any,
           purchase_resp_ctr_filter: row.purchase_resp_ctr_filter as any,
+          canSeeBuyingPrice: row.canSeeBuyingPrice ?? row.can_see_buying_price,
+          canSeeProfitMargin: row.canSeeProfitMargin ?? row.can_see_profit_margin,
+          canSeeItemCost: row.canSeeItemCost ?? row.can_see_item_cost,
+          canEditSalesPrice:
+            row.canEditSalesPrice ?? row.can_edit_sales_price ?? false,
+          canPostPreviousDates:
+            row.canPostPreviousDates ?? row.can_post_previous_dates ?? true,
+          canReversePurchaseInvoice:
+            row.canReversePurchaseInvoice ??
+            row.can_reverse_purchase_invoice ??
+            true,
+          canReverseSalesInvoice:
+            row.canReverseSalesInvoice ??
+            row.can_reverse_sales_invoice ??
+            true,
+          canReverseItemJournal:
+            row.canReverseItemJournal ??
+            row.can_reverse_item_journal ??
+            false,
+          canViewOnlyTheirSales:
+            row.canViewOnlyTheirSales ?? row.can_view_only_their_sales,
+          defaultSalesUi: normalizeSalesUiMode(
+            row.defaultSalesUi ?? row.default_sales_ui,
+          ),
+          notes: String(row.notes ?? ''),
         }) as any,
     });
   },

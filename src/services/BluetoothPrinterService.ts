@@ -12,6 +12,7 @@ import {
 import type {ItemLabelPrintData, PrintReceiptData} from './PrintService';
 import type {KotData} from './UsbPrinterService';
 import {compileDocumentToEscPosBytes} from '../shared/receipt/compileToEscPos';
+import {receiptCompanyName} from '../utils/companyReceiptInfo';
 import {
   buildKotReceiptDocument,
   buildSaleReceiptDocument,
@@ -895,7 +896,7 @@ class BluetoothPrinterService {
   /** Raw ESC/POS bytes — same layout as buildCompactReceiptDocument. */
   private buildCompactReceiptRawBytes(data: PrintReceiptData): number[] {
     const bytes: number[] = [];
-    const companyName = data.companyInfo?.name || 'ZENTRO APP';
+    const companyName = receiptCompanyName(data.companyInfo);
     const receiptId = data.receiptId || 'N/A';
     const saleDateRaw = data.saleDate || new Date().toISOString();
 
@@ -906,10 +907,7 @@ class BluetoothPrinterService {
       appendEscPosText(bytes, data.companyInfo.address, {align: 'center'});
     }
     if (data.companyInfo?.phone) {
-      appendEscPosText(bytes, `Tel: ${data.companyInfo.phone}`, {align: 'center'});
-    }
-    if (data.companyInfo?.tin) {
-      appendEscPosText(bytes, `TIN: ${data.companyInfo.tin}`, {align: 'center'});
+      appendEscPosText(bytes, data.companyInfo.phone, {align: 'center'});
     }
     if (data.companyInfo?.vatNo) {
       appendEscPosText(bytes, `VAT No: ${data.companyInfo.vatNo}`, {
@@ -1007,7 +1005,7 @@ class BluetoothPrinterService {
   /** Raw ESC/POS bytes — same layout as buildReceiptDocument (full receipt). */
   private buildFullReceiptRawBytes(data: PrintReceiptData): number[] {
     const bytes: number[] = [];
-    const companyName = data.companyInfo?.name || 'ZENTRO APP';
+    const companyName = receiptCompanyName(data.companyInfo);
     const receiptId = data.receiptId || 'N/A';
     const saleDate = data.saleDate || new Date().toLocaleString();
 
@@ -1019,9 +1017,6 @@ class BluetoothPrinterService {
     });
     if (data.companyInfo?.address) {
       appendEscPosText(bytes, data.companyInfo.address, {align: 'center'});
-    }
-    if (data.companyInfo?.tin) {
-      appendEscPosText(bytes, `TIN: ${data.companyInfo.tin}`, {align: 'center'});
     }
     if (data.companyInfo?.vatNo) {
       appendEscPosText(bytes, `VAT No: ${data.companyInfo.vatNo}`, {
@@ -1110,14 +1105,14 @@ class BluetoothPrinterService {
       : this.buildFullReceiptRawBytes(data);
   }
 
-  private async printReceiptLogo(logo?: string): Promise<void> {
+  private async printReceiptLogo(logo?: string): Promise<boolean> {
     if (!logo?.trim() || !this.printerAddress) {
-      return;
+      return false;
     }
 
     const prepared = await prepareCompanyLogoForPrint(logo);
     if (!prepared) {
-      return;
+      return false;
     }
 
     const NativePrinter = (ThermalPrinter as {NativePrinter?: any})
@@ -1151,10 +1146,12 @@ class BluetoothPrinterService {
             : 'Logo print failed';
       throw new Error(message);
     }
+    return true;
   }
 
   private async printRawEscpos(
     data: number[],
+    keepAlive = false,
   ): Promise<{success: boolean; error?: string}> {
     const NativePrinter = (ThermalPrinter as {NativePrinter?: any}).NativePrinter;
     if (!NativePrinter?.printRaw || !this.printerAddress) {
@@ -1170,7 +1167,7 @@ class BluetoothPrinterService {
     );
 
     const result = await NativePrinter.printRaw(this.printerAddress, payload, {
-      keepAlive: false,
+      keepAlive,
       timeout: 15000,
     });
 
@@ -1205,7 +1202,7 @@ class BluetoothPrinterService {
    */
   private buildCompactReceiptDocument(data: PrintReceiptData): any[] {
     const document: any[] = [];
-    const companyName = data.companyInfo?.name || 'ZENTRO APP';
+    const companyName = receiptCompanyName(data.companyInfo);
     const receiptId = data.receiptId || 'N/A';
     const saleDateRaw = data.saleDate || new Date().toISOString();
 
@@ -1229,14 +1226,7 @@ class BluetoothPrinterService {
     if (data.companyInfo?.phone) {
       document.push({
         type: 'text',
-        content: `Tel: ${data.companyInfo.phone}`,
-        style: {align: 'center'},
-      });
-    }
-    if (data.companyInfo?.tin) {
-      document.push({
-        type: 'text',
-        content: `TIN: ${data.companyInfo.tin}`,
+        content: data.companyInfo.phone,
         style: {align: 'center'},
       });
     }
@@ -1410,7 +1400,7 @@ class BluetoothPrinterService {
     const document: any[] = [];
 
     // Header - Center aligned
-    const companyName = data.companyInfo?.name || 'ZENTRO APP';
+    const companyName = receiptCompanyName(data.companyInfo);
     document.push({
       type: 'text',
       content: companyName.toUpperCase(),
@@ -1421,14 +1411,6 @@ class BluetoothPrinterService {
       document.push({
         type: 'text',
         content: data.companyInfo.address,
-        style: {align: 'center'},
-      });
-    }
-
-    if (data.companyInfo?.tin) {
-      document.push({
-        type: 'text',
-        content: `TIN: ${data.companyInfo.tin}`,
         style: {align: 'center'},
       });
     }
@@ -1737,19 +1719,9 @@ class BluetoothPrinterService {
 
   private async printReceiptDocument(
     document: ReceiptDocument,
-    logoUrl?: string | null,
+    skipInit = false,
   ): Promise<boolean> {
-    const logoSrc =
-      logoUrl ||
-      document.nodes.find((n) => n.type === "image" && n.src)?.src;
-    if (logoSrc) {
-      try {
-        await this.printReceiptLogo(logoSrc);
-      } catch (logoError) {
-        console.warn("[BluetoothPrinter] receipt logo skipped:", logoError);
-      }
-    }
-    const rawBytes = compileDocumentToEscPosBytes(document);
+    const rawBytes = compileDocumentToEscPosBytes(document, true, skipInit);
     const printResult = await this.printRawEscpos(rawBytes);
     if (!printResult.success) {
       throw new Error(printResult.error || "Print failed");
@@ -1799,10 +1771,17 @@ class BluetoothPrinterService {
         process,
         'bluetooth',
       );
-      await this.printReceiptDocument(
-        document,
-        data.companyInfo?.logo,
-      );
+      const logoSrc =
+        document.nodes.find(node => node.type === 'image')?.src ||
+        data.companyInfo?.logo;
+      let logoPrinted = false;
+      try {
+        logoPrinted = await this.printReceiptLogo(logoSrc);
+      } catch (logoError) {
+        console.warn('Bluetooth receipt logo skipped:', logoError);
+      }
+      // Image job already sends ESC @. A second init here wipes the logo.
+      await this.printReceiptDocument(document, logoPrinted);
 
       Toast.show({
         type: 'success',

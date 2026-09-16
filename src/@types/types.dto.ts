@@ -111,6 +111,7 @@ export interface SalesInvoiceData {
   amount_received: number;
   change_amount: number;
   payment_method: number;
+  transaction_id?: string;
   user?: number;
   lines: Array<{
     id: number;
@@ -158,7 +159,7 @@ export interface ItemJournalUpsertPayload {
   id?: number;
   system_id?: string;
   document_no?: string;
-  item: string;
+  item?: string;
   entry_type: ItemJournalEntryType;
   quantity: number;
   unit_cost?: number;
@@ -231,8 +232,15 @@ export type RootStackParamList = {
   OnBoarding: undefined;
   SignIn: undefined;
   SignUp: undefined;
-  CompanyProvisioning: undefined;
+  CompanyProvisioning:
+    | {
+        tenant?: string;
+        email?: string;
+        autoLogin?: boolean;
+      }
+    | undefined;
   Otp: {email?: string};
+  ForgotPassword: {email?: string};
   Login: undefined;
   Home: undefined;
   RestaurantPinSignIn: undefined;

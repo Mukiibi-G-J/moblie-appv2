@@ -42,27 +42,41 @@ function appendEscPosText(
   bytes.push(0x1b, 0x61, 0);
 }
 
-function appendNode(bytes: number[], node: ReceiptDocumentNode, cols: number): void {
+function appendNode(
+  bytes: number[],
+  node: ReceiptDocumentNode,
+  cols: number,
+  skipCut: boolean,
+  skipBold: boolean,
+): void {
   const style = node.style || {};
+  const printStyle = skipBold
+    ? { align: style.align, double: false, bold: false }
+    : { ...style, bold: Boolean(style.bold) };
   switch (node.type) {
     case "text":
-      appendEscPosText(bytes, node.text || "", style);
+      appendEscPosText(bytes, node.text || "", printStyle);
       break;
     case "row": {
       const line = padReceiptColumns(node.left || "", node.right || "", cols);
-      appendEscPosText(bytes, line, { bold: style.bold });
+      appendEscPosText(bytes, line, {
+        bold: skipBold ? false : style.bold,
+      });
       break;
     }
     case "rule":
       appendEscPosText(bytes, "-".repeat(Math.min(cols, 32)));
       break;
     case "feed":
-      for (let i = 0; i < (node.lines || 1); i++) {
+      for (let i = 0; i < Math.min(1, node.lines || 1); i++) {
         bytes.push(0x0a);
       }
       break;
     case "cut":
-      bytes.push(0x1d, 0x56, 0x00);
+      // 58mm tear-bar printers feed several blank lines on GS V.
+      if (!skipCut) {
+        bytes.push(0x1d, 0x56, 0x00);
+      }
       break;
     default:
       break;
@@ -73,18 +87,24 @@ function appendNode(bytes: number[], node: ReceiptDocumentNode, cols: number): v
 export function compileDocumentToEscPosBytes(
   document: ReceiptDocument,
   skipImage = true,
+  skipInit = false,
 ): number[] {
+  const widthMm = document.paperProfile?.widthMm ?? 58;
   const cols = effectiveReceiptCols(
     document.paperProfile?.charsPerLine ?? 32,
-    document.paperProfile?.widthMm ?? 58,
+    widthMm,
   );
+  const skipCut = widthMm <= 58;
+  const skipBold = widthMm <= 58;
   const bytes: number[] = [];
-  appendEscPosInit(bytes);
+  if (!skipInit) {
+    appendEscPosInit(bytes);
+  }
   for (const node of document.nodes) {
     if (skipImage && node.type === "image") {
       continue;
     }
-    appendNode(bytes, node, cols);
+    appendNode(bytes, node, cols, skipCut, skipBold);
   }
   return bytes.map((b) => b & 0xff);
 }

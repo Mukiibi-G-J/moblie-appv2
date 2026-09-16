@@ -20,6 +20,8 @@ export const authOnboarding = {
     micro: typo.micro,
   },
   form: {
+    /** Keep auth forms readable on landscape POS / tablets. */
+    maxWidth: 440,
     canvas: '#f7f7f7',
     surface: '#FFFFFF',
     textPrimary: '#060b1e',

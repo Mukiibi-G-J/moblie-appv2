@@ -7,6 +7,11 @@ import {
 import {fetchCustomers, type Customer} from '../app.services';
 import {getEffectiveIsOnline} from '../../utils/posConnectivity';
 import type {SyncProgressHandler} from './itemsSync';
+import {
+  beginCatalogSlice,
+  finishCatalogSlice,
+  reportCatalogSlice,
+} from './catalogSyncProgress';
 import SyncApi from './SyncApi';
 
 const LAST_CUSTOMERS_SYNC_KEY = 'last_full_customers_sync_at';
@@ -97,19 +102,36 @@ export async function syncFullCustomersToLocal(options?: {
 
   try {
     await runCustomerSync(async () => {
-      options?.onProgress?.('Downloading customers…', 5);
-      let processed = 0;
+      beginCatalogSlice('customers', 'Downloading customers…');
       try {
-        processed = await syncAllCustomersFromSyncApi(options?.onProgress);
-      } catch (syncErr) {
-        console.warn('[customerCatalogSync] sync API failed, fallback:', syncErr);
-        processed = await syncAllCustomersFromListApi(options?.onProgress);
+        const onProgress = reportCatalogSlice('customers', options?.onProgress);
+        onProgress('Downloading customers…', 5);
+        let processed = 0;
+        try {
+          processed = await syncAllCustomersFromSyncApi(onProgress);
+        } catch (syncErr) {
+          console.warn('[customerCatalogSync] sync API failed, fallback:', syncErr);
+          processed = await syncAllCustomersFromListApi(onProgress);
+        }
+        if (processed === 0) {
+          processed = await syncAllCustomersFromListApi(onProgress);
+        }
+        await setSyncMeta(LAST_CUSTOMERS_SYNC_KEY, new Date().toISOString());
+        await setSyncMeta(CUSTOMERS_CATALOG_SINCE_KEY, new Date().toISOString());
+        const customerCount = await getCustomerCount();
+        finishCatalogSlice(
+          'customers',
+          'done',
+          customerCount
+            ? `Cached ${customerCount} customers`
+            : 'Customer download finished',
+        );
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Customer download failed';
+        finishCatalogSlice('customers', 'error', message);
+        throw err;
       }
-      if (processed === 0) {
-        processed = await syncAllCustomersFromListApi(options?.onProgress);
-      }
-      await setSyncMeta(LAST_CUSTOMERS_SYNC_KEY, new Date().toISOString());
-      await setSyncMeta(CUSTOMERS_CATALOG_SINCE_KEY, new Date().toISOString());
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

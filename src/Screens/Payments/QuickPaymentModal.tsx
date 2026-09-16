@@ -23,7 +23,12 @@ import {
   formatCurrencyCompact,
   formatCurrencyLabel,
 } from '../../utils/currency';
-import {pickDefaultCashPaymentMethod} from '../../utils/paymentMethodDefaults';
+import {
+  pickDefaultCashPaymentMethod,
+  paymentMethodRequiresTransactionId,
+  TRANSACTION_ID_MAX_LENGTH,
+  TRANSACTION_ID_REQUIRED_MESSAGE,
+} from '../../utils/paymentMethodDefaults';
 
 type PartyKind = 'customer' | 'vendor';
 
@@ -106,6 +111,7 @@ const QuickPaymentModal: React.FC<QuickPaymentModalProps> = ({
     null,
   );
   const [amountDraft, setAmountDraft] = useState('');
+  const [transactionId, setTransactionId] = useState('');
   const [partyPickerOpen, setPartyPickerOpen] = useState(false);
   const [methodPickerOpen, setMethodPickerOpen] = useState(false);
 
@@ -247,6 +253,7 @@ const QuickPaymentModal: React.FC<QuickPaymentModalProps> = ({
       setMethodPickerOpen(false);
       setSubmitting(false);
       setParty('customer');
+      setTransactionId('');
       return;
     }
     void loadData();
@@ -270,6 +277,9 @@ const QuickPaymentModal: React.FC<QuickPaymentModalProps> = ({
       ? customerBalance(selectedCustomer)
       : vendorPayable(selectedVendor);
   const amountPaid = Number.parseFloat(amountDraft.replace(/,/g, '')) || 0;
+  const requiresTransactionId =
+    party === 'customer' &&
+    paymentMethodRequiresTransactionId(selectedMethod);
 
   const handlePartyKindChange = (next: PartyKind) => {
     if (next === party) {
@@ -277,6 +287,7 @@ const QuickPaymentModal: React.FC<QuickPaymentModalProps> = ({
     }
     setParty(next);
     setPartyPickerOpen(false);
+    setTransactionId('');
   };
 
   const handlePartySelect = (id: number | string | null) => {
@@ -323,6 +334,9 @@ const QuickPaymentModal: React.FC<QuickPaymentModalProps> = ({
     }
     const method = paymentMethods.find(m => m.id === Number(id)) ?? null;
     setSelectedMethod(method);
+    if (!paymentMethodRequiresTransactionId(method)) {
+      setTransactionId('');
+    }
   };
 
   const handlePost = async () => {
@@ -343,6 +357,14 @@ const QuickPaymentModal: React.FC<QuickPaymentModalProps> = ({
         type: 'error',
         text1: 'Invalid amount',
         text2: 'Enter an amount greater than zero',
+      });
+      return;
+    }
+    if (requiresTransactionId && !transactionId.trim()) {
+      Toast.show({
+        type: 'error',
+        text1: 'Missing Transaction ID',
+        text2: TRANSACTION_ID_REQUIRED_MESSAGE,
       });
       return;
     }
@@ -372,6 +394,9 @@ const QuickPaymentModal: React.FC<QuickPaymentModalProps> = ({
           customer_id: selectedCustomer.id,
           amount: amountPaid,
           payment_method_id: selectedMethod.id,
+          transaction_id: requiresTransactionId
+            ? transactionId.trim()
+            : undefined,
         });
         const applied = result.applied_document_no
           ? ` — applied to ${result.applied_document_no}`
@@ -579,6 +604,28 @@ const QuickPaymentModal: React.FC<QuickPaymentModalProps> = ({
                   resizeMode="contain"
                 />
               </TouchableOpacity>
+              {requiresTransactionId ? (
+                <>
+                  <Text style={[styles.label, theme.label]}>
+                    Transaction ID *
+                  </Text>
+                  <TextInput
+                    style={[
+                      styles.field,
+                      styles.amountInput,
+                      theme.field,
+                      theme.fieldText,
+                    ]}
+                    value={transactionId}
+                    onChangeText={setTransactionId}
+                    autoCapitalize="characters"
+                    autoCorrect={false}
+                    maxLength={TRANSACTION_ID_MAX_LENGTH}
+                    placeholder="Enter provider transaction ID"
+                    placeholderTextColor={theme.placeholder}
+                  />
+                </>
+              ) : null}
             </ScrollView>
           )}
 
@@ -586,11 +633,19 @@ const QuickPaymentModal: React.FC<QuickPaymentModalProps> = ({
             <TouchableOpacity
               style={[
                 styles.postButton,
-                (submitting || loadingData || !canPost) &&
+                (submitting ||
+                  loadingData ||
+                  !canPost ||
+                  (requiresTransactionId && !transactionId.trim())) &&
                   styles.postButtonDisabled,
               ]}
               onPress={() => void handlePost()}
-              disabled={submitting || loadingData || !canPost}
+              disabled={
+                submitting ||
+                loadingData ||
+                !canPost ||
+                (requiresTransactionId && !transactionId.trim())
+              }
               activeOpacity={0.85}>
               {submitting ? (
                 <ActivityIndicator color="#fff" />

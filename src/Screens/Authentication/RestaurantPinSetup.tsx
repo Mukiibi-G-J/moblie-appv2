@@ -1,4 +1,4 @@
-import React, {useCallback, useState} from 'react';
+import React, {useCallback, useEffect, useState} from 'react';
 import {
   ActivityIndicator,
   StyleSheet,
@@ -25,6 +25,9 @@ import {
 import {
   restaurantStaffEnroll,
   mapRestaurantEnrollError,
+  getRestaurantPinStatus,
+  normalizePinLength,
+  type RestaurantPinLength,
 } from '../../services/restaurantPinApi';
 import type {RootStackParamList} from '../../@types/types.dto';
 import Toast from 'react-native-toast-message';
@@ -50,6 +53,31 @@ const RestaurantPinSetup = () => {
   const [step, setStep] = useState<1 | 2>(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [pinLength, setPinLength] = useState<RestaurantPinLength>(
+    Number(ctx?.auth?.pinLength) === 6 ? 6 : 4,
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    void getRestaurantPinStatus()
+      .then(status => {
+        if (cancelled) {
+          return;
+        }
+        const nextLength = normalizePinLength(status.pin_length);
+        setPinLength(nextLength);
+        setPin(prev => (prev.length > nextLength ? prev.slice(0, nextLength) : prev));
+        setConfirm(prev =>
+          prev.length > nextLength ? prev.slice(0, nextLength) : prev,
+        );
+      })
+      .catch(() => {
+        /* keep JWT / default length */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const goHome = useCallback(() => {
     navigation.reset({index: 0, routes: [{name: 'Home'}]});
@@ -80,8 +108,8 @@ const RestaurantPinSetup = () => {
   const finishEnroll = useCallback(async () => {
     const p = pin.trim();
     const c = confirm.trim();
-    if (p.length < 4 || p.length > 6 || !/^\d+$/.test(p)) {
-      setError('PIN must be 4–6 digits only.');
+    if (p.length !== pinLength || !/^\d+$/.test(p)) {
+      setError(`PIN must be exactly ${pinLength} digits.`);
       return;
     }
     if (p !== c) {
@@ -127,14 +155,14 @@ const RestaurantPinSetup = () => {
     } finally {
       setLoading(false);
     }
-  }, [confirm, ctx?.auth?.full_name, leaveAfterDone, pin, pinSetupMode]);
+  }, [confirm, ctx?.auth?.full_name, leaveAfterDone, pin, pinLength, pinSetupMode]);
 
   const append = (d: string) => {
     setError('');
     if (step === 1) {
-      setPin(prev => (prev.length >= 6 ? prev : prev + d));
+      setPin(prev => (prev.length >= pinLength ? prev : prev + d));
     } else {
-      setConfirm(prev => (prev.length >= 6 ? prev : prev + d));
+      setConfirm(prev => (prev.length >= pinLength ? prev : prev + d));
     }
   };
   const backspace = () => {
@@ -180,18 +208,19 @@ const RestaurantPinSetup = () => {
         ? 'Set up new PIN'
         : 'Set up quick PIN';
 
+  const currentValue = step === 1 ? pin : confirm;
   const subtitleNode = (
     <Text style={{color: colors.textSecondary}}>
       {pinSetupMode === 'change'
         ? step === 1
-          ? 'Choose a new 4–6 digit PIN. Your current PIN will stop working after you save.'
+          ? `Choose a new ${pinLength}-digit PIN. Your current PIN will stop working after you save.`
           : 'Enter the same PIN again to confirm.'
         : pinSetupMode === 'renew'
           ? step === 1
-            ? 'Your previous PIN expired. Choose a new 4–6 digit PIN for this device.'
+            ? `Your previous PIN expired. Choose a new ${pinLength}-digit PIN for this device.`
             : 'Enter the same PIN again to confirm.'
           : step === 1
-            ? 'Choose a 4–6 digit PIN for fast sign-in on this device.'
+            ? `Choose a ${pinLength}-digit PIN for fast sign-in on this device.`
             : 'Enter the same PIN again to confirm.'}
     </Text>
   );
@@ -206,9 +235,20 @@ const RestaurantPinSetup = () => {
         setConfirm('');
         setError('');
       }}>
-      <Text style={[styles.valuePreview, {color: colors.textPrimary}]}>
-        {(step === 1 ? pin : confirm).replace(/\d/g, '●')}
-      </Text>
+      <View style={styles.dotsRow}>
+        {Array.from({length: pinLength}).map((_, i) => (
+          <View
+            key={i}
+            style={[
+              styles.dot,
+              {
+                backgroundColor:
+                  i < currentValue.length ? COLORS.primary2 : colors.border,
+              },
+            ]}
+          />
+        ))}
+      </View>
       {error ? (
         <Text style={[styles.err, {color: COLORS.red}]}>{error}</Text>
       ) : null}
@@ -217,7 +257,7 @@ const RestaurantPinSetup = () => {
       ) : (
         padRow
       )}
-      {step === 1 && pin.length >= 4 && !loading ? (
+      {step === 1 && pin.length === pinLength && !loading ? (
         <TouchableOpacity
           style={styles.primaryBtn}
           onPress={() => {
@@ -227,7 +267,7 @@ const RestaurantPinSetup = () => {
           <Text style={styles.primaryBtnText}>Next</Text>
         </TouchableOpacity>
       ) : null}
-      {step === 2 && confirm.length >= 4 && !loading ? (
+      {step === 2 && confirm.length === pinLength && !loading ? (
         <TouchableOpacity
           style={styles.primaryBtn}
           onPress={() => void finishEnroll()}>
@@ -246,30 +286,36 @@ const RestaurantPinSetup = () => {
 };
 
 const styles = StyleSheet.create({
-  valuePreview: {
-    fontSize: 28,
-    letterSpacing: 4,
-    textAlign: 'center',
+  dotsRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
     marginVertical: ao.spacing.md,
-    minHeight: 40,
+  },
+  dot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginHorizontal: 5,
   },
   err: {textAlign: 'center', marginBottom: ao.spacing.sm},
   spinner: {marginVertical: ao.spacing.md},
   pad: {
+    width: '100%',
+    maxWidth: 300,
+    alignSelf: 'center',
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
     marginTop: ao.spacing.md,
+    rowGap: 10,
   },
   key: {
-    width: '28%',
-    aspectRatio: 1.4,
-    maxWidth: 120,
+    width: '31%',
+    aspectRatio: 1.15,
     borderRadius: radii.md,
     borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    margin: 5,
   },
   keyHidden: {opacity: 0, borderWidth: 0},
   keyText: {fontSize: 22, fontWeight: '600'},

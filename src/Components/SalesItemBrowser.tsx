@@ -2,7 +2,6 @@ import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../utils/currency';
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Image,
   Keyboard,
@@ -14,6 +13,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import Toast from 'react-native-toast-message';
@@ -26,11 +26,12 @@ import {
   ICON_BUTTON_QUICK_PRESS,
 } from '../constants';
 import {QuickIconPressable} from './QuickIconPressable';
+import ChooseActionSheet, {type ChooseActionItem} from './ChooseActionSheet';
 import {
   fetchCategories,
   ItemCategory,
 } from '../services/app.services';
-import {listItems} from '../services/itemCatalogService';
+import {cacheItemsLocally, listItems} from '../services/itemCatalogService';
 import {
   loadFavoriteGridSlots,
   saveFavoriteGridSlots,
@@ -46,9 +47,13 @@ import {
 import type {CartItem} from '../@types/types.dto';
 import {useTheme} from '../context/ThemeContext';
 import {
+  applySoldQuantitiesToItem,
+  buildSoldQuantityMaps,
   isPosItemOutOfStock,
+  mergeCatalogInventoryIntoFavorites,
   posItemStockLabel,
 } from '../utils/posItemStock';
+import {isWideLayout, posCatalogColumnCount} from '../utils/layout';
 
 type BrowseTab = 'pos' | 'favorites';
 
@@ -78,9 +83,25 @@ type LibraryPosItemRowProps = {
   };
 };
 
+type LibraryPosItemTileProps = {
+  item: CartItem;
+  isRecentlyAdded: boolean;
+  isOutOfStock: boolean;
+  onAdd: (item: CartItem) => void;
+  theme: {
+    tile: object;
+    tileActive: object;
+    name: object;
+    meta: object;
+  };
+};
+
 /** Assigned after `styles` (below) so the row can use shared `StyleSheet` styles. */
 let LibraryPosItemRow: React.MemoExoticComponent<
   React.FC<LibraryPosItemRowProps>
+>;
+let LibraryPosItemTile: React.MemoExoticComponent<
+  React.FC<LibraryPosItemTileProps>
 >;
 
 type Props = {
@@ -92,6 +113,12 @@ type Props = {
   onOpenCreateItem?: () => void;
   /** From Add to Favorites — open All Items create flow preset as service. */
   onOpenCreateService?: () => void;
+  /** Increment after a posted sale so POS stock reloads. */
+  catalogRefreshKey?: number;
+  /** Cart lines from the sale that just posted — used to drop stock immediately. */
+  soldItemsForStockRefresh?: CartItem[];
+  /** POS / tablet layout: product tiles instead of a list. */
+  preferGrid?: boolean;
 };
 
 const TAB_OPTIONS: Array<{id: BrowseTab; label: string}> = [
@@ -134,7 +161,11 @@ const SalesItemBrowser: React.FC<Props> = ({
   hideSearchBar = false,
   onOpenCreateItem,
   onOpenCreateService,
+  catalogRefreshKey = 0,
+  soldItemsForStockRefresh = [],
+  preferGrid = false,
 }) => {
+  const {width: windowWidth, height: windowHeight} = useWindowDimensions();
   const [activeTab, setActiveTab] = useState<BrowseTab>('pos');
   const [searchQuery, setSearchQuery] = useState('');
   const [categories, setCategories] = useState<SalesCategory[]>([]);
@@ -175,9 +206,15 @@ const SalesItemBrowser: React.FC<Props> = ({
   const [favoritesSyncError, setFavoritesSyncError] = useState<string | null>(null);
 
   const [addFavoriteModalVisible, setAddFavoriteModalVisible] = useState(false);
+  const [favoriteActionIndex, setFavoriteActionIndex] = useState<number | null>(
+    null,
+  );
   const [addFavoriteSearchQuery, setAddFavoriteSearchQuery] = useState('');
   const [addFavoriteResults, setAddFavoriteResults] = useState<CartItem[]>([]);
   const [addFavoriteLoading, setAddFavoriteLoading] = useState(false);
+  const [catalogLayoutOverride, setCatalogLayoutOverride] = useState<
+    'grid' | 'list' | null
+  >(null);
 
   const selectedCategory = useMemo(
     () =>
@@ -249,9 +286,39 @@ const SalesItemBrowser: React.FC<Props> = ({
       },
       catChipText: {color: colors.textSecondary},
       catChipTextActive: {color: COLORS.primary2},
+      layoutToggle: {
+        backgroundColor: colors.inputBackground,
+        borderColor: colors.border,
+      },
+      layoutToggleActive: {
+        backgroundColor: isDark ? 'rgba(0, 81, 81, 0.18)' : COLORS.transparentPrimary2,
+        borderColor: COLORS.primary2,
+      },
+      layoutToggleText: {color: colors.textSecondary},
+      layoutToggleTextActive: {color: COLORS.primary2},
+      gridTile: {
+        backgroundColor: colors.inputBackground,
+        borderColor: colors.border,
+      },
+      gridTileActive: {
+        backgroundColor: isDark
+          ? 'rgba(0, 81, 81, 0.14)'
+          : COLORS.transparentPrimary2,
+        borderColor: COLORS.primary2,
+      },
+      gridTileName: {color: colors.textPrimary},
+      gridTileMeta: {color: colors.textSecondary},
     }),
     [colors, isDark],
   );
+
+  const defaultCatalogGrid =
+    preferGrid || isWideLayout(windowWidth, windowHeight);
+  const useProductGrid =
+    catalogLayoutOverride != null
+      ? catalogLayoutOverride === 'grid'
+      : defaultCatalogGrid;
+  const catalogColumns = posCatalogColumnCount(windowWidth, windowHeight);
 
   const libraryRowTheme = useMemo(
     () => ({
@@ -263,8 +330,20 @@ const SalesItemBrowser: React.FC<Props> = ({
     [bt],
   );
 
+  const libraryTileTheme = useMemo(
+    () => ({
+      tile: bt.gridTile,
+      tileActive: bt.gridTileActive,
+      name: bt.gridTileName,
+      meta: bt.gridTileMeta,
+    }),
+    [bt],
+  );
+
   const recentlyAddedIdsRef = useRef(recentlyAddedIds);
   recentlyAddedIdsRef.current = recentlyAddedIds;
+  const cachedItemsRef = useRef(cachedItems);
+  cachedItemsRef.current = cachedItems;
 
   const recentViewedItems = useMemo(() => {
     const normalizedQuery = searchQuery.trim().toLowerCase();
@@ -356,12 +435,16 @@ const SalesItemBrowser: React.FC<Props> = ({
   }, []);
 
   const loadItems = useCallback(
-    async (pageToLoad: number, replace: boolean) => {
+    async (
+      pageToLoad: number,
+      replace: boolean,
+      options?: {preserveVisible?: boolean; force?: boolean},
+    ) => {
       const shouldBrowseLibrary =
         isSearchPanelVisible || activeTab === 'pos';
 
-      if (!shouldBrowseLibrary) {
-        return;
+      if (!shouldBrowseLibrary && !options?.force) {
+        return undefined;
       }
 
       const requestId = replace
@@ -371,11 +454,13 @@ const SalesItemBrowser: React.FC<Props> = ({
       try {
         if (replace) {
           setItemsLoadError(false);
-          setLoadingItems(true);
-          // Drop prior catalog/search rows immediately so typed queries never show
-          // stale A–Z inventory while the new request is in flight.
-          setItems([]);
-          setHasNextPage(false);
+          if (!options?.preserveVisible) {
+            setLoadingItems(true);
+            // Drop prior catalog/search rows immediately so typed queries never show
+            // stale A–Z inventory while the new request is in flight.
+            setItems([]);
+            setHasNextPage(false);
+          }
         } else {
           setLoadingMore(true);
         }
@@ -399,16 +484,18 @@ const SalesItemBrowser: React.FC<Props> = ({
         setItems(previous => (replace ? nextItems : [...previous, ...nextItems]));
         setCurrentPage(pageToLoad);
         setHasNextPage(Boolean(response?.next));
+        return nextItems;
       } catch (error) {
         if (requestId !== loadItemsRequestIdRef.current) {
-          return;
+          return undefined;
         }
         console.error('Error loading sales browser items:', error);
-        if (replace) {
+        if (replace && !options?.preserveVisible) {
           setItemsLoadError(true);
           setItems([]);
         }
         setHasNextPage(false);
+        return undefined;
       } finally {
         if (requestId === loadItemsRequestIdRef.current) {
           setLoadingItems(false);
@@ -454,6 +541,59 @@ const SalesItemBrowser: React.FC<Props> = ({
 
     return () => clearTimeout(timer);
   }, [activeTab, isSearchPanelVisible, searchQuery, selectedCategoryId, loadItems]);
+
+  const soldItemsForStockRefreshRef = useRef(soldItemsForStockRefresh);
+  soldItemsForStockRefreshRef.current = soldItemsForStockRefresh;
+
+  useEffect(() => {
+    if (!catalogRefreshKey) {
+      return;
+    }
+
+    const {bySystemId, byNo} = buildSoldQuantityMaps(
+      soldItemsForStockRefreshRef.current,
+    );
+    const patchItem = (item: CartItem) =>
+      applySoldQuantitiesToItem(item, bySystemId, byNo);
+
+    if (bySystemId.size || byNo.size) {
+      setItems(previous => previous.map(patchItem));
+      setCachedItems(previous => {
+        const next = {...previous};
+        const patched: CartItem[] = [];
+        Object.keys(next).forEach(key => {
+          const updated = patchItem(next[key]);
+          if (updated !== next[key]) {
+            patched.push(updated);
+          }
+          next[key] = updated;
+        });
+        if (patched.length) {
+          cacheItemsLocally(patched);
+        }
+        return next;
+      });
+      skipNextFavoritePutRef.current = true;
+      setFavoriteSlots(previous =>
+        previous.map(cell => (cell ? patchItem(cell) : cell)),
+      );
+    }
+
+    skipNextLibraryFetchRef.current = false;
+    void (async () => {
+      const nextItems = await loadItems(1, true, {
+        preserveVisible: true,
+        force: true,
+      });
+      if (!nextItems?.length) {
+        return;
+      }
+      skipNextFavoritePutRef.current = true;
+      setFavoriteSlots(previous =>
+        mergeCatalogInventoryIntoFavorites(previous, nextItems),
+      );
+    })();
+  }, [catalogRefreshKey, loadItems]);
 
   useEffect(() => {
     if (activeTab !== 'pos') {
@@ -623,37 +763,43 @@ const SalesItemBrowser: React.FC<Props> = ({
     });
   }, []);
 
-  const handleFavoriteFilledSlotLongPress = useCallback(
-    (index: number) => {
-      const slot = favoriteSlots[index];
-      if (!slot) {
-        return;
-      }
-      Alert.alert(slot.item_name || 'Favorite', 'Choose an action', [
-        {
-          text: 'Replace',
-          onPress: () => openAddFavoriteModal(index),
-        },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: () => removeFavoriteAt(index),
-        },
-        {text: 'Cancel', style: 'cancel'},
-      ]);
-    },
-    [favoriteSlots, openAddFavoriteModal, removeFavoriteAt],
-  );
+  const handleFavoriteFilledSlotLongPress = useCallback((index: number) => {
+    const slot = favoriteSlots[index];
+    if (!slot) {
+      return;
+    }
+    setFavoriteActionIndex(index);
+  }, [favoriteSlots]);
+
+  const favoriteActionSlot =
+    favoriteActionIndex != null ? favoriteSlots[favoriteActionIndex] : null;
+  const favoriteActionItems: ChooseActionItem[] =
+    favoriteActionIndex == null || !favoriteActionSlot
+      ? []
+      : [
+          {
+            key: 'replace',
+            label: 'Replace',
+            onPress: () => openAddFavoriteModal(favoriteActionIndex),
+          },
+          {
+            key: 'remove',
+            label: 'Remove',
+            destructive: true,
+            onPress: () => removeFavoriteAt(favoriteActionIndex),
+          },
+        ];
 
   const handleAddItem = useCallback(
     (item: CartItem) => {
-      if (isPosItemOutOfStock(item)) {
+      const latest = cachedItemsRef.current[item.system_id] || item;
+      if (isPosItemOutOfStock(latest)) {
         return;
       }
 
       const hadSearchPanelOpen = isSearchPanelVisible;
 
-      onAddItem(item);
+      onAddItem(latest);
 
       setTimeout(() => {
         if (hadSearchPanelOpen) {
@@ -702,6 +848,19 @@ const SalesItemBrowser: React.FC<Props> = ({
       />
     ),
     [handleAddItem, libraryRowTheme],
+  );
+
+  const renderLibraryItemTile = useCallback(
+    ({item}: {item: CartItem}) => (
+      <LibraryPosItemTile
+        item={item}
+        isRecentlyAdded={Boolean(recentlyAddedIdsRef.current[item.system_id])}
+        isOutOfStock={isPosItemOutOfStock(item)}
+        onAdd={handleAddItem}
+        theme={libraryTileTheme}
+      />
+    ),
+    [handleAddItem, libraryTileTheme],
   );
 
   const onSearchChangeText = (text: string) => {
@@ -1045,26 +1204,35 @@ const SalesItemBrowser: React.FC<Props> = ({
           categories={categories}
           categoriesLoadError={categoriesLoadError}
           selectedCategoryId={selectedCategoryId}
+          catalogLayout={useProductGrid ? 'grid' : 'list'}
           bt={bt}
           onRetry={handleRetryLibrary}
           onCategoryPress={handleCategoryPress}
+          onLayoutChange={setCatalogLayoutOverride}
         />
         <FlatList
           ref={libraryListRef}
+          key={`library-${useProductGrid ? catalogColumns : 'list'}`}
           style={styles.libraryList}
           data={items}
           keyExtractor={item => item.system_id}
-          renderItem={renderLibraryItemRow}
+          numColumns={useProductGrid ? catalogColumns : 1}
+          renderItem={
+            useProductGrid ? renderLibraryItemTile : renderLibraryItemRow
+          }
           extraData={recentlyAddedIds}
-          initialNumToRender={12}
-          maxToRenderPerBatch={8}
+          initialNumToRender={useProductGrid ? 18 : 12}
+          maxToRenderPerBatch={useProductGrid ? 12 : 8}
           windowSize={10}
           updateCellsBatchingPeriod={50}
           removeClippedSubviews={false}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.listContent}
+          columnWrapperStyle={useProductGrid ? styles.gridRow : undefined}
+          contentContainerStyle={
+            useProductGrid ? styles.gridContent : styles.listContent
+          }
           onEndReached={() => {
             if (!loadingMore && hasNextPage) {
               loadItems(currentPage + 1, false);
@@ -1459,6 +1627,12 @@ const SalesItemBrowser: React.FC<Props> = ({
         )}
       </View>
       {renderAddFavoriteModal()}
+      <ChooseActionSheet
+        visible={favoriteActionIndex != null && !!favoriteActionSlot}
+        title={favoriteActionSlot?.item_name || 'Favorite'}
+        actions={favoriteActionItems}
+        onClose={() => setFavoriteActionIndex(null)}
+      />
     </View>
   );
 };
@@ -1619,6 +1793,13 @@ const styles = StyleSheet.create({
     borderBottomColor: '#E4E4E4',
     backgroundColor: COLORS.white,
   },
+  categoryChipBarRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  categoryChipScroll: {
+    flex: 1,
+  },
   categoryChipBarEmpty: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1626,6 +1807,80 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     gap: 8,
+  },
+  layoutToggleWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingRight: 10,
+    paddingLeft: 4,
+  },
+  layoutToggleBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  layoutToggleBtnActive: {
+    borderColor: COLORS.primary2,
+  },
+  layoutToggleText: {
+    ...FONTS.body5,
+    fontWeight: '700',
+  },
+  gridRow: {
+    gap: 10,
+    paddingHorizontal: 6,
+    marginBottom: 10,
+  },
+  gridContent: {
+    paddingTop: 10,
+    paddingBottom: 12,
+  },
+  gridTile: {
+    flex: 1,
+    minHeight: 128,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    padding: 10,
+    overflow: 'hidden',
+  },
+  gridTileDisabled: {
+    opacity: 0.55,
+  },
+  gridTileInitials: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: COLORS.primary2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  gridTileInitialsDisabled: {
+    backgroundColor: '#C9CDD3',
+  },
+  gridTileInitialsText: {
+    ...FONTS.body4,
+    color: COLORS.white,
+    fontWeight: '700',
+  },
+  gridTileName: {
+    ...FONTS.body4,
+    fontWeight: '700',
+    width: '100%',
+    minHeight: 36,
+  },
+  gridTileMeta: {
+    ...FONTS.body5,
+    marginTop: 2,
+    marginBottom: 6,
+  },
+  gridTilePrice: {
+    ...FONTS.body4,
+    color: COLORS.primary2,
+    fontWeight: '700',
+    marginTop: 'auto',
   },
   categoryChipScrollContent: {
     paddingHorizontal: 10,
@@ -2150,25 +2405,80 @@ type PosCategoryChipTheme = {
   catChipText: object;
   catChipTextActive: object;
   stateText: object;
+  layoutToggle: object;
+  layoutToggleActive: object;
+  layoutToggleText: object;
+  layoutToggleTextActive: object;
 };
 
 type PosCategoryChipBarProps = {
   categories: SalesCategory[];
   categoriesLoadError: boolean;
   selectedCategoryId: string | number | null;
+  catalogLayout: 'grid' | 'list';
   bt: PosCategoryChipTheme;
   onRetry: () => void;
   onCategoryPress: (categoryId: string | number | null) => void;
+  onLayoutChange: (layout: 'grid' | 'list') => void;
 };
 
 const PosCategoryChipBar = React.memo(function PosCategoryChipBarInner({
   categories,
   categoriesLoadError,
   selectedCategoryId,
+  catalogLayout,
   bt,
   onRetry,
   onCategoryPress,
+  onLayoutChange,
 }: PosCategoryChipBarProps) {
+  const layoutToggle = (
+    <View style={styles.layoutToggleWrap}>
+      <TouchableOpacity
+        style={[
+          styles.layoutToggleBtn,
+          bt.layoutToggle,
+          catalogLayout === 'grid' && styles.layoutToggleBtnActive,
+          catalogLayout === 'grid' && bt.layoutToggleActive,
+        ]}
+        onPress={() => onLayoutChange('grid')}
+        activeOpacity={0.8}
+        accessibilityRole="button"
+        accessibilityState={{selected: catalogLayout === 'grid'}}
+        accessibilityLabel="Grid view">
+        <Text
+          style={[
+            styles.layoutToggleText,
+            bt.layoutToggleText,
+            catalogLayout === 'grid' && bt.layoutToggleTextActive,
+          ]}>
+          Grid
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={[
+          styles.layoutToggleBtn,
+          bt.layoutToggle,
+          catalogLayout === 'list' && styles.layoutToggleBtnActive,
+          catalogLayout === 'list' && bt.layoutToggleActive,
+        ]}
+        onPress={() => onLayoutChange('list')}
+        activeOpacity={0.8}
+        accessibilityRole="button"
+        accessibilityState={{selected: catalogLayout === 'list'}}
+        accessibilityLabel="List view">
+        <Text
+          style={[
+            styles.layoutToggleText,
+            bt.layoutToggleText,
+            catalogLayout === 'list' && bt.layoutToggleTextActive,
+          ]}>
+          List
+        </Text>
+      </TouchableOpacity>
+    </View>
+  );
+
   if (!categories.length) {
     return (
       <View style={[styles.categoryChipBar, bt.catChipBar, styles.categoryChipBarEmpty]}>
@@ -2185,6 +2495,7 @@ const PosCategoryChipBar = React.memo(function PosCategoryChipBarInner({
             <Text style={styles.retryButtonText}>Retry</Text>
           </TouchableOpacity>
         ) : null}
+        {layoutToggle}
       </View>
     );
   }
@@ -2192,12 +2503,13 @@ const PosCategoryChipBar = React.memo(function PosCategoryChipBarInner({
   const isAllSelected = selectedCategoryId == null;
 
   return (
-    <View style={[styles.categoryChipBar, bt.catChipBar]}>
+    <View style={[styles.categoryChipBar, bt.catChipBar, styles.categoryChipBarRow]}>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
-        contentContainerStyle={styles.categoryChipScrollContent}>
+        contentContainerStyle={styles.categoryChipScrollContent}
+        style={styles.categoryChipScroll}>
         <TouchableOpacity
           style={[
             styles.categoryChip,
@@ -2251,6 +2563,7 @@ const PosCategoryChipBar = React.memo(function PosCategoryChipBarInner({
           );
         })}
       </ScrollView>
+      {layoutToggle}
     </View>
   );
 });
@@ -2313,6 +2626,66 @@ LibraryPosItemRow = React.memo(function LibraryPosItemRowInner({
           <Text style={styles.rowAmount}>{formatMoney(item.unit_price)}</Text>
         )}
       </View>
+    </Pressable>
+  );
+});
+
+LibraryPosItemTile = React.memo(function LibraryPosItemTileInner({
+  item,
+  isRecentlyAdded,
+  isOutOfStock,
+  onAdd,
+  theme,
+}: LibraryPosItemTileProps) {
+  const initials = getInitials(item.item_name || 'IT') || 'IT';
+
+  return (
+    <Pressable
+      disabled={isOutOfStock}
+      delayPressIn={0}
+      unstable_pressDelay={0}
+      android_ripple={
+        Platform.OS === 'android' && !isOutOfStock
+          ? {color: 'rgba(0, 81, 81, 0.18)', foreground: true}
+          : undefined
+      }
+      style={({pressed}) => [
+        styles.gridTile,
+        theme.tile,
+        isRecentlyAdded && theme.tileActive,
+        isOutOfStock && styles.gridTileDisabled,
+        !isOutOfStock && pressed && styles.libraryRowPressed,
+      ]}
+      onPress={() => onAdd(item)}
+      accessibilityRole="button"
+      accessibilityState={{disabled: isOutOfStock}}
+      accessibilityLabel={item.item_name}>
+      <View
+        style={[
+          styles.gridTileInitials,
+          isOutOfStock && styles.gridTileInitialsDisabled,
+        ]}>
+        <Text style={styles.gridTileInitialsText}>{initials}</Text>
+      </View>
+      <Text
+        style={[
+          styles.gridTileName,
+          theme.name,
+          isOutOfStock && styles.disabledRowTitle,
+        ]}
+        numberOfLines={2}>
+        {item.item_name}
+      </Text>
+      <Text style={[styles.gridTileMeta, theme.meta]} numberOfLines={1}>
+        {posItemStockLabel(item)}
+      </Text>
+      {isRecentlyAdded ? (
+        <Text style={styles.addedText}>Added</Text>
+      ) : isOutOfStock ? (
+        <Text style={styles.outOfStockText}>Unavailable</Text>
+      ) : (
+        <Text style={styles.gridTilePrice}>{formatMoney(item.unit_price)}</Text>
+      )}
     </Pressable>
   );
 });

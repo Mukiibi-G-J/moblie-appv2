@@ -5,6 +5,18 @@
         <!-- Customize your theme here. -->
         <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
         <item name="android:autofilledHighlight">@color/input_autofill_highlight</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+    </style>
+
+    <style name="CustomerDisplayTheme" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@color/customer_display_bg</item>
+        <item name="android:colorBackground">@color/customer_display_bg</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:statusBarColor">@color/customer_display_bg</item>
+        <item name="android:navigationBarColor">@color/customer_display_bg</item>
     </style>
 
 </resources>

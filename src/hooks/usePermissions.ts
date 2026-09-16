@@ -1,101 +1,88 @@
 /**
  * usePermissions Hook
  *
- * Provides permission checking functionality based on the 3-Layer Hybrid Access Control System:
- * - Layer 1: Role Center (Module Visibility)
- * - Layer 2: Permission Sets (Page Visibility)
- * - Layer 3: CRUD Permissions (Action Control)
+ * 3-layer access control plus Role Centre nav from GET /api/auth/me/:
+ * - Company enabled_modules (plan / add-on gate)
+ * - Role Centre navItems (which native screens appear)
+ * - Permission sets (page CRUD)
  *
  * Usage:
- *   const { isModuleVisible, canAccessPage, getPagePermissions } = usePermissions();
+ *   const { isModuleVisible, canAccessMobileNav, hasAnyPageAccess } = usePermissions();
  *
- *   if (isModuleVisible('sales')) {
- *     // Show Sales module
- *   }
- *
- *   if (canAccessPage('Sales Dashboard', 'read')) {
- *     // Show Sales Dashboard
+ *   if (isModuleVisible('sales') && canAccessMobileNav('makeSale', PAGE_NAMES.SALES)) {
+ *     // Show Make Sale
  *   }
  */
 
 import {useAuth} from '../context/Store';
 import {PagePermissions} from '../types/auth';
+import {resolveCanManageCompany} from '../utils/companyAccess';
+import {
+  isMobileScreenAllowed,
+  isRoleCentreNavAllowed,
+  type MobileScreenKey,
+} from '../utils/roleCentreNav';
 
 const MODULE_ENABLED_ALIASES: Record<string, string[]> = {
-  // Match web nav config where moduleCode can differ from enabled_modules key.
+  // Bidirectional: moduleCode on nav can differ from enabled_modules / JWT keys.
   items: ['inventory'],
+  inventory: ['items'],
   suppliers: ['purchases'],
+  purchases: ['suppliers'],
   userManagement: ['user_management'],
+  user_management: ['userManagement'],
+  reports: ['financials'],
+  financials: ['reports'],
 };
+
+function moduleKeys(moduleCode: string): string[] {
+  const aliases = MODULE_ENABLED_ALIASES[moduleCode] || [];
+  return [moduleCode, ...aliases];
+}
 
 export const usePermissions = () => {
   const {auth} = useAuth();
 
+  const bypassRoleCentreNav = (): boolean =>
+    !!auth &&
+    (!!auth.is_superuser || !!auth.has_super_permission);
+
   /** Matches web: superuser or Admin role bypasses page-level permission checks */
   const hasFullPageAccess = (): boolean =>
-    !!auth && (auth.is_superuser || !!auth.roles?.includes('Admin'));
+    !!auth &&
+    (auth.is_superuser ||
+      !!auth.has_super_permission ||
+      !!auth.roles?.includes('Admin'));
 
   /**
-   * Layer 1: Check if a module should be visible based on Role Center configuration
-   * @param moduleCode - Module code (e.g., 'sales', 'customers', 'items')
-   * @returns true if module should be visible
+   * Company/module subscription gate only — Role Centre nav is a separate check.
    */
   const isModuleVisible = (moduleCode: string): boolean => {
     const enabledModules = Array.isArray(auth.enabled_modules)
       ? auth.enabled_modules
       : ['pos'];
-    // Company/module subscription gate: when backend provides enabled_modules,
-    // never show modules that are not enabled for this tenant.
-    if (Array.isArray(enabledModules)) {
-      const aliases = MODULE_ENABLED_ALIASES[moduleCode] || [];
-      const enabledKeys = [moduleCode, ...aliases];
-      const isEnabled = enabledKeys.some(key => enabledModules.includes(key));
-      if (!isEnabled) {
-        return false;
-      }
+    const isEnabled = moduleKeys(moduleCode).some(key =>
+      enabledModules.includes(key),
+    );
+    if (!isEnabled) {
+      return false;
     }
-
-    // Superuser sees everything among enabled modules
-    if (auth.is_superuser) return true;
-
-    const roleCenterModules = auth.role_center_modules || [];
-
-    // If user has role center modules, use them (primary)
-    if (roleCenterModules.length > 0) {
-      return roleCenterModules.includes(moduleCode);
-    }
-
-    // Fallback to authority for backward compatibility
-    return auth.authority?.includes(moduleCode) || false;
+    return true;
   };
 
-  /**
-   * Layer 2: Check if user has ANY access (read/insert/modify/delete) to a page
-   * Used for navigation filtering
-   * @param pageName - Name of the page (from Objects model)
-   * @returns true if user has any permission for this page
-   */
   const hasAnyPageAccess = (pageName: string): boolean => {
     if (!auth) return false;
 
     if (hasFullPageAccess()) return true;
 
-    // Check if user has page_permissions for this page
     const pagePerms = auth.page_permissions?.[pageName];
     if (!pagePerms) return false;
 
-    // Return true if user has ANY permission (read, insert, modify, or delete)
     return (
       pagePerms.read || pagePerms.insert || pagePerms.modify || pagePerms.delete
     );
   };
 
-  /**
-   * Layer 3: Check if user can access a page with a specific action
-   * @param pageName - Name of the page (from Objects model)
-   * @param action - Permission action: 'read', 'insert', 'modify', 'delete'
-   * @returns true if user has the specific permission
-   */
   const canAccessPage = (
     pageName: string,
     action: 'read' | 'insert' | 'modify' | 'delete',
@@ -104,19 +91,12 @@ export const usePermissions = () => {
 
     if (hasFullPageAccess()) return true;
 
-    // Check if user has page_permissions for this page
     const pagePerms = auth.page_permissions?.[pageName];
     if (!pagePerms) return false;
 
     return pagePerms[action] || false;
   };
 
-  /**
-   * Get all page permissions for a specific page
-   * Returns the full permission object with read/insert/modify/delete flags
-   * @param pageName - Name of the page
-   * @returns PagePermissions object
-   */
   const getPagePermissions = (pageName: string): PagePermissions => {
     if (!auth || !auth.page_permissions) {
       return {read: false, insert: false, modify: false, delete: false};
@@ -136,56 +116,69 @@ export const usePermissions = () => {
     );
   };
 
+  const roleCentreNavOptions = () => ({
+    navItems: auth.navItems,
+    roleCentreNavReady: auth.roleCentreNavReady,
+    bypassRoleCentreNav: bypassRoleCentreNav(),
+  });
+
   /**
-   * Check if user has a specific role
-   * @param roleName - Name of the role
-   * @returns true if user has the role
+   * Role Centre allowlist + optional Layer 2 page permissions.
+   * Admin still needs the screen on the assigned Role Centre (unless SUPER).
    */
+  const canAccessMobileScreen = (
+    enginePageNames: string | readonly string[],
+    pageName?: string | string[],
+  ): boolean => {
+    if (!isRoleCentreNavAllowed(enginePageNames, roleCentreNavOptions())) {
+      return false;
+    }
+    if (!pageName) {
+      return true;
+    }
+    const names = Array.isArray(pageName) ? pageName : [pageName];
+    return names.some(name => hasAnyPageAccess(name));
+  };
+
+  const canAccessMobileNav = (
+    screenKey: MobileScreenKey,
+    pageName?: string | string[],
+  ): boolean => {
+    if (!isMobileScreenAllowed(screenKey, roleCentreNavOptions())) {
+      return false;
+    }
+    if (!pageName) {
+      return true;
+    }
+    const names = Array.isArray(pageName) ? pageName : [pageName];
+    return names.some(name => hasAnyPageAccess(name));
+  };
+
   const hasRole = (roleName: string): boolean => {
     return auth.roles?.includes(roleName) || false;
   };
 
-  /**
-   * Check if user is in a specific user group
-   * @param groupCode - Code of the user group
-   * @returns true if user is in the group
-   */
   const isInGroup = (groupCode: string): boolean => {
     if (!auth || !auth.user_groups) return false;
     return auth.user_groups.some(group => group.code === groupCode);
   };
 
-  /**
-   * Check if user is in any of the specified groups
-   * @param groupCodes - Array of group codes
-   * @returns true if user is in any of the groups
-   */
   const isInAnyGroup = (groupCodes: string[]): boolean => {
     if (!auth || !auth.user_groups) return false;
     return groupCodes.some(code => isInGroup(code));
   };
 
-  /**
-   * Check if user has a specific permission set
-   * @param permissionSetCode - Code of the permission set
-   * @returns true if user has the permission set
-   */
   const hasPermissionSet = (permissionSetCode: string): boolean => {
     return auth.permission_sets?.includes(permissionSetCode) || false;
   };
 
-  /**
-   * Check if user has any permission for a page (convenience method)
-   * @param pageName - Name of the page
-   * @returns true if user has any permission
-   */
+  /** Company info, billing, and module/plan screens — not the Admin role name. */
+  const canManageCompany = resolveCanManageCompany(auth);
+
   const hasAnyPermission = (pageName: string): boolean => {
     return hasAnyPageAccess(pageName);
   };
 
-  /**
-   * Convenience methods for common CRUD checks
-   */
   const canRead = (pageName: string): boolean => {
     return canAccessPage(pageName, 'read');
   };
@@ -203,27 +196,21 @@ export const usePermissions = () => {
   };
 
   return {
-    // Layer 1: Module Visibility
     isModuleVisible,
-
-    // Layer 2: Page Visibility
     hasAnyPageAccess,
     hasAnyPermission,
-
-    // Layer 3: CRUD Permissions
     canAccessPage,
     getPagePermissions,
-
-    // Convenience methods
+    canAccessMobileScreen,
+    canAccessMobileNav,
     canRead,
     canCreate,
     canEdit,
     canDelete,
-
-    // Helper functions
     hasRole,
     isInGroup,
     isInAnyGroup,
     hasPermissionSet,
+    canManageCompany,
   };
 };

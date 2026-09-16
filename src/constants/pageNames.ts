@@ -68,6 +68,10 @@ export const PAGE_NAMES = {
   // COMPANY/SETTINGS PAGES (10701-10799)
   // ============================================
   COMPANY_MANAGEMENT: 'Company Management',
+  COMPANY_AND_BILLING: 'Company & Billing',
+  COMPANY_SETTINGS: 'Company Settings',
+  ALL_MODULES_AND_PLANS: 'All Modules & Plans',
+  MODULES_AND_PLANS: 'Modules & Plans',
   ROLE_MANAGEMENT: 'Role Management',
   PROFILE_SETTINGS: 'Profile Settings',
 

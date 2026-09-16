@@ -1,7 +1,12 @@
 import {jwtDecode} from 'jwt-decode';
-import {ApiService, createAxiosInstance} from '../axios/axios';
+import {
+  ApiService,
+  createAnonymousAxiosInstance,
+  createAxiosInstance,
+} from '../axios/axios';
 import AsyncStorage from '@react-native-async-storage/async-storage'; // Import AsyncStorage
 import Toast from 'react-native-toast-message';
+import type {AuthMeSession, AuthNavItem} from '../types/auth';
 interface LoginResponse {
   access: string;
   refresh?: string;
@@ -67,6 +72,71 @@ export const resendOtp = async (email: string) => {
   } catch (error) {
     throw error;
   }
+};
+
+export function passwordResetErrorMessage(
+  error: unknown,
+  fallback = 'Something went wrong. Please try again.',
+): string {
+  if (typeof error === 'string' && error.trim()) {
+    return error;
+  }
+  const err = error as {
+    message?: string;
+    customMessage?: string;
+    response?: {data?: {error?: string; detail?: string; message?: string}};
+  };
+  const fromBody =
+    err?.response?.data?.error ||
+    err?.response?.data?.detail ||
+    err?.response?.data?.message;
+  if (typeof fromBody === 'string' && fromBody.trim()) {
+    return fromBody;
+  }
+  if (typeof err?.customMessage === 'string' && err.customMessage.trim()) {
+    return err.customMessage;
+  }
+  if (typeof err?.message === 'string' && err.message.trim()) {
+    return err.message;
+  }
+  return fallback;
+}
+
+async function passwordResetClient() {
+  const tenant = ((await AsyncStorage.getItem('tenant')) || '').trim();
+  if (!tenant) {
+    throw new Error(
+      'Company is required. Go back and enter your company name first.',
+    );
+  }
+  return createAnonymousAxiosInstance(tenant);
+}
+
+export const requestPasswordResetOtp = async (email: string) => {
+  const client = await passwordResetClient();
+  return client.post('/api/auth/forgot-password/', {
+    email: email.trim(),
+    delivery: 'otp',
+  });
+};
+
+export const verifyForgotPasswordOtp = async (email: string, otp: string) => {
+  const client = await passwordResetClient();
+  return client.post<{message: string; reset_token: string}>(
+    '/api/auth/verify-forgot-password-otp/',
+    {email: email.trim(), otp},
+  );
+};
+
+export const resetPasswordWithToken = async (
+  resetToken: string,
+  newPassword: string,
+) => {
+  const client = await passwordResetClient();
+  return client.post('/api/auth/reset-password/', {
+    reset_token: resetToken,
+    new_password: newPassword,
+  });
 };
 
 class AuthService {
@@ -246,3 +316,59 @@ class AuthService {
 }
 
 export const authService = AuthService.getInstance();
+
+export const ROLE_CENTRE_SESSION_KEY = 'roleCentre.session';
+
+export type CachedRoleCentreSession = {
+  roleCentrePageId: number | null;
+  applicationProfileCode: string | null;
+  applicationProfileDescription: string | null;
+  navItems: AuthNavItem[];
+  enabledModules?: string[];
+};
+
+export async function fetchAuthSession(): Promise<AuthMeSession> {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant);
+  const response = await axiosInstance.get<AuthMeSession>('/api/auth/me/');
+  return response.data;
+}
+
+export function roleCentreFieldsFromSession(session: AuthMeSession): CachedRoleCentreSession {
+  const navItems = Array.isArray(session.navItems) ? session.navItems : [];
+  return {
+    roleCentrePageId: session.roleCentrePageId ?? null,
+    applicationProfileCode: session.profile?.code ?? null,
+    applicationProfileDescription: session.profile?.description ?? null,
+    navItems,
+    enabledModules: Array.isArray(session.enabledModules)
+      ? session.enabledModules
+      : undefined,
+  };
+}
+
+export async function readCachedRoleCentreSession(): Promise<CachedRoleCentreSession | null> {
+  try {
+    const raw = await AsyncStorage.getItem(ROLE_CENTRE_SESSION_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as CachedRoleCentreSession;
+    if (!parsed || !Array.isArray(parsed.navItems)) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export async function writeCachedRoleCentreSession(
+  session: CachedRoleCentreSession,
+): Promise<void> {
+  await AsyncStorage.setItem(ROLE_CENTRE_SESSION_KEY, JSON.stringify(session));
+}
+
+export async function clearCachedRoleCentreSession(): Promise<void> {
+  await AsyncStorage.removeItem(ROLE_CENTRE_SESSION_KEY);
+}

@@ -1,4 +1,4 @@
-import React, {useState, useCallback} from 'react';
+import React, {useState, useCallback, useRef} from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View,
@@ -35,6 +35,8 @@ import {
 } from '../../utils/loginCredentials';
 import {loginAndRouteAfterCredentials} from '../../utils/postAuthNavigation';
 import {showAuthSupportAlert} from '../../utils/authSupport';
+import {isWorkspaceProvisioningError} from '../../services/companyOnboarding.service';
+import {ensureRestaurantPinDeviceForCompany} from '../../storage/restaurantDeviceStorage';
 import {radii} from '../../design-system/theme';
 import {authOnboarding} from '../../design-system/authOnboardingTokens';
 import {useTheme} from '../../context/ThemeContext';
@@ -62,7 +64,7 @@ function nationalFromStoredPhone(value: string): string {
 const LOGIN_DRAFT_COMPANY_DISPLAY = '@zentro_login_draft_company_display';
 
 const Login = () => {
-  const {colors} = useTheme();
+  const {colors, isDark, setPreference} = useTheme();
   const navigation = useNavigation<LoginNav>();
   const context = useAppContext();
   const [step, setStep] = useState<1 | 2>(1);
@@ -78,6 +80,10 @@ const Login = () => {
   const [continuing, setContinuing] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [passwordError, setPasswordError] = useState('');
+  const tenantLookupGenRef = useRef(0);
+  const tenantLookupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   const buildLoginPhone = useCallback(() => {
     const digits = phoneNumber.replace(/\D/g, '');
@@ -194,8 +200,12 @@ const Login = () => {
     if (method === 'email') {
       setPhoneNumber('');
       setIsPhoneValid(false);
+    } else if (method === 'phone') {
+      setEmail('');
     } else {
       setEmail('');
+      setPhoneNumber('');
+      setIsPhoneValid(false);
     }
   }, []);
 
@@ -243,8 +253,17 @@ const Login = () => {
         text2: 'Please check your credentials and try again',
       });
     } catch (error: any) {
-      console.log(error);
       setLoading(false);
+
+      if (isWorkspaceProvisioningError(error)) {
+        await saveLoginDraft(true);
+        navigation.replace('CompanyProvisioning', {
+          tenant: schemaTenant,
+          email: credential,
+          autoLogin: true,
+        });
+        return;
+      }
 
       let errorMessage = 'An error occurred. Please try again.';
       if (error.message) {
@@ -265,36 +284,62 @@ const Login = () => {
     }
   };
 
-  const validateTenantLive = async (value: string) => {
+  const validateTenantLive = (value: string) => {
     const v = value.trim();
+    if (tenantLookupTimerRef.current) {
+      clearTimeout(tenantLookupTimerRef.current);
+      tenantLookupTimerRef.current = null;
+    }
     if (v.length < 3) {
+      tenantLookupGenRef.current += 1;
+      setIsCheckingTenant(false);
       setTenantError('');
       return;
     }
-    setIsCheckingTenant(true);
-    try {
-      await restaurantCompanyLookup(v);
-      setTenantError('');
-    } catch (e: any) {
-      const st = e?.response?.status;
-      const code = e?.response?.data?.code;
-      if (st === 404) {
-        setTenantError('Company not found');
-      } else if (st === 400 && code === 'ambiguous_company_name') {
-        setTenantError('Multiple matches — use exact company name');
-      } else {
+    const gen = ++tenantLookupGenRef.current;
+    tenantLookupTimerRef.current = setTimeout(async () => {
+      setIsCheckingTenant(true);
+      try {
+        await restaurantCompanyLookup(v);
+        if (gen !== tenantLookupGenRef.current) {
+          return;
+        }
         setTenantError('');
+      } catch (e: any) {
+        if (gen !== tenantLookupGenRef.current) {
+          return;
+        }
+        const st = e?.response?.status;
+        const code = e?.response?.data?.code;
+        if (st === 404) {
+          setTenantError('Company not found');
+        } else if (st === 400 && code === 'ambiguous_company_name') {
+          setTenantError('Multiple matches — use exact company name');
+        } else {
+          setTenantError('');
+        }
+      } finally {
+        if (gen === tenantLookupGenRef.current) {
+          setIsCheckingTenant(false);
+        }
       }
-    } finally {
-      setIsCheckingTenant(false);
-    }
+    }, 450);
   };
 
   const continueToPassword = async () => {
     const t = tenant.trim();
     const credential = resolveLoginCredential();
 
-    if (!t || !credential) {
+    if (loginMethod === 'pin') {
+      if (!t) {
+        Toast.show({
+          type: 'error',
+          text1: 'Missing information',
+          text2: 'Enter your company name',
+        });
+        return;
+      }
+    } else if (!t || !credential) {
       Toast.show({
         type: 'error',
         text1: 'Missing information',
@@ -324,7 +369,7 @@ const Login = () => {
         });
         return;
       }
-    } else if (!isPhoneValid || !E164_RE.test(credential)) {
+    } else if (loginMethod === 'phone' && (!isPhoneValid || !E164_RE.test(credential))) {
       Toast.show({
         type: 'error',
         text1: 'Invalid phone number',
@@ -334,6 +379,12 @@ const Login = () => {
     }
 
     setContinuing(true);
+    tenantLookupGenRef.current += 1;
+    if (tenantLookupTimerRef.current) {
+      clearTimeout(tenantLookupTimerRef.current);
+      tenantLookupTimerRef.current = null;
+    }
+    setIsCheckingTenant(false);
     try {
       const result = await restaurantCompanyLookup(t);
       const schema = result.schema_name.trim().toLowerCase();
@@ -347,6 +398,15 @@ const Login = () => {
         /* ignore */
       }
       setTenantError('');
+      if (loginMethod === 'pin') {
+        await ensureRestaurantPinDeviceForCompany({
+          schemaName: schema,
+          companyDisplayName: result.display_name || result.name || t,
+        });
+        await saveLoginDraft(false);
+        navigation.navigate('RestaurantPinSignIn');
+        return;
+      }
     } catch (e: any) {
       const st = e?.response?.status;
       const code = e?.response?.data?.code;
@@ -413,15 +473,28 @@ const Login = () => {
       showBackButton={showBack && !!onBack}
       onBackPress={onBack}
       headerRight={
-        <TouchableOpacity
-          onPress={showAuthSupportAlert}
-          hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
-          accessibilityRole="button"
-          accessibilityLabel="Help and support">
-          <Text style={[styles.helpLink, {color: colors.textPrimary}]}>
-            Help
-          </Text>
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            onPress={showAuthSupportAlert}
+            hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
+            accessibilityRole="button"
+            accessibilityLabel="Help and support">
+            <Text style={[styles.helpLink, {color: colors.textPrimary}]}>
+              Help
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setPreference(isDark ? 'light' : 'dark')}
+            hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
+            accessibilityRole="button"
+            accessibilityLabel={
+              isDark ? 'Switch to light mode' : 'Switch to dark mode'
+            }>
+            <Text style={[styles.helpLink, {color: colors.textPrimary}]}>
+              {isDark ? 'Light' : 'Dark mode'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       }>
       {step === 1 ? (
         <>
@@ -441,7 +514,7 @@ const Login = () => {
             required
             error={tenantError}
             isLoading={isCheckingTenant}
-            helpText="Enter your registered company name"
+            helpText="Company name or workspace id, e.g. theadraceexecutivecopy"
             startIcon={
               <Image
                 source={icons.company}
@@ -468,7 +541,7 @@ const Login = () => {
               keyboardType="email-address"
               autoCapitalize="none"
             />
-          ) : (
+          ) : loginMethod === 'phone' ? (
             <View style={styles.phoneField}>
               <Text style={[styles.phoneLabel, {color: colors.textPrimary}]}>
                 Phone number <Text style={styles.requiredMark}>*</Text>
@@ -489,6 +562,10 @@ const Login = () => {
                 </Text>
               )}
             </View>
+          ) : (
+            <Text style={[styles.phoneHelp, {color: colors.textSecondary}]}>
+              Continue to enter your sign-in PIN for this company
+            </Text>
           )}
 
           <TouchableOpacity
@@ -548,10 +625,8 @@ const Login = () => {
 
           <TouchableOpacity
             onPress={() =>
-              Toast.show({
-                type: 'info',
-                text1: 'Forgot password',
-                text2: 'Contact your administrator to reset your password.',
+              navigation.navigate('ForgotPassword', {
+                email: loginMethod === 'email' ? email.trim() : '',
               })
             }
             style={styles.forgotPassword}
@@ -654,6 +729,11 @@ const styles = StyleSheet.create({
   },
   iconButton: {
     padding: 8,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
   },
   helpLink: {
     fontSize: ao.typo.caption,

@@ -6,6 +6,11 @@ import {
 import {fetchPaymentMethods, type PaymentMethod} from '../app.services';
 import {getEffectiveIsOnline} from '../../utils/posConnectivity';
 import type {SyncProgressHandler} from './itemsSync';
+import {
+  beginCatalogSlice,
+  finishCatalogSlice,
+  reportCatalogSlice,
+} from './catalogSyncProgress';
 import SyncApi from './SyncApi';
 
 const FULL_DELTA_SINCE = '1970-01-01T00:00:00Z';
@@ -81,8 +86,28 @@ export async function syncFullPaymentMethodsToLocal(options?: {
 
   try {
     await runPaymentSync(async () => {
-      options?.onProgress?.('Downloading payment methods…', 5);
-      await syncAllPaymentMethodsFromApi(options?.onProgress);
+      beginCatalogSlice('payment_methods', 'Downloading payment methods…');
+      try {
+        const onProgress = reportCatalogSlice(
+          'payment_methods',
+          options?.onProgress,
+        );
+        onProgress('Downloading payment methods…', 5);
+        await syncAllPaymentMethodsFromApi(onProgress);
+        const count = await getPaymentMethodCount();
+        finishCatalogSlice(
+          'payment_methods',
+          'done',
+          count
+            ? `Cached ${count} payment methods`
+            : 'Payment method download finished',
+        );
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Payment method download failed';
+        finishCatalogSlice('payment_methods', 'error', message);
+        throw err;
+      }
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

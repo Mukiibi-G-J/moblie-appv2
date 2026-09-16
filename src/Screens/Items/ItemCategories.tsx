@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,7 @@ import {
   ActivityIndicator,
   Image,
 } from 'react-native';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { CommonActions, useNavigation, useRoute } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import { COLORS, FONTS, SIZES } from '../../constants/theme';
@@ -26,6 +26,7 @@ import {
 } from '../../services/app.services';
 import { QuickIconPressable } from '../../Components';
 import ItemCategoryFormModal from './ItemCategoryFormModal';
+import { finishCategoryPickerSession, ensureCategoryPickerSession } from './categoryPickerSession';
 
 const getCategoryInitials = (name: string) => {
   const words = name
@@ -69,6 +70,7 @@ const ItemCategories = () => {
   );
   const [isFormModalVisible, setIsFormModalVisible] = useState(false);
   const [selectedCodes, setSelectedCodes] = useState < Set < string >> (new Set());
+  const pickerFinishedRef = useRef(false);
 
   const listTheme = useMemo(
     () => ({
@@ -236,16 +238,47 @@ const ItemCategories = () => {
       return;
     }
 
-    (navigation as any).navigate({
-      name: returnScreen,
-      params: {
-        reopenItemModal: returnMode,
-        itemDraft,
-        ...(code !== undefined ? { categoryPick: { code } } : {}),
-      },
-      merge: true,
-    });
+    if (!pickerFinishedRef.current) {
+      pickerFinishedRef.current = true;
+      finishCategoryPickerSession(code);
+    }
+
+    const params = {
+      reopenItemModal: returnMode || 'edit',
+      itemDraft,
+      ...(code !== undefined ? { categoryPick: { code } } : {}),
+    };
+    const state = navigation.getState();
+    const previous = state.routes[state.index - 1];
+    if (previous?.key) {
+      navigation.dispatch({
+        ...CommonActions.setParams(params),
+        source: previous.key,
+      });
+    }
+
+    safeGoBack(navigation, returnScreen);
   };
+
+  useEffect(() => {
+    if (!pickerMode) {
+      return;
+    }
+    ensureCategoryPickerSession(returnMode || 'edit', itemDraft ?? null);
+  }, [pickerMode, returnMode, itemDraft]);
+
+  useEffect(() => {
+    if (!pickerMode) {
+      return;
+    }
+    const unsubscribe = navigation.addListener('beforeRemove', () => {
+      if (!pickerFinishedRef.current) {
+        pickerFinishedRef.current = true;
+        finishCategoryPickerSession(undefined);
+      }
+    });
+    return unsubscribe;
+  }, [navigation, pickerMode]);
 
   const handleHeaderClose = () => {
     returnToItemFlow(undefined);

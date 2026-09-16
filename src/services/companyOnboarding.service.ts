@@ -31,6 +31,10 @@ export type CreateCompanyAccountResponse = {
   message: string;
   task_id: string;
   company_name: string;
+  signup_complete?: boolean;
+  user_ready?: boolean;
+  workspace_ready?: boolean;
+  login_url?: string;
 };
 
 export type TaskStatusResponse = {
@@ -39,7 +43,72 @@ export type TaskStatusResponse = {
   message: string;
   status: string;
   result?: Record<string, unknown>;
+  user_ready?: boolean;
+  workspace_ready?: boolean;
 };
+
+export type WorkspaceStatusResponse = {
+  schema: string;
+  user_ready?: boolean;
+  workspace_ready: boolean;
+  progress: number;
+  message: string;
+  task_id?: string;
+  state: string;
+};
+
+export function isWorkspaceProvisioningError(error: unknown): boolean {
+  if (typeof error === 'string') {
+    const text = error.toLowerCase();
+    return (
+      text.includes('still being set up') ||
+      text.includes('still being created') ||
+      text.includes('workspace_provisioning')
+    );
+  }
+  const ax = error as {
+    message?: string;
+    response?: {status?: number; data?: Record<string, unknown>};
+    error_type?: string;
+    data?: Record<string, unknown>;
+  };
+  const data = ax.response?.data || ax.data;
+  if (data?.error_type === 'workspace_provisioning') {
+    return true;
+  }
+  if (
+    ax.response?.status === 503 &&
+    (data?.workspace_ready === false || data?.user_ready === false)
+  ) {
+    return true;
+  }
+  const message = String(ax.message || '');
+  return (
+    message.toLowerCase().includes('still being set up') ||
+    message.toLowerCase().includes('still being created')
+  );
+}
+
+export function isSignupAccountReady(
+  data?: Partial<TaskStatusResponse & WorkspaceStatusResponse> | null,
+): boolean {
+  if (!data) {
+    return false;
+  }
+  if (data.state === 'FAILURE') {
+    return false;
+  }
+  if (data.user_ready) {
+    return true;
+  }
+  if (data.status === 'user_ready') {
+    return true;
+  }
+  if (data.workspace_ready) {
+    return true;
+  }
+  return data.state === 'SUCCESS';
+}
 
 export type CompanyValidationResponse = {
   isValid: boolean;
@@ -79,6 +148,13 @@ export async function getCompanyCreationTaskStatus(taskId: string) {
   );
 }
 
+export async function getWorkspaceStatus(schema: string) {
+  const api = publicApi();
+  return api.get<WorkspaceStatusResponse>('/api/company/workspace-status/', {
+    params: {schema: schema.trim().toLowerCase()},
+  });
+}
+
 export async function validateCompanyNameApi(companyName: string) {
   const api = publicApi();
   return api.post<CompanyValidationResponse>(
@@ -111,7 +187,7 @@ export async function pollCompanyCreationTask(
     const {data} = await getCompanyCreationTaskStatus(taskId);
     options?.onProgress?.(data);
 
-    if (data.state === 'SUCCESS') {
+    if (isSignupAccountReady(data)) {
       return data;
     }
     if (data.state === 'FAILURE') {

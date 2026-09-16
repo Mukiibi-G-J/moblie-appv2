@@ -8,7 +8,15 @@ import React, {
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {DeviceEventEmitter} from 'react-native';
-import {loginUser} from '../services/auth.services';
+import {
+  loginUser,
+  fetchAuthSession,
+  roleCentreFieldsFromSession,
+  readCachedRoleCentreSession,
+  writeCachedRoleCentreSession,
+  clearCachedRoleCentreSession,
+  type CachedRoleCentreSession,
+} from '../services/auth.services';
 import {jwtDecode} from 'jwt-decode';
 import Toast from 'react-native-toast-message';
 import {
@@ -59,6 +67,8 @@ export interface AppContextType {
   refreshBranchCapabilities: () => Promise<void>;
   updateLocalCurrencyCode: (code: string) => void;
   patchAuth: (partial: Partial<AuthState>) => void;
+  /** Reload Role Centre nav from GET /api/auth/me/ (after profile switch). */
+  refreshRoleCentreSession: () => Promise<void>;
 }
 const AppContext = createContext<AppContextType | null>(null);
 const SelectedTabContext = createContext<string>('Home');
@@ -100,6 +110,7 @@ async function autoRegisterRestaurantDeviceIfEligible(
         user.role_center_modules,
         user.enabled_modules,
         user.authority,
+        user.userPermissions?.allowPinLogin,
       )
     ) {
       return;
@@ -145,7 +156,38 @@ const getEmptyAuthState = (): AuthState => ({
   userPermissions: defaultUserJwtPermissions(),
   enabled_modules: ['pos'],
   localCurrencyCode: DEFAULT_LOCAL_CURRENCY_CODE,
+  pinLength: 4,
+  has_super_permission: false,
+  roleCentrePageId: null,
+  applicationProfileCode: null,
+  applicationProfileDescription: null,
+  navItems: [],
+  roleCentreNavReady: false,
 });
+
+function applyCachedRoleCentre(
+  user: AuthState,
+  cached: CachedRoleCentreSession | null,
+): AuthState {
+  if (!cached) {
+    return {
+      ...user,
+      navItems: user.navItems ?? [],
+      roleCentreNavReady: false,
+    };
+  }
+  return {
+    ...user,
+    roleCentrePageId: cached.roleCentrePageId,
+    applicationProfileCode: cached.applicationProfileCode,
+    applicationProfileDescription: cached.applicationProfileDescription,
+    navItems: cached.navItems,
+    roleCentreNavReady: true,
+    enabled_modules: cached.enabledModules?.length
+      ? cached.enabledModules
+      : user.enabled_modules,
+  };
+}
 
 export const AppProvider = ({children}: {children: React.ReactNode}) => {
   const [auth, setAuth] = useState<AuthState>(getEmptyAuthState());
@@ -165,6 +207,34 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
 
   const patchAuth = useCallback((partial: Partial<AuthState>) => {
     setAuth(prev => ({...prev, ...partial}));
+  }, []);
+
+  const refreshRoleCentreSession = useCallback(async () => {
+    try {
+      const session = await fetchAuthSession();
+      const fields = roleCentreFieldsFromSession(session);
+      setAuth(prev => ({
+        ...prev,
+        roleCentrePageId: fields.roleCentrePageId,
+        applicationProfileCode: fields.applicationProfileCode,
+        applicationProfileDescription: fields.applicationProfileDescription,
+        navItems: fields.navItems,
+        roleCentreNavReady: true,
+        enabled_modules: fields.enabledModules?.length
+          ? fields.enabledModules
+          : prev.enabled_modules,
+        userPermissions: {
+          ...prev.userPermissions,
+          canManageCompany:
+            typeof session.canManageCompany === 'boolean'
+              ? session.canManageCompany
+              : prev.userPermissions.canManageCompany,
+        },
+      }));
+      await writeCachedRoleCentreSession(fields);
+    } catch (error) {
+      console.warn('Failed to refresh Role Centre session', error);
+    }
   }, []);
 
   const clearAuthState = useCallback(() => {
@@ -400,6 +470,13 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
       localCurrencyCode:
         decodedToken.local_currency_code?.toUpperCase() ||
         DEFAULT_LOCAL_CURRENCY_CODE,
+      pinLength: Number(decodedToken.pin_length) === 6 ? 6 : 4,
+      has_super_permission: decodedToken.has_super_permission || false,
+      roleCentrePageId: null,
+      applicationProfileCode: null,
+      applicationProfileDescription: null,
+      navItems: [],
+      roleCentreNavReady: false,
     };
   }, []);
 
@@ -438,8 +515,12 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
         branchSelectionPending: canSwitch && enableMultipleJwt,
       }));
 
+      // Overlay cached Role Centre nav so the full catalog never flashes.
+      const cached = await readCachedRoleCentreSession();
+      const withRoleCentre = applyCachedRoleCentre(user, cached);
+
       // Authenticate immediately so navigation can leave the sign-in stack.
-      setAuth({...user});
+      setAuth({...withRoleCentre});
 
       if (user.verified === true) {
         await setVerifiedEmail(true);
@@ -452,7 +533,7 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
         return;
       }
 
-      await autoRegisterRestaurantDeviceIfEligible(user);
+      await autoRegisterRestaurantDeviceIfEligible(withRoleCentre);
 
       const enableMultiple = await syncBranchFlagsFromSetup(enableMultipleJwt);
       await applyGlobalDimensionFromJwt(decodedToken);
@@ -468,12 +549,14 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
       }
 
       void syncDevicePushTokenWithBackend();
+      void refreshRoleCentreSession();
     },
     [
       mapTokenToAuthState,
       ensureBranchSelectionGate,
       applyGlobalDimensionFromJwt,
       syncBranchFlagsFromSetup,
+      refreshRoleCentreSession,
     ],
   );
   useEffect(() => {
@@ -533,11 +616,18 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
             requireSelectionAfterTokenIssue: true,
           });
           const cachedAvatar = await readCachedAvatarUrl();
-          setAuth({
-            ...user,
-            avatar_url: cachedAvatar ?? undefined,
-          });
+          const cachedRoleCentre = await readCachedRoleCentreSession();
+          setAuth(
+            applyCachedRoleCentre(
+              {
+                ...user,
+                avatar_url: cachedAvatar ?? undefined,
+              },
+              cachedRoleCentre,
+            ),
+          );
           void syncDevicePushTokenWithBackend();
+          void refreshRoleCentreSession();
         } catch (error) {
           console.log('Error decoding token, clearing auth state:', error);
           clearAuthState();
@@ -558,6 +648,7 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
     ensureBranchSelectionGate,
     applyGlobalDimensionFromJwt,
     syncBranchFlagsFromSetup,
+    refreshRoleCentreSession,
   ]);
 
   // Load cart items from AsyncStorage on mount
@@ -633,6 +724,7 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
       clearOfflineBootstrapFlag(),
       closePosDatabase(),
       AsyncStorage.removeItem(USER_AVATAR_STORAGE_KEY),
+      clearCachedRoleCentreSession(),
       clearPushToken(),
     ]);
 
@@ -667,6 +759,7 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
       refreshBranchCapabilities,
       updateLocalCurrencyCode,
       patchAuth,
+      refreshRoleCentreSession,
     }),
     [
       auth,
@@ -675,6 +768,7 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
       clearAuthState,
       updateLocalCurrencyCode,
       patchAuth,
+      refreshRoleCentreSession,
       login,
       loginWithTokens,
       logout,

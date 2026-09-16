@@ -9,6 +9,7 @@ import {
 import {AxiosResponse} from 'axios';
 import {axiosInstance, createAxiosInstance} from '../axios/axios';
 import {isSubscriptionExpiredError} from '../utils/subscriptionExpired';
+import {normalizeSalesUiMode} from '../utils/salesUiMode';
 import {resolveEffectiveBranchDimensionId} from '../utils/effectiveBranch';
 import {Item} from '../Screens/Items/Items';
 import type {AxiosRequestConfig} from 'axios';
@@ -28,6 +29,34 @@ export const searchItems = async (searchQuery: string): Promise<CartItem[]> => {
   } catch (error) {
     throw error;
   }
+};
+
+export type GlobalSearchHit = {
+  title: string;
+  description?: string;
+  icon?: string;
+  category?: string;
+  categoryTitle?: string;
+  pageName?: string;
+  systemId?: string;
+  url?: string;
+};
+
+export type GlobalSearchSection = {
+  title: string;
+  data: GlobalSearchHit[];
+};
+
+/** Cross-module search: items, customers, invoices, vendors, payments, G/L, journals. */
+export const globalSearch = async (
+  searchQuery: string,
+): Promise<GlobalSearchSection[]> => {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axios = createAxiosInstance(tenant);
+  const response = await axios.post<{data?: GlobalSearchSection[]}>('/api/search/global/', {
+    query: searchQuery,
+  });
+  return response.data?.data ?? [];
 };
 
 /** Item row from GET /api/items/?no= — used for purchase line tracking specs. */
@@ -89,6 +118,60 @@ export const fetchItemByNo = async (
     // Fallback: classic REST still returns tracking_code for purchase specs.
     const enriched = await fetchItemDetailByNoRest(itemNo);
     return enriched;
+  }
+};
+
+export type ItemCardDetail = {
+  no?: string;
+  item_name?: string;
+  description?: string;
+  bar_code_no?: string;
+  unit_cost?: number;
+  unit_price?: number;
+  type?: string;
+};
+
+/** Item card / REST detail — list page omits barcode and unit cost. */
+export const fetchItemCardDetail = async (item: {
+  system_id?: string;
+  no?: string;
+}): Promise<ItemCardDetail | null> => {
+  const {fetchPageDataRecord, PAGE_IDS} = await import('./pageDataService');
+  const {mapPageDataItem} = await import('./pageDataMappers');
+  const systemId = String(item.system_id || '').trim();
+
+  if (systemId) {
+    try {
+      const row = await fetchPageDataRecord(PAGE_IDS.ItemCard, systemId);
+      return mapPageDataItem(row);
+    } catch {
+      // Fall through to classic REST.
+    }
+  }
+
+  const itemNo = String(item.no || '').trim();
+  if (!itemNo) {
+    return null;
+  }
+  try {
+    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+    const axios = createAxiosInstance(tenant) || undefined;
+    const response = await axios.get('/api/items/', {
+      params: {no: itemNo},
+    });
+    const results = response?.data?.results;
+    const row = Array.isArray(results)
+      ? results.find(
+          (r: {no?: string}) =>
+            String(r?.no || '').toLowerCase() === itemNo.toLowerCase(),
+        ) || results[0]
+      : response?.data;
+    if (!row || typeof row !== 'object') {
+      return null;
+    }
+    return mapPageDataItem(row as Record<string, unknown>);
+  } catch {
+    return null;
   }
 };
 
@@ -644,6 +727,8 @@ function buildSalesHistoryQueryParams(
 export type MyUserSetupLite = {
   canViewOnlyTheirSales?: boolean;
   canReverseSalesInvoice?: boolean;
+  canEditSalesPrice?: boolean;
+  defaultSalesUi?: 'phone' | 'pos';
 };
 
 /**
@@ -661,11 +746,17 @@ export const fetchMyUserSetup = async (): Promise<MyUserSetupLite | null> => {
     }
     const own = d.canViewOnlyTheirSales;
     const reverse = d.canReverseSalesInvoice;
+    const editPrice = d.canEditSalesPrice ?? d.can_edit_sales_price;
+    const salesUi = d.defaultSalesUi ?? d.default_sales_ui;
     return {
       canViewOnlyTheirSales:
         typeof own === 'boolean' ? own : undefined,
       canReverseSalesInvoice:
         typeof reverse === 'boolean' ? reverse : undefined,
+      canEditSalesPrice:
+        typeof editPrice === 'boolean' ? editPrice : undefined,
+      defaultSalesUi:
+        typeof salesUi === 'string' ? normalizeSalesUiMode(salesUi) : undefined,
     };
   } catch (e) {
     if (!isSubscriptionExpiredError(e)) {
@@ -674,6 +765,51 @@ export const fetchMyUserSetup = async (): Promise<MyUserSetupLite | null> => {
     return null;
   }
 };
+
+export type SalesSetupPriceFlags = {
+  disablePriceEditing: boolean;
+  preventPriceBelowOriginal: boolean;
+};
+
+/**
+ * Company Sales Setup flags that gate POS price edits.
+ * Uses /api/sales/setup/ when online; falls back to the local bootstrap cache.
+ */
+export const fetchSalesSetupPriceFlags =
+  async (): Promise<SalesSetupPriceFlags> => {
+    const fallback: SalesSetupPriceFlags = {
+      disablePriceEditing: false,
+      preventPriceBelowOriginal: false,
+    };
+    const {salesPriceEditFlagsFromSetup} = await import(
+      '../utils/salesPriceEdit'
+    );
+    const toFlags = (raw: unknown): SalesSetupPriceFlags => {
+      const flags = salesPriceEditFlagsFromSetup(raw);
+      return {
+        disablePriceEditing: flags.disablePriceEditing,
+        preventPriceBelowOriginal: flags.preventBelowOriginal,
+      };
+    };
+    try {
+      const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+      const api = createAxiosInstance(tenant);
+      const response = await api.get('/api/sales/setup/');
+      return toFlags(response.data);
+    } catch {
+      /* use local cache when offline */
+    }
+    try {
+      const {getCachedSalesSetup} = await import('../db/sqlite');
+      const cached = await getCachedSalesSetup();
+      if (cached) {
+        return toFlags(cached);
+      }
+    } catch {
+      /* ignore */
+    }
+    return fallback;
+  };
 
 export type SalesHistorySummary = {
   total_sales: number;
@@ -1006,10 +1142,6 @@ export const getSalesApiErrorMessage = (
       return detail.trim();
     }
     if (typeof err === 'string' && err.trim()) {
-      // Prefer detail when both exist (post_invoice shape).
-      if (typeof detail === 'string' && detail.trim()) {
-        return detail.trim();
-      }
       return err.trim();
     }
     if (Array.isArray(detail) && detail.length) {
@@ -1017,6 +1149,17 @@ export const getSalesApiErrorMessage = (
     }
     if (typeof data.message === 'string' && data.message.trim()) {
       return data.message.trim();
+    }
+    for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
+      if (key === 'detail' || key === 'error' || key === 'message') {
+        continue;
+      }
+      if (typeof value === 'string' && value.trim()) {
+        return value.trim();
+      }
+      if (Array.isArray(value) && value.length) {
+        return String(value[0]);
+      }
     }
   }
   if (typeof error?.message === 'string' && error.message.trim()) {
@@ -1271,6 +1414,26 @@ export type ItemListFilters = {
 
 export {isInvalidPageError};
 
+/** Classic REST item list — includes barcode and unit cost (ItemList page may omit them). */
+export const fetchItemsFromRest = async (
+  page: number = 1,
+  searchQuery: string = '',
+  categoryId?: number | string | null,
+) => {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant) || undefined;
+  const params: Record<string, string | number> = {
+    page,
+    page_size: 20,
+    q: searchQuery.trim(),
+  };
+  if (categoryId != null && categoryId !== '') {
+    params.category_id = String(categoryId);
+  }
+  const response = await axiosInstance.get('/api/items/', {params});
+  return response.data;
+};
+
 export const fetchItems = async (
   page: number = 1,
   searchQuery: string = '',
@@ -1325,6 +1488,29 @@ export const fetchItems = async (
   }
 };
 
+/** Classic REST category list — works when ItemCategoryList (10216) is not seeded. */
+async function fetchCategoriesFromRest(params?: {
+  search?: string;
+  parent_id?: string;
+}): Promise<ItemCategory[]> {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant) || undefined;
+  const query: Record<string, string> = {};
+  if (params?.search) {
+    query.search = params.search;
+  }
+  if (params?.parent_id) {
+    query.parent_id = params.parent_id;
+  }
+  const response = await axiosInstance.get('/api/categories/', {params: query});
+  const rows = Array.isArray(response.data)
+    ? response.data
+    : Array.isArray(response.data?.results)
+      ? response.data.results
+      : [];
+  return rows as ItemCategory[];
+}
+
 // Add this new API call for categories
 export const fetchCategories = async () => {
   try {
@@ -1335,8 +1521,12 @@ export const fetchCategories = async () => {
       mapRow: mapPageDataCategory,
     });
   } catch (error) {
-    console.error('Error fetching categories:', error);
-    throw error;
+    try {
+      return await fetchCategoriesFromRest();
+    } catch (restError) {
+      console.error('Error fetching categories:', restError);
+      throw error;
+    }
   }
 };
 
@@ -1373,8 +1563,15 @@ export const getItemCategories = async (params?: {
     });
     return rows as ItemCategory[];
   } catch (error) {
-    console.error('Error fetching item categories:', error);
-    throw error;
+    try {
+      return await fetchCategoriesFromRest({
+        search: params?.search,
+        parent_id: params?.parent_id,
+      });
+    } catch (restError) {
+      console.error('Error fetching item categories:', restError);
+      throw error;
+    }
   }
 };
 
@@ -1673,11 +1870,11 @@ export const fetchProfitLossStatement = async (params?: {
     throw new Error('Profit & loss requires start and end dates.');
   }
 
-  const {PAGE_IDS} = await import('./pageDataService');
+  const {PAGE_IDS, resolveTenantPageId} = await import('./pageDataService');
   const response = await axiosInstance.post<PageActionResponse>(
     '/api/pages/action/',
     {
-      PageId: PAGE_IDS.FinancialReportOverview,
+      PageId: await resolveTenantPageId(PAGE_IDS.FinancialReportOverview),
       ActionId: 'recalculate_financial_report',
       BatchName: params?.reportName || PROFIT_LOSS_REPORT_NAME,
       StartDate: sd,
@@ -1718,11 +1915,11 @@ export const downloadProfitLossPdf = async (params: {
     throw new Error('Start and end dates are required.');
   }
 
-  const {PAGE_IDS} = await import('./pageDataService');
+  const {PAGE_IDS, resolveTenantPageId} = await import('./pageDataService');
   const response = await axiosInstance.post<PageActionResponse>(
     '/api/pages/action/',
     {
-      PageId: PAGE_IDS.FinancialReportOverview,
+      PageId: await resolveTenantPageId(PAGE_IDS.FinancialReportOverview),
       ActionId: 'print_financial_report',
       BatchName: params.reportName || PROFIT_LOSS_REPORT_NAME,
       StartDate: sd,
@@ -2195,6 +2392,12 @@ export const fetchItemJournal = async (
   if (extra?.entry_type && extra.entry_type !== 'stock_taking') {
     filters.entry_type = extra.entry_type;
   }
+  if (extra?.status) {
+    filters.status = extra.status;
+  }
+  if (extra?.adjustment_type) {
+    filters.adjustment_type = extra.adjustment_type;
+  }
 
   return fetchPageDataPaginated({
     pageId,
@@ -2204,6 +2407,48 @@ export const fetchItemJournal = async (
     filters,
     mapRow: mapPageDataItemJournal,
   });
+};
+
+function unwrapJournalPayload(payload: unknown): Record<string, unknown> {
+  if (!payload || typeof payload !== 'object') {
+    return {};
+  }
+  const row = payload as Record<string, unknown>;
+  if (row.data && typeof row.data === 'object' && !Array.isArray(row.data)) {
+    return row.data as Record<string, unknown>;
+  }
+  return row;
+}
+
+/** Fetch one journal line (item no + name) when the list payload omits them. */
+export const fetchItemJournalById = async (id: number) => {
+  const api = await getAxiosInstance();
+  const response = await api.get(`/api/item-journals/${id}/`);
+  return unwrapJournalPayload(response.data);
+};
+
+/** Card-first detail fetch. List pages omit `item` (item no); the card includes it. */
+export const fetchItemJournalDetail = async (line: {
+  id: number;
+  system_id?: string;
+}) => {
+  const {fetchPageDataRecord, PAGE_IDS} = await import('./pageDataService');
+  const {mapPageDataItemJournal} = await import('./pageDataMappers');
+  const systemId = (line.system_id || '').trim();
+
+  if (systemId) {
+    try {
+      const row = await fetchPageDataRecord(
+        PAGE_IDS.ItemJournalCard,
+        systemId,
+      );
+      return mapPageDataItemJournal(row) as Record<string, unknown>;
+    } catch {
+      // Fall through to classic REST retrieve.
+    }
+  }
+
+  return fetchItemJournalById(line.id);
 };
 
 /** Create or update a journal line (parity with web upsert). */
@@ -2372,6 +2617,7 @@ export interface PaymentMethod {
   bal_account_no: string;
   system_id: string;
   requires_amount_received: boolean;
+  requires_transaction_id?: boolean;
   blocked?: boolean;
 }
 
@@ -2403,18 +2649,36 @@ export const fetchCustomers = async (): Promise<Customer[]> => {
  * Fetch payment methods from API
  */
 export const fetchPaymentMethods = async (): Promise<PaymentMethod[]> => {
+  const {
+    filterCollectablePaymentMethods,
+    withNormalizedTransactionIdFlag,
+  } = await import('../utils/paymentMethodDefaults');
+  try {
+    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+    const axios = createAxiosInstance(tenant);
+    const response = await axios.get<PaymentMethod[]>(
+      '/api/financials/payment-methods/',
+    );
+    const list = Array.isArray(response.data) ? response.data : [];
+    if (list.length) {
+      return filterCollectablePaymentMethods(list).map(
+        withNormalizedTransactionIdFlag,
+      );
+    }
+  } catch (error: any) {
+    console.error('Error fetching payment methods from REST:', error);
+  }
   try {
     const {fetchPageDataAll, PAGE_IDS} = await import('./pageDataService');
     const {mapPageDataPaymentMethod} = await import('./pageDataMappers');
-    const {filterCollectablePaymentMethods} = await import(
-      '../utils/paymentMethodDefaults'
-    );
     const methods = await fetchPageDataAll({
       pageId: PAGE_IDS.PaymentMethodList,
       filters: {blocked: false},
       mapRow: mapPageDataPaymentMethod,
     });
-    return filterCollectablePaymentMethods(methods);
+    return filterCollectablePaymentMethods(methods).map(
+      withNormalizedTransactionIdFlag,
+    );
   } catch (error: any) {
     console.error('Error fetching payment methods:', error);
     return [];

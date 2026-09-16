@@ -1,15 +1,11 @@
-import React from 'react';
-import {
-  Alert,
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Image,
-} from 'react-native';
+import React, {useMemo, useState} from 'react';
+import {View, Text, TouchableOpacity, StyleSheet, Image} from 'react-native';
 import {COLORS, FONTS, icons} from '../../constants';
 import {formatCurrencyCompact} from '../../utils/currency';
 import {useTheme} from '../../context/ThemeContext';
+import ChooseActionSheet, {
+  type ChooseActionItem,
+} from '../../Components/ChooseActionSheet';
 
 export type PurchaseHistoryListItemData = {
   id?: number;
@@ -43,6 +39,7 @@ const formatDate = (dateString?: string) => {
 
 const PurchaseHistoryListItem: React.FC<Props> = ({item, onPress}) => {
   const {colors} = useTheme();
+  const [actionsVisible, setActionsVisible] = useState(false);
   const statusLower = String(item.status || '').toLowerCase();
   const isOpenish = statusLower === 'open' || statusLower === 'draft';
   const title = item.vendor_name?.trim() || 'Vendor';
@@ -68,18 +65,20 @@ const PurchaseHistoryListItem: React.FC<Props> = ({item, onPress}) => {
   );
   const statusLabel = item.status?.trim() || '—';
 
-  const handleOpenActions = () => {
-    Alert.alert(title, 'Choose an action', [
+  const actionItems = useMemo(
+    (): ChooseActionItem[] => [
       {
-        text: isOpenish ? 'Edit purchase' : 'View details',
+        key: 'open',
+        label: isOpenish ? 'Edit purchase' : 'View details',
         onPress,
       },
-      {text: 'Cancel', style: 'cancel'},
-    ]);
-  };
+    ],
+    [isOpenish, onPress],
+  );
 
   return (
-    <TouchableOpacity
+    <View>
+      <TouchableOpacity
       activeOpacity={0.8}
       style={[styles.container, {borderBottomColor: colors.border}]}
       onPress={onPress}>
@@ -108,16 +107,26 @@ const PurchaseHistoryListItem: React.FC<Props> = ({item, onPress}) => {
       </View>
 
       <TouchableOpacity
-        onPress={handleOpenActions}
+        onPress={() => setActionsVisible(true)}
         style={[styles.actionButton, {backgroundColor: colors.backButtonBg}]}
-        hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
+        hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
+        accessibilityRole="button"
+        accessibilityLabel="Choose an action">
         <Image
           source={icons.menu}
           style={[styles.actionIcon, {tintColor: colors.textPrimary}]}
           resizeMode="contain"
         />
       </TouchableOpacity>
-    </TouchableOpacity>
+      </TouchableOpacity>
+
+      <ChooseActionSheet
+        visible={actionsVisible}
+        title={title}
+        actions={actionItems}
+        onClose={() => setActionsVisible(false)}
+      />
+    </View>
   );
 };
 

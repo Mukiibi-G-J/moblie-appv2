@@ -1,5 +1,5 @@
 import type {DB} from '@op-engineering/op-sqlite';
-import {getDb} from './persistence';
+import {getDb, getPosDatabaseName} from './persistence';
 import {randomUUID} from '../utils/randomUuid';
 import type {CartItem} from '../@types/types.dto';
 import type {Customer, PaymentMethod} from '../services/app.services';
@@ -38,15 +38,37 @@ const parseRows = <T>(rows: Record<string, unknown>[]): T[] =>
     })
     .filter(Boolean) as T[];
 
+/**
+ * op-sqlite uses a single connection. Parallel catalog syncs (items + customers
+ * + payment methods) all called BEGIN and hit:
+ * "cannot start a transaction within a transaction".
+ */
+let sqliteWriteTail: Promise<void> = Promise.resolve();
+
+function enqueueSqliteWrite<T>(work: () => Promise<T>): Promise<T> {
+  const run = sqliteWriteTail.then(work, work);
+  sqliteWriteTail = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 async function withTransaction(db: DB, fn: () => Promise<void>) {
-  await db.execute('BEGIN');
-  try {
-    await fn();
-    await db.execute('COMMIT');
-  } catch (e) {
-    await db.execute('ROLLBACK');
-    throw e;
-  }
+  await enqueueSqliteWrite(async () => {
+    await db.execute('BEGIN');
+    try {
+      await fn();
+      await db.execute('COMMIT');
+    } catch (e) {
+      try {
+        await db.execute('ROLLBACK');
+      } catch {
+        // BEGIN itself may have failed; ignore rollback errors.
+      }
+      throw e;
+    }
+  });
 }
 
 export async function saveCategories(categories: unknown[]) {
@@ -519,6 +541,20 @@ export async function getLocalSaleWithLines(
   };
 }
 
+export async function getCachedSalesSetup(): Promise<Record<string, unknown> | null> {
+  const db = await getDb();
+  const res = await db.execute(
+    'SELECT payload FROM sales_setup_cache WHERE id = 1',
+  );
+  const payload = res.rows?.[0]?.payload;
+  if (!payload) return null;
+  try {
+    return JSON.parse(String(payload)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 export async function getCachedCompanyInfo(): Promise<Record<string, unknown> | null> {
   const db = await getDb();
   const res = await db.execute(
@@ -576,4 +612,212 @@ export async function applyBootstrapItems(
   }
 }
 
-export {getDb, openPosDatabase, closePosDatabase} from './persistence';
+const LOCAL_TABLE_NAMES = [
+  'items',
+  'categories',
+  'units',
+  'tracking_codes',
+  'item_uoms',
+  'attribute_entries',
+  'item_images',
+  'customers',
+  'payment_methods',
+  'vendors',
+  'branches',
+  'sync_meta',
+  'sync_cursors',
+  'item_on_hand',
+  'outbox',
+  'local_sales',
+  'local_sale_lines',
+  'sales_setup_cache',
+  'company_info_cache',
+] as const;
+
+export type LocalTableName = (typeof LOCAL_TABLE_NAMES)[number];
+
+export type LocalTableCount = {
+  name: LocalTableName;
+  count: number;
+};
+
+export type LocalDatabaseOverview = {
+  dbName: string;
+  tables: LocalTableCount[];
+};
+
+export type LocalTablePreviewRow = {
+  summary: string;
+  fields: Record<string, string>;
+};
+
+export type LocalTablePreview = {
+  name: LocalTableName;
+  count: number;
+  shown: number;
+  rows: LocalTablePreviewRow[];
+};
+
+function isLocalTableName(name: string): name is LocalTableName {
+  return (LOCAL_TABLE_NAMES as readonly string[]).includes(name);
+}
+
+function stringifyField(value: unknown): string {
+  if (value == null) {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function parsePayload(raw: unknown): Record<string, unknown> | null {
+  if (raw == null) {
+    return null;
+  }
+  if (typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  try {
+    const parsed = JSON.parse(String(raw));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function summarizeLocalRow(
+  table: LocalTableName,
+  row: Record<string, unknown>,
+): string {
+  const payload = parsePayload(row.payload);
+  const pick = (...keys: string[]) => {
+    for (const key of keys) {
+      const fromRow = stringifyField(row[key]).trim();
+      if (fromRow) {
+        return fromRow;
+      }
+      const fromPayload = stringifyField(payload?.[key]).trim();
+      if (fromPayload) {
+        return fromPayload;
+      }
+    }
+    return '';
+  };
+
+  switch (table) {
+    case 'items':
+      return [pick('no'), pick('item_name', 'description')].filter(Boolean).join(' · ')
+        || pick('system_id');
+    case 'customers':
+      return [pick('name'), pick('phone', 'phone_number')].filter(Boolean).join(' · ')
+        || pick('id');
+    case 'payment_methods':
+      return pick('name', 'description', 'code', 'id');
+    case 'vendors':
+      return [pick('no'), pick('name')].filter(Boolean).join(' · ') || pick('id');
+    case 'categories':
+    case 'units':
+    case 'tracking_codes':
+    case 'branches':
+      return [pick('code'), pick('description', 'name')].filter(Boolean).join(' · ');
+    case 'local_sales':
+      return [pick('receipt_no'), pick('customer_name'), pick('sync_status')]
+        .filter(Boolean)
+        .join(' · ');
+    case 'outbox':
+      return [pick('event_type'), pick('status')].filter(Boolean).join(' · ')
+        || pick('event_id');
+    case 'sync_meta':
+      return [pick('key'), pick('value')].filter(Boolean).join(' = ');
+    case 'item_on_hand':
+      return [pick('item_no', 'item_system_id'), pick('quantity')].filter(Boolean).join(' · ');
+    default:
+      return (
+        pick('no', 'name', 'code', 'description', 'key', 'id', 'system_id') ||
+        Object.keys(row)
+          .slice(0, 3)
+          .map(key => stringifyField(row[key]))
+          .filter(Boolean)
+          .join(' · ')
+      );
+  }
+}
+
+function previewFields(row: Record<string, unknown>): Record<string, string> {
+  const fields: Record<string, string> = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (key === 'payload') {
+      const payload = parsePayload(value);
+      fields[key] = payload
+        ? JSON.stringify(payload, null, 2).slice(0, 4000)
+        : stringifyField(value).slice(0, 4000);
+      continue;
+    }
+    fields[key] = stringifyField(value).slice(0, 500);
+  }
+  return fields;
+}
+
+export async function getLocalDatabaseOverview(): Promise<LocalDatabaseOverview> {
+  const db = await getDb();
+  const dbName = await getPosDatabaseName();
+  const tables: LocalTableCount[] = [];
+  for (const name of LOCAL_TABLE_NAMES) {
+    const res = await db.execute(`SELECT COUNT(*) AS count FROM ${name}`);
+    tables.push({
+      name,
+      count: Number(res.rows?.[0]?.count ?? 0),
+    });
+  }
+  return {dbName, tables};
+}
+
+export async function getLocalTablePreview(
+  tableName: string,
+  limit = 50,
+): Promise<LocalTablePreview> {
+  if (!isLocalTableName(tableName)) {
+    throw new Error(`Unknown local table: ${tableName}`);
+  }
+  const db = await getDb();
+  const countRes = await db.execute(
+    `SELECT COUNT(*) AS count FROM ${tableName}`,
+  );
+  const count = Number(countRes.rows?.[0]?.count ?? 0);
+  const dataRes = await db.execute(
+    `SELECT * FROM ${tableName} LIMIT ?`,
+    [limit],
+  );
+  const rows = (dataRes.rows ?? []).map(row => {
+    const record = row as Record<string, unknown>;
+    return {
+      summary: summarizeLocalRow(tableName, record) || '(empty row)',
+      fields: previewFields(record),
+    };
+  });
+  return {
+    name: tableName,
+    count,
+    shown: rows.length,
+    rows,
+  };
+}
+
+export {
+  getDb,
+  openPosDatabase,
+  closePosDatabase,
+  getPosDatabaseName,
+} from './persistence';

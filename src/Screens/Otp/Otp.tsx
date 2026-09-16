@@ -177,6 +177,7 @@ const Otp = () => {
                         dec.role_center_modules,
                         dec.enabled_modules,
                         dec.authority,
+                        dec.user_permissions?.allowPinLogin,
                     )
                 ) {
                     const status = await getRestaurantPinStatus(access);

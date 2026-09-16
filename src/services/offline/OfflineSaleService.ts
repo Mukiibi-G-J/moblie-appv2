@@ -89,6 +89,7 @@ export async function completeOfflineSale(options: {
   amountReceived: number;
   changeAmount: number;
   documentDate?: string;
+  transactionId?: string | null;
 }): Promise<CompleteOfflineSaleResult> {
   const localId = randomUUID();
   const systemId = randomUUID();
@@ -107,6 +108,7 @@ export async function completeOfflineSale(options: {
     changeAmount: options.changeAmount,
     lines,
     documentDate: options.documentDate,
+    transactionId: options.transactionId,
   });
 
   const total = options.cartItems.reduce(

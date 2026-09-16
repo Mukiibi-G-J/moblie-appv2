@@ -13,7 +13,6 @@ import {
   RefreshControl,
   Image,
   ActivityIndicator,
-  PermissionsAndroid,
   Platform,
   KeyboardAvoidingView,
 } from 'react-native';
@@ -35,8 +34,11 @@ import {
   uploadItemImage,
   deleteItemImage,
   fetchItemUnitsOfMeasure,
+  fetchItemCardDetail,
+  type ItemCategory,
 } from '../../services/app.services';
 import ItemUnitOfMeasureModal from './ItemUnitOfMeasureModal';
+import ItemCategoryFormModal from './ItemCategoryFormModal';
 import { usePermissions } from '../../hooks/usePermissions';
 import {
   useItemsQuery,
@@ -45,6 +47,7 @@ import {
   type ItemRow,
 } from '../../hooks/useItemsQuery';
 import { safeGoBack } from '../../hooks/NavigationService';
+import { consumeCategoryPickerSession, isPickingCategory, subscribeCategoryPickerResult } from './categoryPickerSession';
 import { PAGE_NAMES } from '../../constants/pageNames';
 import { COLORS, SIZES, FONTS } from '../../constants/theme';
 import { ICON_BUTTON_ACTIVE_OPACITY, ICON_BUTTON_HIT_SLOP } from '../../constants';
@@ -54,6 +57,8 @@ import MainBottomTabBar from '../../Components/MainBottomTabBar';
 import { useTheme } from '../../context/ThemeContext';
 import { useAppContext, useTabContext } from '../../context/Store';
 import Toast from 'react-native-toast-message';
+import {appToastConfig} from '../../Components/AppToast';
+import {getApiErrorMessage} from '../../utils/apiError';
 // CameraRoll import removed - using native gallery picker instead
 
 export type Item = ItemRow;
@@ -138,6 +143,12 @@ const EditItemModal = ({
   const [isSaving, setIsSaving] = useState(false);
   const [showSaved, setShowSaved] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [categoryPickerVisible, setCategoryPickerVisible] = useState(false);
+  const [pickerSelectedCode, setPickerSelectedCode] = useState<string | null>(null);
+  const [categoryFormVisible, setCategoryFormVisible] = useState(false);
+  const {canCreate: canCreateCategory, canEdit: canEditCategory} =
+    usePermissions();
+  const CATEGORY_PAGE_NAME = PAGE_NAMES.ITEM_CATEGORIES;
 
   const editedItemRef = useRef<Item | null>(null);
   const categoriesRef = useRef<Category[]>([]);
@@ -270,6 +281,9 @@ const EditItemModal = ({
       setImageUploadError(null);
       setFieldErrors({});
       setShowSaved(false);
+      setCategoryPickerVisible(false);
+      setPickerSelectedCode(null);
+      setCategoryFormVisible(false);
       lastSavedRef.current = {};
       if (savedTimerRef.current) {
         clearTimeout(savedTimerRef.current);
@@ -317,7 +331,54 @@ const EditItemModal = ({
     setFieldErrors({});
     setShowSaved(false);
     loadCategories();
-  }, [item?.system_id, item?.id, item?.no, visible, isCreateMode, loadCategories, defaultCreateType]);
+  }, [item?.system_id, item?.id, item?.no, item?.category_id, visible, isCreateMode, loadCategories, defaultCreateType]);
+
+  useEffect(() => {
+    if (!visible || isCreateMode || !item) {
+      return;
+    }
+    const systemId = String(item.system_id || '').trim();
+    const itemNo = String(item.no || '').trim();
+    if (!systemId && !itemNo) {
+      return;
+    }
+    let cancelled = false;
+    void fetchItemCardDetail({system_id: systemId, no: itemNo}).then(detail => {
+      if (cancelled || !detail) {
+        return;
+      }
+      setEditedItem(prev => {
+        if (!prev) {
+          return prev;
+        }
+        const nextBarcode =
+          prev.bar_code_no?.trim() || detail.bar_code_no || prev.bar_code_no || '';
+        const prevCost = Number(prev.unit_cost);
+        const detailCost = Number(detail.unit_cost);
+        const nextCost =
+          Number.isFinite(prevCost) && prevCost > 0
+            ? prevCost
+            : Number.isFinite(detailCost)
+              ? detailCost
+              : prev.unit_cost;
+        lastSavedRef.current = {
+          ...lastSavedRef.current,
+          bar_code_no: nextBarcode,
+          unit_cost: Number(nextCost) || 0,
+          description: prev.description || detail.description || '',
+        };
+        return {
+          ...prev,
+          bar_code_no: nextBarcode,
+          unit_cost: nextCost,
+          description: prev.description || detail.description || prev.description,
+        };
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, isCreateMode, item?.system_id, item?.no]);
 
   useEffect(() => {
     if (!visible) {
@@ -405,25 +466,11 @@ const EditItemModal = ({
   }, []);
 
   const extractItemError = (error: any, field: string) => {
-    const data = error?.response?.data;
-    const fieldErrors = data?.errors?.[field] || data?.[field];
-    if (Array.isArray(fieldErrors) && fieldErrors[0]) {
-      return String(fieldErrors[0]);
-    }
-    if (typeof fieldErrors === 'string') {
-      return fieldErrors;
-    }
-    const raw = data?.error ?? data?.detail ?? data?.message;
-    if (typeof raw === 'string') {
-      const match = raw.match(/string='([^']+)'/);
-      if (match?.[1]) {
-        return match[1].replace(/^"|"$/g, '');
-      }
-      if (!raw.includes('ErrorDetail') && !raw.startsWith('{')) {
-        return raw;
-      }
-    }
-    return `Failed to save ${field.replace(/_/g, ' ')}`;
+    return getApiErrorMessage(error, {
+      field,
+      itemName: editedItemRef.current?.item_name,
+      fallback: `Failed to save ${field.replace(/_/g, ' ')}`,
+    });
   };
 
   const autoSaveField = useCallback(
@@ -558,8 +605,9 @@ const EditItemModal = ({
         setFieldErrors(prev => ({...prev, [field]: message}));
         Toast.show({
           type: 'error',
-          text1: 'Error',
+          text1: 'Could not save item',
           text2: message,
+          visibilityTime: 5000,
         });
       } finally {
         savingRef.current = false;
@@ -654,22 +702,49 @@ const EditItemModal = ({
       return;
     }
 
-    const initialCodes: string[] = [];
+    let initial: string | null = null;
     if (editedItem.category_id != null) {
       const match = categories.find(
         c => String(c.id || c.code) === String(editedItem.category_id),
       );
       if (match?.code) {
-        initialCodes.push(String(match.code));
+        initial = String(match.code);
       }
     }
+    setPickerSelectedCode(initial);
+    setCategoryPickerVisible(true);
+  };
 
-    (navigation as any).navigate('ItemCategories', {
-      pickerMode: true,
-      returnScreen: 'AllItems',
-      returnMode: isCreateMode ? 'create' : 'edit',
-      itemDraft: editedItem,
-      initialSelectedCodes: initialCodes,
+  const categoryRecords: ItemCategory[] = useMemo(
+    () =>
+      categories.map(cat => ({
+        code: String(cat.code || cat.id || ''),
+        description: String(cat.description || cat.name || cat.code || ''),
+        parent_id: null,
+      })),
+    [categories],
+  );
+
+  const applyPickedCategory = (code: string | null) => {
+    setCategoryPickerVisible(false);
+    setEditedItem(prev => {
+      if (!prev) {
+        return prev;
+      }
+      if (code == null || code === '') {
+        void autoSaveField('category_id', null);
+        return {...prev, category_id: null};
+      }
+      const cat = categories.find(c => c.code === code);
+      const nextCategoryId = (cat?.id ?? cat?.code ?? code) as
+        | number
+        | string
+        | null;
+      void autoSaveField('category_id', nextCategoryId);
+      return {
+        ...prev,
+        category_id: nextCategoryId,
+      };
     });
   };
 
@@ -807,76 +882,24 @@ const EditItemModal = ({
     }
   };
 
-  const requestGalleryPermission = async () => {
-    if (Platform.OS !== 'android') return true;
-    try {
-      // Try READ_MEDIA_IMAGES first (Android 13+)
-      let granted = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.READ_MEDIA_IMAGES,
-      );
-
-      // If that fails, try READ_EXTERNAL_STORAGE (Android 12 and below)
-      if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-        granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE,
-        );
-      }
-
-      return granted === PermissionsAndroid.RESULTS.GRANTED;
-    } catch (e) {
-      console.error('Permission request error:', e);
-      return false;
-    }
-  };
-
+  // Uses Android Photo Picker / iOS system gallery — no READ_MEDIA_* permissions.
   const openNativeGallery = async () => {
-    console.log('openNativeGallery called');
-
     try {
-      const hasPermission = await requestGalleryPermission();
-      if (!hasPermission) {
-        Alert.alert(
-          'Permission Denied',
-          'Photo library access is required to select images. Please grant permission in Settings.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Settings',
-              onPress: () => {
-                Alert.alert(
-                  'Settings',
-                  'Please go to Settings > Apps > Zentroapp > Permissions and enable "Photos and videos"',
-                );
-              },
-            },
-          ],
-        );
-        return;
-      }
-
-      // Sunmi module has been disabled to fix gallery conflicts
-      console.log('Opening native image library with minimal options...');
-
-      // Use optimized options to reduce file size and conflicts
       const response = await launchImageLibrary({
         mediaType: 'photo',
-        quality: 0.7, // Reduce quality to reduce file size
+        quality: 0.7,
         includeBase64: false,
         selectionLimit: 1,
         includeExtra: false,
-        maxWidth: 1024, // Limit width
-        maxHeight: 1024, // Limit height
+        maxWidth: 1024,
+        maxHeight: 1024,
       });
-
-      console.log('Native gallery response:', response);
       await handleImageResponse(response);
     } catch (error) {
       console.error('Error opening native gallery:', error);
-
-      // If native gallery fails, show user-friendly message and suggest camera
       Alert.alert(
         'Gallery Unavailable',
-        'Gallery access is currently unavailable due to a system conflict. Please use the camera option instead.',
+        'Could not open the photo picker. Please use the camera option instead.',
         [
           { text: 'OK', style: 'default' },
           {
@@ -1188,9 +1211,15 @@ const EditItemModal = ({
                   ]}>
                   <View style={styles.editItemHeaderSide}>
                     <QuickIconPressable
-                      onPress={onClose}
+                      onPress={
+                        categoryPickerVisible
+                          ? () => setCategoryPickerVisible(false)
+                          : onClose
+                      }
                       style={[styles.editItemCloseCircle, editTheme.closeCircle]}
-                      accessibilityLabel="Close">
+                      accessibilityLabel={
+                        categoryPickerVisible ? 'Close categories' : 'Close'
+                      }>
                       <Image
                         source={icons.cross as any}
                         style={[styles.editItemCloseIcon, editTheme.closeIcon]}
@@ -1199,14 +1228,23 @@ const EditItemModal = ({
                     </QuickIconPressable>
                   </View>
                   <Text style={[styles.editItemHeaderTitle, editTheme.headerTitle]}>
-                    {isCreateMode && !isPersisted
-                      ? editedItem?.type === 'Service'
-                        ? 'Create Service'
-                        : 'Create Item'
-                      : 'Edit Item'}
+                    {categoryPickerVisible
+                      ? 'Categories'
+                      : isCreateMode && !isPersisted
+                        ? editedItem?.type === 'Service'
+                          ? 'Create Service'
+                          : 'Create Item'
+                        : 'Edit Item'}
                   </Text>
                   <View style={[styles.editItemHeaderSide, styles.editItemHeaderSideEnd]}>
-                    {canWrite && (isSaving || showSaved) ? (
+                    {categoryPickerVisible ? (
+                      <TouchableOpacity
+                        style={styles.editItemDonePill}
+                        onPress={() => applyPickedCategory(pickerSelectedCode)}
+                        activeOpacity={0.7}>
+                        <Text style={styles.editItemDonePillText}>Done</Text>
+                      </TouchableOpacity>
+                    ) : canWrite && (isSaving || showSaved) ? (
                       <View
                         style={styles.editItemSavePill}
                         accessibilityRole="text"
@@ -1225,6 +1263,90 @@ const EditItemModal = ({
                   </View>
                 </View>
 
+                {categoryPickerVisible ? (
+                  <FlatList
+                    style={[styles.modalScrollView, editTheme.scrollBg]}
+                    data={categories}
+                    keyExtractor={(cat, index) =>
+                      String(cat.code || cat.id || index)
+                    }
+                    contentContainerStyle={[
+                      styles.editItemScrollContent,
+                      {paddingBottom: Math.max(insets.bottom, 20) + 24},
+                      categories.length === 0 ? {flexGrow: 1} : null,
+                    ]}
+                    ListHeaderComponent={
+                      canCreateCategory(CATEGORY_PAGE_NAME) ? (
+                        <TouchableOpacity
+                          style={styles.editItemPickerCreateRow}
+                          onPress={() => setCategoryFormVisible(true)}
+                          activeOpacity={0.65}>
+                          <Image
+                            source={icons.plus as any}
+                            style={[
+                              styles.editItemPickerCreatePlus,
+                              {tintColor: colors.textPrimary},
+                            ]}
+                            resizeMode="contain"
+                          />
+                          <Text
+                            style={[
+                              styles.editItemPickerCreateLabel,
+                              {color: colors.textPrimary},
+                            ]}>
+                            Create category
+                          </Text>
+                        </TouchableOpacity>
+                      ) : null
+                    }
+                    ListEmptyComponent={
+                      <Text style={[styles.editItemOptionsCopy, editTheme.optionsCopy]}>
+                        {categoriesLoading
+                          ? 'Loading categories…'
+                          : canCreateCategory(CATEGORY_PAGE_NAME)
+                            ? 'No categories yet. Tap Create category to add one.'
+                            : 'No categories found'}
+                      </Text>
+                    }
+                    renderItem={({item: cat}) => {
+                      const code = String(cat.code || '');
+                      const checked = pickerSelectedCode === code;
+                      const name =
+                        (cat.description && String(cat.description).trim()) ||
+                        cat.name ||
+                        code ||
+                        'Category';
+                      return (
+                        <TouchableOpacity
+                          style={styles.editItemPickerRow}
+                          onPress={() =>
+                            setPickerSelectedCode(prev =>
+                              prev === code ? null : code,
+                            )
+                          }
+                          activeOpacity={0.7}>
+                          <Image
+                            source={
+                              checked
+                                ? (icons.check_on as any)
+                                : (icons.check_off as any)
+                            }
+                            style={styles.editItemPickerCheck}
+                            resizeMode="contain"
+                          />
+                          <Text
+                            style={[
+                              styles.editItemPickerRowTitle,
+                              editTheme.catTitle,
+                            ]}
+                            numberOfLines={1}>
+                            {name}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    }}
+                  />
+                ) : (
                 <ScrollView
                   style={[styles.modalScrollView, editTheme.scrollBg]}
                   contentContainerStyle={[
@@ -1350,7 +1472,7 @@ const EditItemModal = ({
                         )
                       }
                       editable={canWrite}
-                      placeholder="Scan or enter barcode"
+                      placeholder="Leave blank to auto-generate"
                       placeholderTextColor={colors.placeholder}
                       autoCapitalize="characters"
                       autoCorrect={false}
@@ -1358,7 +1480,11 @@ const EditItemModal = ({
                     />
                     {fieldErrors.bar_code_no ? (
                       <Text style={styles.editItemFieldError}>{fieldErrors.bar_code_no}</Text>
-                    ) : null}
+                    ) : (
+                      <Text style={[styles.editItemFieldHint, {color: colors.textSecondary}]}>
+                        Barcode is generated automatically. Enter one only if you want to use your own.
+                      </Text>
+                    )}
                   </View>
 
                   <View
@@ -1608,6 +1734,60 @@ const EditItemModal = ({
                     </View>
                   ) : null}
 
+                  {editedItem.type !== 'Service' &&
+                  editedItem.type !== 'Non-Inventory' ? (
+                    <>
+                      <Text style={[styles.editItemOptionsCopy, editTheme.optionsCopy]}>
+                        Buying price and quantity are not typed here. They are set
+                        when you record a purchase or opening stock.
+                      </Text>
+                      {isPersisted ? (
+                        <View style={styles.costSourceActionRow}>
+                          <TouchableOpacity
+                            style={[
+                              styles.costSourceActionPill,
+                              editTheme.addOptionsPill,
+                            ]}
+                            onPress={() => {
+                              onClose();
+                              (navigation as any).navigate('OpeningBalanceJournal');
+                            }}
+                            activeOpacity={0.7}>
+                            <Text
+                              style={[
+                                styles.costSourceActionPillText,
+                                editTheme.addOptionsPillText,
+                              ]}>
+                              Opening stock
+                            </Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[
+                              styles.costSourceActionPill,
+                              editTheme.addOptionsPill,
+                            ]}
+                            onPress={() => {
+                              onClose();
+                              (navigation as any).navigate('PurchaseCreation');
+                            }}
+                            activeOpacity={0.7}>
+                            <Text
+                              style={[
+                                styles.costSourceActionPillText,
+                                editTheme.addOptionsPillText,
+                              ]}>
+                              Purchase
+                            </Text>
+                          </TouchableOpacity>
+                        </View>
+                      ) : (
+                        <Text style={[styles.editItemOptionsCopy, editTheme.optionsCopy]}>
+                          Save the item first, then add opening stock or a purchase.
+                        </Text>
+                      )}
+                    </>
+                  ) : null}
+
                   {canSeeProfitMarginUi ? (
                     <View style={[styles.squareOutlineField, editTheme.outlineField]}>
                       <Text style={[styles.squareOutlineLabel, editTheme.outlineLabel]}>
@@ -1668,7 +1848,9 @@ const EditItemModal = ({
                     </View>
                   ) : null}
 
-                  {isPersisted ? (
+                  {isPersisted &&
+                  editedItem.type !== 'Service' &&
+                  editedItem.type !== 'Non-Inventory' ? (
                     <View style={[styles.squareOutlineField, editTheme.outlineField]}>
                       <Text style={[styles.squareOutlineLabel, editTheme.outlineLabel]}>Quantity</Text>
                       <TouchableOpacity
@@ -1689,6 +1871,9 @@ const EditItemModal = ({
                           v
                         </Text>
                       </TouchableOpacity>
+                      <Text style={[styles.editItemFieldHint, editTheme.optionsCopy]}>
+                        Tap quantity to see stock movements
+                      </Text>
                     </View>
                   ) : null}
 
@@ -1714,12 +1899,14 @@ const EditItemModal = ({
                     </>
                   ) : null}
                 </ScrollView>
+                )}
               </>
             )}
           </KeyboardAvoidingView>
         </View>
 
         {/* Native gallery picker is used instead of in-app modal */}
+        <Toast config={appToastConfig} position="top" topOffset={48} />
       </Modal>
       <Modal
         visible={inventoryEntriesVisible && visible}
@@ -1838,6 +2025,23 @@ const EditItemModal = ({
           }
         }}
       />
+      <ItemCategoryFormModal
+        visible={categoryFormVisible && visible}
+        onClose={() => setCategoryFormVisible(false)}
+        category={null}
+        onSave={() => {
+          void loadCategories();
+        }}
+        onRecordChange={record => {
+          if (record?.code) {
+            setPickerSelectedCode(String(record.code));
+          }
+          void loadCategories();
+        }}
+        canCreate={canCreateCategory(CATEGORY_PAGE_NAME)}
+        canEdit={canEditCategory(CATEGORY_PAGE_NAME)}
+        categories={categoryRecords}
+      />
     </>
   );
 };
@@ -1848,6 +2052,9 @@ const Items = () => {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { selectedTab, setSelectedTab } = useTabContext();
+  const appCtx = useAppContext();
+  const canSeeBuyingPriceUi =
+    appCtx?.auth?.userPermissions?.canSeeBuyingPrice !== false;
   const { canRead, canCreate, canEdit, canDelete } = usePermissions();
   const PAGE_NAME = PAGE_NAMES.ITEMS;
   const isAllServicesScreen = route.name === 'AllServices';
@@ -1924,6 +2131,12 @@ const Items = () => {
 
   useFocusEffect(
     useCallback(() => {
+      const incomingSearch = route.params?.initialSearch as string | undefined;
+      if (typeof incomingSearch === 'string' && incomingSearch.trim()) {
+        setSearchQuery(incomingSearch);
+        setDebouncedSearchQuery(incomingSearch);
+        navigation.setParams({initialSearch: undefined} as never);
+      }
       const incoming = route.params?.stockFilter as
         | 'all'
         | 'in_stock'
@@ -1937,8 +2150,64 @@ const Items = () => {
         setStockFilter(incoming);
         navigation.setParams({ stockFilter: undefined } as never);
       }
-    }, [navigation, route.params?.stockFilter]),
+    }, [navigation, route.params?.stockFilter, route.params?.initialSearch]),
   );
+
+  const reopenItemFromPicker = useCallback(
+    (
+      reopenMode: 'create' | 'edit',
+      incomingDraft: Item | null | undefined,
+      categoryCode: string | null | undefined,
+    ) => {
+      const resolvedCategoryValue =
+        categoryCode === undefined
+          ? incomingDraft?.category_id
+          : categoryCode === null || categoryCode === ''
+            ? null
+            : (categories.find(cat => cat.code === categoryCode)?.id ??
+                categories.find(cat => cat.code === categoryCode)?.code ??
+                categoryCode);
+
+      const nextDraft =
+        incomingDraft != null
+          ? {
+              ...incomingDraft,
+              category_id: resolvedCategoryValue,
+            }
+          : createEmptyItemDraft(defaultCreateType);
+
+      if (reopenMode === 'create') {
+        setEditModal(false);
+        setSelectedItem(null);
+        setCreateDraftItem(nextDraft);
+        setCreateModal(true);
+      } else {
+        setCreateModal(false);
+        setCreateDraftItem(null);
+        setSelectedItem(nextDraft);
+        setEditModal(true);
+      }
+    },
+    [categories, defaultCreateType],
+  );
+
+  useEffect(() => {
+    const pending = consumeCategoryPickerSession();
+    if (pending) {
+      reopenItemFromPicker(
+        pending.mode,
+        (pending.draft as Item | null | undefined) ?? null,
+        pending.categoryCode,
+      );
+    }
+    return subscribeCategoryPickerResult(result => {
+      reopenItemFromPicker(
+        result.mode,
+        (result.draft as Item | null | undefined) ?? null,
+        result.categoryCode,
+      );
+    });
+  }, [reopenItemFromPicker]);
 
   useEffect(() => {
     const reopenMode = route.params?.reopenItemModal as 'create' | 'edit' | undefined;
@@ -1948,35 +2217,7 @@ const Items = () => {
 
     const incomingDraft = (route.params?.itemDraft as Item | null | undefined) ?? null;
     const categoryCode = route.params?.categoryPick?.code as string | null | undefined;
-
-    const resolvedCategoryValue =
-      categoryCode === undefined
-        ? incomingDraft?.category_id
-        : categoryCode === null || categoryCode === ''
-          ? null
-          : (categories.find(cat => cat.code === categoryCode)?.id ??
-              categories.find(cat => cat.code === categoryCode)?.code ??
-              categoryCode);
-
-    const nextDraft =
-      incomingDraft != null
-        ? {
-            ...incomingDraft,
-            category_id: resolvedCategoryValue,
-          }
-        : createEmptyItemDraft(defaultCreateType);
-
-    if (reopenMode === 'create') {
-      setEditModal(false);
-      setSelectedItem(null);
-      setCreateDraftItem(nextDraft);
-      setCreateModal(true);
-    } else {
-      setCreateModal(false);
-      setCreateDraftItem(null);
-      setSelectedItem(nextDraft);
-      setEditModal(true);
-    }
+    reopenItemFromPicker(reopenMode, incomingDraft, categoryCode);
 
     navigation.setParams({
       reopenItemModal: undefined,
@@ -1987,9 +2228,8 @@ const Items = () => {
     route.params?.reopenItemModal,
     route.params?.itemDraft,
     route.params?.categoryPick,
-    categories,
-    defaultCreateType,
     navigation,
+    reopenItemFromPicker,
   ]);
 
   const reloadItems = useCallback(async () => {
@@ -2156,6 +2396,13 @@ const Items = () => {
               Barcode: {item.bar_code_no.trim()}
             </Text>
           ) : null}
+          {canSeeBuyingPriceUi && Number(item?.unit_cost) > 0 ? (
+            <Text
+              style={[styles.itemBarcodeMeta, {color: colors.textSecondary}]}
+              numberOfLines={1}>
+              Cost: {formatItemPrice(item.unit_cost)}
+            </Text>
+          ) : null}
           {stockFilter !== 'all' && item?.type !== 'Service' && item?.type !== 'Non-Inventory' ? (
             <Text
               style={[
@@ -2192,6 +2439,7 @@ const Items = () => {
     try {
       const response = await deleteItem(itemToDelete);
       if (response.status === 200) {
+        Toast.hide();
         Toast.show({
           type: 'success',
           text1: 'Item deleted',
@@ -2201,16 +2449,26 @@ const Items = () => {
         setSelectedItem(null);
         reloadItems();
       } else {
-        Alert.alert('Error', 'Failed to delete item');
+        Alert.alert(
+          'Cannot delete item',
+          getApiErrorMessage(response?.data, {
+            itemName: itemToDelete.item_name,
+            fallback:
+              'This item could not be deleted. It may have stock or sales/purchase history.',
+          }),
+        );
       }
     } catch (error: any) {
       console.error('Error deleting item:', error);
-      const errorMessage =
-        error?.response?.data?.detail ||
-        error?.response?.data?.message ||
-        error?.message ||
-        'Failed to delete item';
-      Alert.alert('Error', String(errorMessage));
+      Toast.hide();
+      Alert.alert(
+        'Cannot delete item',
+        getApiErrorMessage(error, {
+          itemName: itemToDelete.item_name,
+          fallback:
+            'This item could not be deleted. It may have stock or sales/purchase history.',
+        }),
+      );
     }
   };
 
@@ -2445,6 +2703,10 @@ const Items = () => {
       <EditItemModal
         visible={createModal}
         onClose={() => {
+          if (isPickingCategory()) {
+            setCreateModal(false);
+            return;
+          }
           setCreateModal(false);
           setCreateDraftItem(null);
           setSelectedItem(null);
@@ -2464,7 +2726,10 @@ const Items = () => {
       <EditItemModal
         visible={editModal}
         onClose={() => {
-          console.log('Closing edit modal');
+          if (isPickingCategory()) {
+            setEditModal(false);
+            return;
+          }
           setEditModal(false);
           setSelectedItem(null);
           reloadItems();
@@ -2959,6 +3224,53 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'transparent',
   },
+  editItemDonePill: {
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+    borderRadius: 999,
+    backgroundColor: COLORS.primary2,
+    minWidth: 72,
+    alignItems: 'center',
+  },
+  editItemDonePillText: {
+    ...FONTS.body4,
+    fontWeight: '600',
+    color: COLORS.white,
+    fontSize: 15,
+  },
+  editItemPickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.lightGray1,
+  },
+  editItemPickerCheck: {
+    width: 22,
+    height: 22,
+    marginRight: 12,
+  },
+  editItemPickerRowTitle: {
+    ...FONTS.body3,
+    fontSize: 16,
+    flex: 1,
+  },
+  editItemPickerCreateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 16,
+    marginBottom: 4,
+  },
+  editItemPickerCreatePlus: {
+    width: 22,
+    height: 22,
+    marginRight: 12,
+  },
+  editItemPickerCreateLabel: {
+    ...FONTS.body3,
+    fontSize: 16,
+  },
   editItemSavePillText: {
     ...FONTS.body4,
     color: COLORS.gray2,
@@ -2981,6 +3293,11 @@ const styles = StyleSheet.create({
     ...FONTS.body5,
     color: COLORS.error,
     marginTop: 6,
+  },
+  editItemFieldHint: {
+    ...FONTS.body5,
+    marginTop: 6,
+    lineHeight: 16,
   },
   squareTileOuter: {
     alignSelf: 'center',
@@ -3131,6 +3448,29 @@ const styles = StyleSheet.create({
     ...FONTS.body4,
     color: COLORS.gray2,
     fontWeight: '700',
+  },
+  editItemFieldHint: {
+    ...FONTS.body5,
+    fontSize: 12,
+    marginTop: 8,
+  },
+  costSourceActionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 18,
+  },
+  costSourceActionPill: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    minHeight: 44,
+    justifyContent: 'center',
+  },
+  costSourceActionPillText: {
+    ...FONTS.body4,
+    fontSize: 14,
+    fontWeight: '600',
   },
   inventoryEntriesOverlay: {
     flex: 1,

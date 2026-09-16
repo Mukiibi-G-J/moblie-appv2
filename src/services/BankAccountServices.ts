@@ -27,17 +27,28 @@ export const BankAccountServices = {
     params?: BankAccountListParams,
   ): Promise<PaginatedBankAccountResponse> {
     try {
-      const {fetchPageDataPaginated, PAGE_IDS} = await import(
-        './pageDataService'
-      );
-      const {mapPageDataBankAccount} = await import('./pageDataMappers');
-      return await fetchPageDataPaginated({
-        pageId: PAGE_IDS.BankAccountList,
-        page: params?.page ?? 1,
-        pageSize: params?.page_size ?? 50,
-        search: params?.search,
-        mapRow: mapPageDataBankAccount,
+      const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+      const axiosInstance = createAxiosInstance(tenant);
+      const response = await axiosInstance.get('/api/bank-accounts/', {
+        params: {
+          page: params?.page ?? 1,
+          page_size: params?.page_size ?? 50,
+          search: params?.search,
+          ordering: params?.ordering,
+        },
       });
+      if (response?.data?.results && Array.isArray(response.data.results)) {
+        return response.data;
+      }
+      if (Array.isArray(response?.data)) {
+        return {
+          count: response.data.length,
+          next: null,
+          previous: null,
+          results: response.data,
+        };
+      }
+      return {count: 0, next: null, previous: null, results: []};
     } catch (error) {
       console.error('Error fetching bank accounts:', error);
       throw error;
@@ -58,7 +69,13 @@ export const BankAccountServices = {
   ): Promise<BankAccount> {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
     const axiosInstance = createAxiosInstance(tenant);
-    const payload = cleanPayload(data);
+    // Keep empty strings so optional fields can be cleared on auto-save.
+    const payload: Record<string, any> = {};
+    Object.entries(data).forEach(([key, value]) => {
+      if (value !== undefined) {
+        payload[key] = value;
+      }
+    });
     const response = await axiosInstance.patch(
       `/api/bank-accounts/${idOrNo}/`,
       payload,

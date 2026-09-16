@@ -7,6 +7,7 @@ import {
 import {
   fetchCategories,
   fetchItems,
+  fetchItemsFromRest,
   isInvalidPageError,
   type ItemListFilters,
 } from '../services/app.services';
@@ -139,6 +140,19 @@ async function fetchItemsViaPageData(
     offset,
     filters,
   });
+  const omitsBarcode =
+    rows.length > 0 && rows.every(row => !('bar_code_no' in row));
+  if (omitsBarcode) {
+    const page = Math.floor(offset / PAGE_DATA_PAGE_SIZE) + 1;
+    const data = await fetchItemsFromRest(page, searchQuery, categoryId);
+    const restRows = Array.isArray(data?.results) ? data.results : [];
+    return {
+      count: data?.count ?? restRows.length,
+      next: data?.next ?? null,
+      previous: data?.previous ?? null,
+      results: restRows.map(mapPageDataItem),
+    };
+  }
   const results = rows.map(mapPageDataItem);
   const hasMore = pageDataHasMore(results.length);
   return {

@@ -13,10 +13,12 @@ import {
 import React, {useCallback, useState} from 'react';
 import {useNavigation} from '@react-navigation/native';
 import Toast from 'react-native-toast-message';
+import DeviceInfo from 'react-native-device-info';
 import {SafeAreaView, useSafeAreaInsets} from 'react-native-safe-area-context';
 import {QuickIconPressable} from '../../Components';
 import {COLORS, FONTS, SIZES, icons} from '../../constants';
 import {useTheme} from '../../context/ThemeContext';
+import type {ThemePreference} from '../../context/ThemeContext';
 import {useSearchMode} from '../../context/SearchModeStore';
 import {safeGoBack} from '../../hooks/NavigationService';
 import {useOffline} from '../../context/OfflineContext';
@@ -31,6 +33,9 @@ import {
   requestNotificationPermission,
   sendTestNotification,
 } from '../../services/NotificationService';
+
+const APP_VERSION = DeviceInfo.getVersion();
+const APP_BUILD_NUMBER = DeviceInfo.getBuildNumber();
 
 type SettingsRowProps = {
   icon: number;
@@ -98,7 +103,7 @@ const SettingsRow = ({
 const Settings = () => {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
-  const {colors} = useTheme();
+  const {colors, preference, setPreference} = useTheme();
   const {state, dispatch} = useSearchMode();
   const offline = useOffline();
   const {auth} = useAuth();
@@ -184,6 +189,12 @@ const Settings = () => {
     });
   }, []);
 
+  const themeOptions: {key: ThemePreference; label: string}[] = [
+    {key: 'system', label: 'System'},
+    {key: 'light', label: 'Light'},
+    {key: 'dark', label: 'Dark'},
+  ];
+
   const renderSectionTitle = (title: string) => (
     <Text style={[styles.sectionTitle, {color: colors.textSecondary}]}>
       {title}
@@ -243,6 +254,46 @@ const Settings = () => {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled">
+          <View style={styles.sectionBlock}>
+            {renderSectionTitle('Appearance')}
+            {renderSectionCard(
+              <View style={styles.appearanceBody}>
+                <Text style={[styles.appearanceHint, {color: colors.textSecondary}]}>
+                  Match system or choose light or dark
+                </Text>
+                <View style={styles.themeChips}>
+                  {themeOptions.map(opt => {
+                    const active = preference === opt.key;
+                    return (
+                      <TouchableOpacity
+                        key={opt.key}
+                        onPress={() => setPreference(opt.key)}
+                        style={[
+                          styles.themeChip,
+                          {
+                            backgroundColor: active
+                              ? COLORS.primary
+                              : colors.screenMuted,
+                            borderColor: colors.border,
+                          },
+                        ]}>
+                        <Text
+                          style={[
+                            styles.themeChipText,
+                            {
+                              color: active ? COLORS.white : colors.textPrimary,
+                            },
+                          ]}>
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>,
+            )}
+          </View>
+
           <View style={styles.sectionBlock}>
             {renderSectionTitle('Regional')}
             {renderSectionCard(
@@ -367,7 +418,7 @@ const Settings = () => {
                   title="Download catalog"
                   subtitle={`Last sync: ${lastSyncLabel}`}
                   colors={colors}
-                  showDivider={isSimulateOfflineSettingAvailable()}
+                  showDivider
                   onPress={() => {
                     void handleDownloadCatalog();
                   }}
@@ -375,6 +426,27 @@ const Settings = () => {
                     downloadingCatalog ? (
                       <ActivityIndicator color={COLORS.primary} />
                     ) : undefined
+                  }
+                />
+                <SettingsRow
+                  icon={icons.product}
+                  title="Local database"
+                  subtitle="View items, customers, and sales stored on this device"
+                  colors={colors}
+                  showDivider={isSimulateOfflineSettingAvailable()}
+                  onPress={() => navigation.navigate('LocalDatabase' as never)}
+                  trailing={
+                    <Image
+                      source={icons.down_arrow as any}
+                      style={[
+                        styles.rowChevron,
+                        {
+                          tintColor: colors.textTertiary,
+                          transform: [{rotate: '-90deg'}],
+                        },
+                      ]}
+                      resizeMode="contain"
+                    />
                   }
                 />
                 {isSimulateOfflineSettingAvailable() ? (
@@ -437,7 +509,7 @@ const Settings = () => {
               <SettingsRow
                 icon={icons.printer}
                 title="Printer configuration"
-                subtitle="Configure and test Sunmi and Bluetooth printers"
+                subtitle="Configure USB, Bluetooth, and Sunmi printers"
                 colors={colors}
                 onPress={() => navigation.navigate('PrinterConfig' as never)}
                 trailing={
@@ -466,7 +538,7 @@ const Settings = () => {
                 colors={colors}
                 trailing={
                   <Text style={[styles.versionText, {color: colors.textSecondary}]}>
-                    1.0.0
+                    {APP_VERSION} ({APP_BUILD_NUMBER})
                   </Text>
                 }
               />,
@@ -539,6 +611,30 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
+  },
+  appearanceBody: {
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  appearanceHint: {
+    ...FONTS.body5,
+    marginBottom: 12,
+    lineHeight: 18,
+  },
+  themeChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  themeChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  themeChipText: {
+    ...FONTS.body4,
+    fontWeight: '600',
   },
   row: {
     flexDirection: 'row',

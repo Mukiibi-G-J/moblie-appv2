@@ -3,21 +3,30 @@ import {
   createAnonymousAxiosInstance,
 } from '../axios/axios';
 
+export type RestaurantPinLength = 4 | 6;
+
+export function normalizePinLength(value: unknown): RestaurantPinLength {
+  return Number(value) === 6 ? 6 : 4;
+}
+
 export type RestaurantCompanyLookupResponse = {
   schema_name: string;
   name: string;
   display_name: string;
   restaurant_enabled: boolean;
+  pin_length?: number;
 };
 
 export type RestaurantPinStatusResponse = {
   eligible: boolean;
   has_pin: boolean;
   pin_expired: boolean;
+  pin_length?: number;
 };
 
 export type RestaurantPinDeviceContextResponse = {
   staff_name: string;
+  pin_length?: number;
 };
 
 export type LoginTokensResponse = {
@@ -25,18 +34,74 @@ export type LoginTokensResponse = {
   refresh?: string;
 };
 
+function slugifyCompanyInput(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/[^a-z0-9_]/g, '');
+}
+
 /**
  * Public: no Bearer, no X-Tenant (path excluded in axios public markers).
+ * Tenant APIs after lookup use the apex host plus X-Tenant so copied
+ * companies whose Domain is the slug (not slug.zentroapp-backend.com) still resolve.
+ * Also accepts the workspace slug from the web URL
+ * (e.g. theadraceexecutive.zentroapp.app → theadraceexecutive).
  */
 export async function restaurantCompanyLookup(
   companyName: string,
 ): Promise<RestaurantCompanyLookupResponse> {
   const client = createAnonymousAxiosInstance();
-  const {data} = await client.post<RestaurantCompanyLookupResponse>(
-    '/api/auth/restaurant-app/company-lookup/',
-    {company_name: companyName.trim()},
-  );
-  return data;
+  const trimmed = companyName.trim();
+  try {
+    const {data} = await client.post<RestaurantCompanyLookupResponse>(
+      '/api/auth/restaurant-app/company-lookup/',
+      {company_name: trimmed},
+    );
+    return data;
+  } catch (error: any) {
+    if (error?.response?.status !== 404) {
+      throw error;
+    }
+    const schema = slugifyCompanyInput(trimmed);
+    if (schema.length < 3) {
+      throw error;
+    }
+    try {
+      const {data} = await client.get<{schema?: string}>(
+        '/api/company/workspace-status/',
+        {params: {schema}},
+      );
+      if (data?.schema) {
+        return {
+          schema_name: data.schema,
+          name: trimmed,
+          display_name: trimmed,
+          restaurant_enabled: true,
+        };
+      }
+    } catch {
+      /* V1 has no workspace-status; try name/schema exists check */
+    }
+    try {
+      const {data} = await client.post<{is_existing?: boolean}>(
+        '/api/company/check-company-exists/',
+        {company_name: trimmed},
+      );
+      if (data?.is_existing) {
+        return {
+          schema_name: schema,
+          name: trimmed,
+          display_name: trimmed,
+          restaurant_enabled: true,
+        };
+      }
+    } catch {
+      /* keep original lookup error */
+    }
+    throw error;
+  }
 }
 
 /**

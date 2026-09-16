@@ -66,6 +66,7 @@ const UserFormModal: React.FC<UserFormModalProps> = ({
 
   const enableMultipleBranches = auth?.enable_multiple_branches === true;
   const isRestaurantEnabled = (auth?.enabled_modules || []).includes('restaurant');
+  const pinLength = auth?.pinLength === 6 ? 6 : 4;
 
   useEffect(() => {
     if (!visible) {
@@ -134,11 +135,8 @@ const UserFormModal: React.FC<UserFormModalProps> = ({
     if (!isEditMode && (!formData.password || formData.password.length < 8)) {
       next.password = 'Password must be at least 8 characters';
     }
-    if (
-      formData.restaurant_pin &&
-      (formData.restaurant_pin.length < 4 || formData.restaurant_pin.length > 6)
-    ) {
-      next.restaurant_pin = 'Restaurant PIN must be 4–6 digits';
+    if (formData.restaurant_pin && formData.restaurant_pin.length !== pinLength) {
+      next.restaurant_pin = `Restaurant PIN must be ${pinLength} digits`;
     }
     setErrors(next);
     return Object.keys(next).length === 0;
@@ -263,17 +261,17 @@ const UserFormModal: React.FC<UserFormModalProps> = ({
             />
             {isRestaurantEnabled && (
               <Field
-                label="Restaurant PIN (optional)"
+                label={`Restaurant PIN (optional, ${pinLength} digits)`}
                 value={formData.restaurant_pin || ''}
                 onChangeText={v =>
                   setFormData(p => ({
                     ...p,
-                    restaurant_pin: v.replace(/\D/g, ''),
+                    restaurant_pin: v.replace(/\D/g, '').slice(0, pinLength),
                   }))
                 }
                 error={errors.restaurant_pin}
                 keyboardType="number-pad"
-                maxLength={6}
+                maxLength={pinLength}
               />
             )}
 

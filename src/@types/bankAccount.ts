@@ -5,9 +5,14 @@ export interface BankAccount {
   bank_account_no?: string;
   bank_branch_no?: string;
   bank_account_posting_group?: string;
+  bank_account_posting_group_name?: string;
+  bank_account_posting_group_code?: string;
   address?: string;
   contact?: string;
   min_balance?: number;
+  debit_amount?: number;
+  credit_amount?: number;
+  balance?: number;
 }
 
 export interface PaginatedBankAccountResponse {

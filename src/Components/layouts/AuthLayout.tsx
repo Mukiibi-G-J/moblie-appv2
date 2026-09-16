@@ -142,6 +142,9 @@ const styles = StyleSheet.create({
     paddingBottom: authOnboarding.screenPadding.vertical,
   },
   body: {
+    width: '100%',
+    maxWidth: authOnboarding.form.maxWidth,
+    alignSelf: 'center',
     paddingHorizontal: padH,
   },
   topBar: {

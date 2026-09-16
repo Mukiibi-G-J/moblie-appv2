@@ -1,16 +1,12 @@
-import React from 'react';
-import {
-  Alert,
-  View,
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  Image,
-} from 'react-native';
+import React, {useMemo, useState} from 'react';
+import {View, Text, TouchableOpacity, StyleSheet, Image} from 'react-native';
 import {COLORS, FONTS, icons} from '../../constants';
 import {formatCurrencyCompact} from '../../utils/currency';
 import {useTheme} from '../../context/ThemeContext';
 import {Vendor} from '../../@types/vendor';
+import ChooseActionSheet, {
+  type ChooseActionItem,
+} from '../../Components/ChooseActionSheet';
 
 const isProtectedGeneralVendor = (vendor: Vendor) =>
   vendor.no === 'VENDOR-000001';
@@ -29,6 +25,7 @@ const SupplierListItem: React.FC<SupplierListItemProps> = ({
   onBalancePress,
 }) => {
   const {colors} = useTheme();
+  const [actionsVisible, setActionsVisible] = useState(false);
   const isGeneralVendor = isProtectedGeneralVendor(vendor);
   const initials =
     vendor.name
@@ -45,44 +42,29 @@ const SupplierListItem: React.FC<SupplierListItemProps> = ({
   const secondaryLine =
     vendor.phone || vendor.email || vendor.no || vendor.city || 'No contact info';
 
-  const handleOpenActions = () => {
-    const options: Array<{
-      text: string;
-      style?: 'cancel' | 'destructive';
-      onPress?: () => void;
-    }> = [];
-
+  const actionItems = useMemo(() => {
+    const items: ChooseActionItem[] = [];
     if (onEdit && !isGeneralVendor) {
-      options.push({
-        text: 'Edit supplier',
+      items.push({
+        key: 'edit',
+        label: 'Edit supplier',
         onPress: () => onEdit(vendor),
       });
     }
-
     if (onDelete && !isGeneralVendor) {
-      options.push({
-        text: 'Delete supplier',
-        style: 'destructive',
+      items.push({
+        key: 'delete',
+        label: 'Delete supplier',
+        destructive: true,
         onPress: () => onDelete(vendor),
       });
     }
-
-    options.push({text: 'Cancel', style: 'cancel'});
-
-    if (options.length === 1) {
-      Alert.alert(
-        vendor.name || 'Supplier',
-        'The General Vendor cannot be edited or deleted.',
-        options,
-      );
-      return;
-    }
-
-    Alert.alert(vendor.name || 'Supplier', 'Choose an action', options);
-  };
+    return items;
+  }, [isGeneralVendor, onDelete, onEdit, vendor]);
 
   return (
-    <TouchableOpacity
+    <View>
+      <TouchableOpacity
       activeOpacity={onEdit && !isGeneralVendor ? 0.8 : 1}
       style={[styles.container, {borderBottomColor: colors.border}]}
       onPress={onEdit && !isGeneralVendor ? () => onEdit(vendor) : undefined}>
@@ -125,9 +107,11 @@ const SupplierListItem: React.FC<SupplierListItemProps> = ({
 
       {(onEdit || onDelete) && (
         <TouchableOpacity
-          onPress={handleOpenActions}
+          onPress={() => setActionsVisible(true)}
           style={[styles.actionButton, {backgroundColor: colors.backButtonBg}]}
-          hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
+          hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
+          accessibilityRole="button"
+          accessibilityLabel="Choose an action">
           <Image
             source={icons.menu}
             style={[styles.actionIcon, {tintColor: colors.textPrimary}]}
@@ -135,7 +119,16 @@ const SupplierListItem: React.FC<SupplierListItemProps> = ({
           />
         </TouchableOpacity>
       )}
-    </TouchableOpacity>
+      </TouchableOpacity>
+
+      <ChooseActionSheet
+        visible={actionsVisible}
+        title={vendor.name || 'Supplier'}
+        actions={actionItems}
+        onClose={() => setActionsVisible(false)}
+        emptyText="The General Vendor cannot be edited or deleted."
+      />
+    </View>
   );
 };
 

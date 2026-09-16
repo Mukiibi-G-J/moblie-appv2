@@ -188,6 +188,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     padding: 16,
+    flex: 1,
   },
   cardTitle: {
     ...FONTS.h4,

@@ -1,15 +1,17 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {createAxiosInstance} from '../axios/axios';
 
-/** BC-style page IDs aligned with webV2 `bc_page_ids.py`. */
+/** Zentro page IDs from webV2 `ZENTRO_PAGE_REGISTRY` (ItemList=10201, not AutoField 7). */
 export const PAGE_IDS = {
   SalesInvoiceList: 10003,
   PostedSalesInvoiceList: 10004,
   CustomerList: 10101,
   CustomerLedgerEntryList: 10103,
   ItemList: 10201,
+  ItemCard: 10202,
   InventoryAdjustmentJournalList: 10203,
   OpeningBalanceJournalList: 10204,
+  ItemJournalCard: 10210,
   ItemLedgerEntryList: 10205,
   ItemUnitOfMeasureList: 10206,
   UnitOfMeasureList: 10208,
@@ -97,6 +99,15 @@ async function getAxios() {
 }
 
 /**
+ * Page APIs use Zentro registry IDs (ItemList=10201, CustomerList=10101).
+ * Do not remap to sequential AutoField PKs (demo3 historically used 7).
+ * Backend `_resolve_page` still accepts 10xxx on older tenants until they are aligned.
+ */
+export async function resolveTenantPageId(requestedId: number): Promise<number> {
+  return requestedId;
+}
+
+/**
  * Resolve the list Repeater control id for a page (cached per process).
  * Falls back to hardcoded known ids when the page def call fails.
  * Omitting ControlId is also valid — backend uses first Repeater/Group.
@@ -105,7 +116,8 @@ export async function resolveListControlId(
   pageId: number,
   fallbackControlId?: number,
 ): Promise<number | undefined> {
-  const cached = controlIdCache.get(pageId);
+  const resolvedPageId = await resolveTenantPageId(pageId);
+  const cached = controlIdCache.get(resolvedPageId);
   if (cached != null) {
     return cached;
   }
@@ -113,7 +125,7 @@ export async function resolveListControlId(
   try {
     const axiosInstance = await getAxios();
     const response = await axiosInstance.get<PageDefLike>('/api/pages/page/', {
-      params: {PageId: pageId},
+      params: {PageId: resolvedPageId},
     });
     const controls = response?.data?.PageControls ?? [];
     const repeater =
@@ -123,18 +135,19 @@ export async function resolveListControlId(
       );
     const controlId = repeater?.PageControlId ?? repeater?.ControlId;
     if (typeof controlId === 'number' && Number.isFinite(controlId)) {
-      controlIdCache.set(pageId, controlId);
+      controlIdCache.set(resolvedPageId, controlId);
       return controlId;
     }
   } catch (error) {
     console.warn(
-      `[pageData] Failed to resolve ControlId for PageId=${pageId}`,
+      `[pageData] Failed to resolve ControlId for PageId=${resolvedPageId}`,
       error,
     );
   }
 
-  if (fallbackControlId != null) {
-    controlIdCache.set(pageId, fallbackControlId);
+  // Primewise fallback ControlIds are only valid when PageId was not remapped.
+  if (fallbackControlId != null && resolvedPageId === pageId) {
+    controlIdCache.set(resolvedPageId, fallbackControlId);
     return fallbackControlId;
   }
   return undefined;
@@ -151,11 +164,12 @@ export async function fetchPageDataList(
     offset = 0,
     filters,
   } = params;
+  const resolvedPageId = await resolveTenantPageId(pageId);
 
   const axiosInstance = await getAxios();
   const response = await axiosInstance.get('/api/pages/data/', {
     params: {
-      PageId: pageId,
+      PageId: resolvedPageId,
       ...(controlId != null ? {ControlId: controlId} : {}),
       limit,
       offset,
@@ -290,10 +304,11 @@ type PageDefWithFields = PageDefLike & {
 
 /** GET /api/pages/setup-solo/?PageId= — own User Settings (or other singleton) SystemId. */
 export async function getSetupSoloSystemId(pageId: number): Promise<string> {
+  const resolvedPageId = await resolveTenantPageId(pageId);
   const axiosInstance = await getAxios();
   const response = await axiosInstance.get<{SystemId?: string; error?: string}>(
     '/api/pages/setup-solo/',
-    {params: {PageId: pageId}},
+    {params: {PageId: resolvedPageId}},
   );
   if (response.data && typeof response.data === 'object' && response.data.error) {
     throw new Error(String(response.data.error));
@@ -308,9 +323,10 @@ export async function getSetupSoloSystemId(pageId: number): Promise<string> {
 export async function fetchPageDefinition(
   pageId: number,
 ): Promise<PageDefWithFields> {
+  const resolvedPageId = await resolveTenantPageId(pageId);
   const axiosInstance = await getAxios();
   const response = await axiosInstance.get<PageDefWithFields>('/api/pages/page/', {
-    params: {PageId: pageId},
+    params: {PageId: resolvedPageId},
   });
   return response.data ?? {};
 }
@@ -350,12 +366,13 @@ export async function fetchPageDataRecord(
   systemId: string,
   controlId?: number,
 ): Promise<PageDataRecord> {
+  const resolvedPageId = await resolveTenantPageId(pageId);
   const axiosInstance = await getAxios();
   const response = await axiosInstance.get<PageDataRecord | {error: string}>(
     `/api/pages/data/${systemId}/`,
     {
       params: {
-        PageId: pageId,
+        PageId: resolvedPageId,
         ...(controlId != null ? {ControlId: controlId} : {}),
       },
     },
@@ -379,7 +396,7 @@ export async function updatePageDataField(options: {
 }): Promise<unknown> {
   const axiosInstance = await getAxios();
   const body: Record<string, unknown> = {
-    PageId: options.pageId,
+    PageId: await resolveTenantPageId(options.pageId),
     field: options.field,
     value: options.value,
   };
@@ -406,7 +423,7 @@ export async function fetchPageRelations(options: {
 }): Promise<PageRelationOption[]> {
   const axiosInstance = await getAxios();
   const response = await axiosInstance.post('/api/pages/relations/', {
-    PageId: options.pageId,
+    PageId: await resolveTenantPageId(options.pageId),
     PageControlId: options.pageControlId,
     PageControlFieldId: options.pageControlFieldId,
     CurrentRecordSystemId: options.currentRecordSystemId ?? null,

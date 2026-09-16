@@ -12,6 +12,7 @@ import {
   Modal,
   Pressable,
   ScrollView,
+  useWindowDimensions,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -42,6 +43,7 @@ import {
 } from '../../services/app.services';
 import TodayMySalesBar from '../../Components/TodayMySalesBar';
 import {formatCurrency} from '../../utils/currency';
+import {constrainedWidthStyle, isWideLayout, SHEET_MAX_WIDTH} from '../../utils/layout';
 
 interface SalesInvoice {
   id: number;
@@ -105,10 +107,18 @@ type QuickCreateAction = {
 
 export default function Home() {
   const {colors, isDark} = useTheme();
+  const {width: windowWidth, height: windowHeight} = useWindowDimensions();
+  const isWide = isWideLayout(windowWidth, windowHeight);
+  const sheetWidthStyle = constrainedWidthStyle(
+    windowWidth,
+    SHEET_MAX_WIDTH,
+    windowHeight,
+  );
   const insets = useSafeAreaInsets();
   const {auth, accessToken} = useAuth();
   const app = useAppContext();
-  const {isModuleVisible, hasAnyPageAccess, canCreate} = usePermissions();
+  const {isModuleVisible, hasAnyPageAccess, canCreate, canAccessMobileNav} =
+    usePermissions();
   const {storeLabel} = useCompanyInfo();
   const [isAuthLoading, setIsAuthLoading] = React.useState(true);
   const navigation = useNavigation();
@@ -146,31 +156,47 @@ export default function Home() {
   const [mySalesRefreshKey, setMySalesRefreshKey] = useState(0);
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
 
-  const canViewSalesDashboard =
+  const canMakeSale =
     isModuleVisible('sales') &&
-    hasAnyPageAccess(PAGE_NAMES.SALES_DASHBOARD);
+    canAccessMobileNav('makeSale', PAGE_NAMES.SALES);
 
   const canViewTransactions =
     isModuleVisible('sales') &&
-    (hasAnyPageAccess(PAGE_NAMES.SALES_HISTORY) ||
-      hasAnyPageAccess(PAGE_NAMES.SALES));
+    canAccessMobileNav('salesHistory', [
+      PAGE_NAMES.SALES_HISTORY,
+      PAGE_NAMES.SALES,
+    ]);
+
+  const canViewSalesDashboard =
+    isModuleVisible('sales') &&
+    (canMakeSale || canViewTransactions) &&
+    hasAnyPageAccess(PAGE_NAMES.SALES_DASHBOARD);
 
   const canViewItems =
-    isModuleVisible('items') && hasAnyPageAccess(PAGE_NAMES.ITEMS);
+    isModuleVisible('items') &&
+    canAccessMobileNav('items', PAGE_NAMES.ITEMS);
 
   const canViewReceivables =
     (isModuleVisible('payments') || isModuleVisible('customers')) &&
-    (hasAnyPageAccess(PAGE_NAMES.PAYMENTS) ||
-      hasAnyPageAccess(PAGE_NAMES.CUSTOMER_MANAGEMENT));
+    (canAccessMobileNav('payments', PAGE_NAMES.PAYMENTS) ||
+      canAccessMobileNav('customers', PAGE_NAMES.CUSTOMER_MANAGEMENT));
 
   const canViewMySalesToday =
     isModuleVisible('sales') &&
-    (hasAnyPageAccess(PAGE_NAMES.SALES) ||
-      hasAnyPageAccess(PAGE_NAMES.SALES_HISTORY)) &&
+    (canMakeSale || canViewTransactions) &&
     !canViewSalesDashboard;
 
-  const canMakeSale =
-    isModuleVisible('sales') && hasAnyPageAccess(PAGE_NAMES.SALES);
+  const canViewProfitLoss =
+    isModuleVisible('reports') &&
+    canAccessMobileNav('reports', PAGE_NAMES.PROFIT_AND_LOSS);
+  const canViewBalanceSheet =
+    isModuleVisible('reports') &&
+    canAccessMobileNav('reports', PAGE_NAMES.BALANCE_SHEET);
+  const canOpenReportsMenu =
+    isModuleVisible('reports') &&
+    canAccessMobileNav('reports', PAGE_NAMES.REPORTS);
+  const canViewFinancialReports =
+    canViewProfitLoss || canViewBalanceSheet || canOpenReportsMenu;
 
   const canSwitchBranch =
     app?.branchSession?.enable_multiple_branches === true &&
@@ -343,7 +369,7 @@ export default function Home() {
     }
     if (
       isModuleVisible('customers') &&
-      hasAnyPageAccess(PAGE_NAMES.CUSTOMER_MANAGEMENT)
+      canAccessMobileNav('customers', PAGE_NAMES.CUSTOMER_MANAGEMENT)
     ) {
       actions.push({
         key: 'customer',
@@ -354,7 +380,7 @@ export default function Home() {
     }
     if (
       isModuleVisible('expenses') &&
-      hasAnyPageAccess(PAGE_NAMES.EXPENSES)
+      canAccessMobileNav('expenses', PAGE_NAMES.EXPENSES)
     ) {
       actions.push({
         key: 'expense',
@@ -363,7 +389,7 @@ export default function Home() {
         onPress: () => navigation.navigate('Expenses' as never),
       });
     }
-    if (isModuleVisible('items') && hasAnyPageAccess(PAGE_NAMES.ITEMS)) {
+    if (isModuleVisible('items') && canAccessMobileNav('items', PAGE_NAMES.ITEMS)) {
       actions.push({
         key: 'item',
         label: 'Item',
@@ -373,7 +399,7 @@ export default function Home() {
     }
     if (
       isModuleVisible('suppliers') &&
-      hasAnyPageAccess(PAGE_NAMES.SUPPLIERS)
+      canAccessMobileNav('suppliers', PAGE_NAMES.SUPPLIERS)
     ) {
       actions.push({
         key: 'vendor',
@@ -386,7 +412,8 @@ export default function Home() {
       isModuleVisible('payments') &&
       (canCreate(PAGE_NAMES.QUICK_PAYMENT) ||
         canCreate(PAGE_NAMES.PAYMENTS) ||
-        hasAnyPageAccess(PAGE_NAMES.QUICK_PAYMENT))
+        hasAnyPageAccess(PAGE_NAMES.QUICK_PAYMENT)) &&
+      canAccessMobileNav('payments')
     ) {
       actions.push({
         key: 'quick-payment',
@@ -400,6 +427,7 @@ export default function Home() {
     canMakeSale,
     isModuleVisible,
     hasAnyPageAccess,
+    canAccessMobileNav,
     canCreate,
     navigation,
     setSelectedTab,
@@ -487,7 +515,11 @@ export default function Home() {
     <TouchableOpacity
       onPress={onPress}
       activeOpacity={0.85}
-      style={[styles.outlineCta, {borderColor: accent}]}
+      style={[
+        styles.outlineCta,
+        isWide ? styles.outlineCtaWide : null,
+        {borderColor: accent},
+      ]}
       accessibilityRole="button"
       accessibilityLabel={label}>
       <Text style={[styles.outlineCtaLabel, {color: accent}]}>{label}</Text>
@@ -502,7 +534,7 @@ export default function Home() {
     const salesChange = kpiMetrics?.revenue_growth ?? 0;
     const hasPositiveTrend = salesChange >= 0;
 
-    if (!canViewSalesDashboard && !canViewReceivables) {
+    if (!canViewSalesDashboard && !canViewReceivables && !canViewMySalesToday) {
       return null;
     }
 
@@ -514,8 +546,9 @@ export default function Home() {
           </Text>
         </View>
 
-        {canViewSalesDashboard ? (
-          <View style={[styles.metricCard, cardSurface]}>
+        <View style={isWide ? styles.bannerGrid : styles.bannerStack}>
+          {canViewSalesDashboard ? (
+          <View style={[styles.metricCard, isWide && styles.bannerCell, cardSurface]}>
             {kpiLoading ? (
               <View style={styles.metricLoading}>
                 <ActivityIndicator size="small" color={COLORS.primary} />
@@ -569,7 +602,7 @@ export default function Home() {
         ) : null}
 
         {canViewReceivables ? (
-          <View style={[styles.metricCard, cardSurface]}>
+          <View style={[styles.metricCard, isWide && styles.bannerCell, cardSurface]}>
             <Text style={[styles.metricLabel, {color: colors.textSecondary}]}>
               Unpaid invoices
             </Text>
@@ -602,17 +635,139 @@ export default function Home() {
             )}
           </View>
         ) : null}
+          {renderMySalesTodayCard()}
+        </View>
       </View>
     );
   };
 
-  const renderMySalesToday = () => {
+  const renderFinancialReports = () => {
+    if (!canViewFinancialReports) return null;
+
+    const rows: Array<{
+      key: string;
+      title: string;
+      subtitle: string;
+      onPress: () => void;
+    }> = [];
+
+    if (canViewProfitLoss) {
+      rows.push({
+        key: 'profit-loss',
+        title: 'Profit & Loss',
+        subtitle: 'Income, costs, and net profit',
+        onPress: () => navigation.navigate('ProfitLossReport' as never),
+      });
+    }
+    if (canViewBalanceSheet) {
+      rows.push({
+        key: 'balance-sheet',
+        title: 'Balance Sheet',
+        subtitle: 'Assets, liabilities, and equity',
+        onPress: () => navigation.navigate('BalanceSheetReport' as never),
+      });
+    }
+    if (rows.length === 0 && canOpenReportsMenu) {
+      rows.push({
+        key: 'reports-menu',
+        title: 'Financial reports',
+        subtitle: 'Open statements and run a report',
+        onPress: () => navigation.navigate('Reports' as never),
+      });
+    }
+
+    if (rows.length === 0) return null;
+
+    return (
+      <View style={styles.sectionBlock}>
+        <View style={styles.sectionHeaderRow}>
+          <Text style={[styles.sectionEyebrow, {color: colors.textPrimary}]}>
+            Financial reports
+          </Text>
+          {canOpenReportsMenu && rows[0]?.key !== 'reports-menu' ? (
+            <TouchableOpacity
+              onPress={() => navigation.navigate('Reports' as never)}
+              hitSlop={ICON_BUTTON_HIT_SLOP}
+              accessibilityRole="button"
+              accessibilityLabel="See all financial reports">
+              <Text style={[styles.seeAllText, {color: COLORS.primary}]}>
+                See all
+              </Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
+
+        <View style={[styles.listCard, cardSurface]}>
+          {rows.map((row, index) => (
+            <TouchableOpacity
+              key={row.key}
+              style={[
+                styles.transactionItem,
+                {borderBottomColor: colors.border},
+                index === rows.length - 1 ? styles.transactionItemLast : null,
+              ]}
+              onPress={row.onPress}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={row.title}>
+              <View style={styles.transactionLeft}>
+                <View
+                  style={[
+                    styles.transactionIconContainer,
+                    {
+                      backgroundColor: isDark
+                        ? 'rgba(255,255,255,0.06)'
+                        : '#eafaf8',
+                    },
+                  ]}>
+                  <Image
+                    source={icons.reports}
+                    style={[
+                      styles.transactionIcon,
+                      {tintColor: COLORS.primary},
+                    ]}
+                  />
+                </View>
+                <View style={styles.transactionInfo}>
+                  <Text
+                    style={[
+                      styles.transactionNumber,
+                      {color: colors.textPrimary},
+                    ]}
+                    numberOfLines={1}>
+                    {row.title}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.transactionCustomer,
+                      {color: colors.textSecondary},
+                    ]}
+                    numberOfLines={1}>
+                    {row.subtitle}
+                  </Text>
+                </View>
+              </View>
+              <Image
+                source={icons.down_arrow}
+                style={[
+                  styles.reportChevron,
+                  {tintColor: colors.textTertiary},
+                ]}
+              />
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+    );
+  };
+
+  const renderMySalesTodayCard = () => {
     if (!canViewMySalesToday) return null;
     const uid = Number.parseInt(String(auth.user_id || ''), 10);
     if (!Number.isFinite(uid)) return null;
     const canOpenHistory = hasAnyPageAccess(PAGE_NAMES.SALES_HISTORY);
     return (
-      <View style={styles.sectionBlock}>
+      <View style={isWide ? styles.bannerCell : undefined}>
         <TodayMySalesBar
           variant="card"
           userId={uid}
@@ -780,10 +935,10 @@ export default function Home() {
         {renderHomeTopBar()}
 
         {renderMetricCards()}
-        {renderMySalesToday()}
+        {renderFinancialReports()}
 
         <View style={styles.sectionBlock}>
-          <Options lowStockCount={lowStockItems.length} />
+          <Options wide={isWide} lowStockCount={lowStockItems.length} />
         </View>
 
         {renderRecentTransactions()}
@@ -821,6 +976,7 @@ export default function Home() {
           <Pressable
             style={[
               styles.sheet,
+              sheetWidthStyle,
               {
                 backgroundColor: colors.card,
                 paddingBottom: Math.max(insets.bottom, 16),
@@ -943,6 +1099,21 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     gap: 14,
   },
+  bannerStack: {
+    gap: 14,
+  },
+  bannerGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 14,
+    alignItems: 'stretch',
+  },
+  bannerCell: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: '47%',
+    minWidth: 280,
+  },
   sectionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1013,6 +1184,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginTop: 8,
   },
+  outlineCtaWide: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 20,
+    minWidth: 160,
+  },
   outlineCtaLabel: {
     fontSize: 15,
     fontWeight: '700',
@@ -1072,6 +1248,12 @@ const styles = StyleSheet.create({
   transactionTime: {
     fontSize: 11,
     marginTop: 2,
+  },
+  reportChevron: {
+    width: 14,
+    height: 14,
+    resizeMode: 'contain',
+    transform: [{rotate: '-90deg'}],
   },
   emptyActivity: {
     paddingHorizontal: 18,

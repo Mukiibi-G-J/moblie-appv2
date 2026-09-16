@@ -5,6 +5,7 @@ import {createAxiosInstance} from '../axios/axios';
 
 const PLACEHOLDER_LOGO = 'company_logos/default.png';
 const logoCache = new Map<string, PreparedCompanyLogo>();
+const displayLogoCache = new Map<string, string>();
 
 /** Max logo width on 58mm thermal receipts (~1/3 of printable width). */
 export const RECEIPT_LOGO_WIDTH_PX = 128;
@@ -97,6 +98,104 @@ export function isPlaceholderCompanyLogo(
     return true;
   }
   return false;
+}
+
+/** Read `logo` from GET /api/sales/company-info/ (string, absolute URL, or `{url}`). */
+export function extractCompanyLogo(
+  company:
+    | {logo?: unknown; logoUrl?: unknown; logo_url?: unknown}
+    | null
+    | undefined,
+): string | null {
+  if (!company) {
+    return null;
+  }
+  const raw = company.logo ?? company.logoUrl ?? company.logo_url;
+  if (typeof raw === 'string' && raw.trim()) {
+    return raw.trim();
+  }
+  if (raw && typeof raw === 'object' && 'url' in raw) {
+    const nested = (raw as {url?: unknown}).url;
+    if (typeof nested === 'string' && nested.trim()) {
+      return nested.trim();
+    }
+  }
+  return null;
+}
+
+async function logoDownloadHeaders(url: string): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {};
+  try {
+    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+    const inst = createAxiosInstance(tenant);
+    const base = inst?.defaults?.baseURL;
+    if (!base) {
+      return headers;
+    }
+    if (new URL(url).host !== new URL(base).host) {
+      return headers;
+    }
+  } catch {
+    return headers;
+  }
+  const accessToken = await AsyncStorage.getItem('accessToken');
+  const tenant = (await AsyncStorage.getItem('tenant'))?.trim().toLowerCase();
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  }
+  if (tenant) {
+    headers['X-Tenant'] = tenant;
+  }
+  return headers;
+}
+
+/**
+ * Download the company-info logo to a local file for the customer display.
+ * Native ImageViews cannot send JWT / X-Tenant on a remote URL.
+ */
+export async function prepareCompanyLogoForDisplay(
+  logo: string | null | undefined,
+): Promise<string | null> {
+  if (isPlaceholderCompanyLogo(logo)) {
+    return null;
+  }
+  const url = await resolveCompanyLogoUri(logo);
+  if (!url) {
+    return null;
+  }
+  if (url.startsWith('file://') || url.startsWith('content://')) {
+    return url;
+  }
+
+  const cached = displayLogoCache.get(url);
+  if (cached) {
+    const path = cached.replace(/^file:\/\//, '');
+    if (await RNFS.exists(path)) {
+      return cached;
+    }
+    displayLogoCache.delete(url);
+  }
+
+  const localPath = `${RNFS.CachesDirectoryPath}/customer_display_company_logo.png`;
+  const headers = await logoDownloadHeaders(url);
+  const result = await RNFS.downloadFile({
+    fromUrl: url,
+    toFile: localPath,
+    headers,
+  }).promise;
+  if (result.statusCode < 200 || result.statusCode >= 300) {
+    return null;
+  }
+  const stat = await RNFS.stat(localPath);
+  if (stat.size === 0) {
+    await RNFS.unlink(localPath).catch(() => undefined);
+    return null;
+  }
+  const fileUri = localPath.startsWith('file://')
+    ? localPath
+    : `file://${localPath}`;
+  displayLogoCache.set(url, fileUri);
+  return fileUri;
 }
 
 /**

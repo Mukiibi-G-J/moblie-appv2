@@ -25,9 +25,10 @@ const MainLayout: React.FC<MainLayoutProps> = ({navigation}) => {
   const {colors} = useTheme();
   const {syncModalVisible, syncMessage, syncProgress} = useOfflineBootstrap();
   const {selectedTab, setSelectedTab} = useTabContext();
-  const {isModuleVisible, hasAnyPageAccess} = usePermissions();
+  const {isModuleVisible, canAccessMobileNav} = usePermissions();
   const showMakeSaleTab =
-    isModuleVisible('sales') && hasAnyPageAccess(PAGE_NAMES.SALES);
+    isModuleVisible('sales') &&
+    canAccessMobileNav('makeSale', PAGE_NAMES.SALES);
 
   const bottomTabs = useMemo(() => {
     if (showMakeSaleTab) {

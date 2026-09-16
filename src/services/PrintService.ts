@@ -15,6 +15,7 @@ import {
 import {
   buildSampleSaleReceiptData,
   fetchCompanyInfoForReceipt,
+  receiptCompanyName,
 } from '../utils/companyReceiptInfo';
 
 // Android-only native module — do not import on iOS (module is not linked there).
@@ -36,6 +37,8 @@ export interface PrintItem {
 
 export interface CompanyInfo {
   name: string;
+  /** Receipt header name from company.display_name. */
+  displayName?: string;
   logo?: string;
   address: string;
   phone: string;
@@ -630,16 +633,13 @@ class PrintService {
           }
         }
         PrinterSunmi.printText('SALES RECEIPT', {textSize: 18, bold: true});
-        const companyName = companyInfo?.name || 'ZENTRO APP';
+        const companyName = receiptCompanyName(companyInfo);
         PrinterSunmi.printText(companyName, {textSize: 16, bold: true});
         if (companyInfo?.address) {
           PrinterSunmi.printText(companyInfo.address, {textSize: 14});
         }
         if (companyInfo?.phone) {
-          PrinterSunmi.printText(`Tel: ${companyInfo.phone}`, {textSize: 14});
-        }
-        if (companyInfo?.tin) {
-          PrinterSunmi.printText(`TIN: ${companyInfo.tin}`, {textSize: 14});
+          PrinterSunmi.printText(companyInfo.phone, {textSize: 14});
         }
         if (companyInfo?.vatNo) {
           PrinterSunmi.printText(`VAT No: ${companyInfo.vatNo}`, {textSize: 14});
@@ -658,17 +658,12 @@ class PrintService {
       }
       
       // Company name (use dynamic or fallback)
-      const companyName = companyInfo?.name || 'ZENTRO APP';
+      const companyName = receiptCompanyName(companyInfo);
       PrinterSunmi.printText(companyName.toUpperCase(), { textSize: 36, bold: true });
       
       // Company address if available
       if (companyInfo?.address) {
         PrinterSunmi.printText(companyInfo.address, { textSize: 18, bold: true });
-      }
-      
-      // Business identifiers
-      if (companyInfo?.tin) {
-        PrinterSunmi.printText(`TIN: ${companyInfo.tin}`, { textSize: 16, bold: true });
       }
       
       if (companyInfo?.vatNo) {

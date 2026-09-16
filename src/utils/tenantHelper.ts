@@ -27,15 +27,10 @@ export async function setCurrentTenant(tenant: string): Promise<void> {
   }
 }
 
-export function updateAxiosBaseURL(tenant: string): void {
-  // Use test environment if enabled, otherwise use production
-  const baseURL = USE_TEST_ENV
+export function updateAxiosBaseURL(_tenant: string): void {
+  axiosInstance.defaults.baseURL = USE_TEST_ENV
     ? TEST_API_BASE_URL
-    : tenant
-    ? `https://${tenant}.zentroapp-backend.com`
     : 'https://zentroapp-backend.com';
-
-  axiosInstance.defaults.baseURL = baseURL;
 }
 
 export async function validateTenantURL(tenant: string): Promise<boolean> {

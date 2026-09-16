@@ -20,6 +20,20 @@ import {usePermissions} from '../hooks/usePermissions';
 import {COLORS, FONTS, SIZES} from '../constants';
 import {PageName} from '../constants/pageNames';
 
+function AccessDenied({detail}: {detail: string}) {
+  return (
+    <View style={styles.container}>
+      <View style={styles.content}>
+        <Text style={styles.title}>Access Denied</Text>
+        <Text style={styles.message}>
+          You don't have permission to access this page.
+        </Text>
+        <Text style={styles.detail}>{detail}</Text>
+      </View>
+    </View>
+  );
+}
+
 interface ProtectedScreenProps {
   /** Single page or any-of (e.g. menus hub: Restaurant Menus | Menu Management | Layout Editor). */
   pageName: PageName | PageName[];
@@ -50,29 +64,40 @@ export const ProtectedScreen: React.FC<ProtectedScreenProps> = ({
   const hasAccess = hasPageAccess && hasActionPermission;
 
   if (!hasAccess) {
-    // Return custom fallback if provided
     if (fallback) {
       return <>{fallback}</>;
     }
 
-    // Return default access denied UI
     return (
-      <View style={styles.container}>
-        <View style={styles.content}>
-          <Text style={styles.title}>Access Denied</Text>
-          <Text style={styles.message}>
-            You don't have permission to access this page.
-          </Text>
-          <Text style={styles.detail}>
-            Required: {requiredAction} permission for one of:{' '}
-            {pageNames.join(', ')}
-          </Text>
-        </View>
-      </View>
+      <AccessDenied
+        detail={`Required: ${requiredAction} permission for one of: ${pageNames.join(
+          ', ',
+        )}`}
+      />
     );
   }
 
   return <>{children}</>;
+};
+
+/**
+ * Company info, billing, and module/plan screens. Uses the JWT/session
+ * canManageCompany claim — not the Admin role name and not missing-key = allowed.
+ */
+export const CompanyBillingGate: React.FC<{
+  children: React.ReactNode;
+  fallback?: React.ReactNode;
+}> = ({children, fallback}) => {
+  const {canManageCompany} = usePermissions();
+  if (canManageCompany) {
+    return <>{children}</>;
+  }
+  if (fallback) {
+    return <>{fallback}</>;
+  }
+  return (
+    <AccessDenied detail="Company & billing is limited to users with company management access." />
+  );
 };
 
 const styles = StyleSheet.create({

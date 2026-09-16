@@ -190,3 +190,7 @@ export async function closePosDatabase(): Promise<void> {
 export async function getDb(): Promise<DB> {
   return openPosDatabase();
 }
+
+export async function getPosDatabaseName(): Promise<string> {
+  return resolveDbKey();
+}

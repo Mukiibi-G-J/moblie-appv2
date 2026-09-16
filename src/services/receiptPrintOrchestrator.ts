@@ -1,3 +1,4 @@
+import { isPlaceholderCompanyLogo } from "../utils/companyLogoUrl";
 import type { KotData } from "./UsbPrinterService";
 import type { CompanyInfo, PrintReceiptData, PrinterType } from "./PrintService";
 import { resolveReceiptTemplate } from "./ReceiptTemplateService";
@@ -32,20 +33,41 @@ function clampMobilePaperProfile(
   const widthMm = template.paperProfile?.widthMm ?? 58;
   const maxCols = widthMm <= 58 ? 32 : 42;
   const chars = template.paperProfile?.charsPerLine ?? maxCols;
+  const sections = (template.sections || []).map((s) => {
+    if (s.id === "footer_receipt_id" || s.id === "qr_code") {
+      return { ...s, enabled: false };
+    }
+    if (s.id === "footer_thanks") {
+      return { ...s, config: { ...(s.config || {}), compact: true } };
+    }
+    if (s.id === "footer_marketing") {
+      return {
+        ...s,
+        config: { ...(s.config || {}), lines: ["Powered by Zentroapp"] },
+      };
+    }
+    return s;
+  });
   return {
     ...template,
+    layoutPreset: "compact",
+    sections,
     paperProfile: {
       ...template.paperProfile,
       widthMm,
       charsPerLine: Math.min(chars, maxCols),
+      logoWidthPx: Math.min(template.paperProfile?.logoWidthPx ?? 96, 96),
     },
   };
 }
 
 function brandingFromCompany(company?: CompanyInfo) {
+  const logo = company?.logo;
+  const name = company?.name || "";
   return {
-    name: company?.name || "",
-    logo: company?.logo ?? null,
+    name,
+    displayName: company?.displayName || name,
+    logo: isPlaceholderCompanyLogo(logo) ? null : logo || null,
     address: company?.address || "",
     phone: company?.phone || "",
     email: company?.email || "",
@@ -65,10 +87,7 @@ export async function buildSaleReceiptDocument(
     printerType: mapPrinterType(printerType),
     process,
   });
-  const layout =
-    data.compactReceipt || process === "sales_history_reprint"
-      ? "compact"
-      : "standard";
+  const layout = "compact";
   const { template: resolvedTemplate, branding: apiBranding } =
     resolveTemplateFromConfig(resolved, "sale", layout);
   const template = clampMobilePaperProfile(resolvedTemplate, printerType);

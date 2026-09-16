@@ -20,14 +20,17 @@ import {useTheme} from '../../context/ThemeContext';
 import {safeGoBack} from '../../hooks/NavigationService';
 import {usePermissions} from '../../hooks/usePermissions';
 import {PAGE_NAMES} from '../../constants/pageNames';
+import {useQueryClient} from '@tanstack/react-query';
 import {UserSetup} from '../../@types/userSetup';
 import {UserSetupService} from '../../services/UserSetupService';
+import {queryKeys} from '../../query/keys';
 import UserSetupFormModal from './UserSetupFormModal';
 
 const UserSetupList: React.FC = () => {
   const navigation = useNavigation<any>();
   const insets = useSafeAreaInsets();
   const {colors} = useTheme();
+  const queryClient = useQueryClient();
   const {canCreate, canEdit, canDelete} = usePermissions();
   const PAGE_NAME = PAGE_NAMES.USER_SETUP;
   const FALLBACK_PAGE = PAGE_NAMES.USER_MANAGEMENT;
@@ -177,8 +180,14 @@ const UserSetupList: React.FC = () => {
         {!item.canSeeProfitMargin && (
           <Text style={styles.flag}>No profit</Text>
         )}
+        {item.canEditSalesPrice ? (
+          <Text style={styles.flag}>Edit price</Text>
+        ) : null}
         {item.canViewOnlyTheirSales && (
           <Text style={styles.flag}>Own sales only</Text>
+        )}
+        {item.defaultSalesUi === 'pos' && (
+          <Text style={styles.flag}>POS UI</Text>
         )}
       </View>
     </TouchableOpacity>
@@ -270,6 +279,7 @@ const UserSetupList: React.FC = () => {
         onSave={() => {
           setFormVisible(false);
           setSelectedSetup(null);
+          void queryClient.invalidateQueries({queryKey: queryKeys.userSetup()});
           onRefresh();
         }}
         canCreate={canCreateSetup}

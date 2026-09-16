@@ -9,7 +9,11 @@ import {
   saveUnits,
   type LocalItem,
 } from '../../db/sqlite';
-import type {SyncProgressHandler} from './itemsSync';
+
+export type SyncProgressHandler = (
+  message: string,
+  progress?: number,
+) => void;
 
 export async function syncAllItemData(
   onProgress?: SyncProgressHandler,

@@ -92,6 +92,40 @@ export async function clearRestaurantDevicePrefs(): Promise<void> {
 /**
  * Stable device id (max 64 chars). Persisted before enroll so PIN login stays consistent.
  */
+export async function ensureRestaurantPinDeviceForCompany(options: {
+  schemaName: string;
+  companyDisplayName?: string;
+}): Promise<RestaurantDevicePrefs> {
+  const schemaSlug = (options.schemaName || '').trim().toLowerCase();
+  const existing = await getRestaurantDevicePrefs();
+  if (
+    existing?.isRestaurantDevice &&
+    existing.schemaName.toLowerCase() === schemaSlug
+  ) {
+    if (options.companyDisplayName && !existing.companyDisplayName) {
+      const updated = {
+        ...existing,
+        companyDisplayName: options.companyDisplayName,
+      };
+      await setRestaurantDevicePrefs(updated);
+      return updated;
+    }
+    return existing;
+  }
+  const prefs: RestaurantDevicePrefs = {
+    isRestaurantDevice: true,
+    deviceId: await getOrCreateRestaurantDeviceId(),
+    schemaName: schemaSlug,
+    companyDisplayName: options.companyDisplayName || existing?.companyDisplayName,
+    enrolledStaffName:
+      existing?.schemaName?.toLowerCase() === schemaSlug
+        ? existing.enrolledStaffName
+        : undefined,
+  };
+  await setRestaurantDevicePrefs(prefs);
+  return prefs;
+}
+
 export async function getOrCreateRestaurantDeviceId(): Promise<string> {
   const prefs = await getRestaurantDevicePrefs();
   if (prefs?.deviceId && prefs.deviceId.length <= 64) {

@@ -88,10 +88,25 @@ function messageFromCaught(err: unknown): string {
   if (typeof err === 'object' && err !== null) {
     const rec = err as {message?: unknown; response?: {data?: unknown}};
     const data = rec.response?.data;
-    if (typeof data === 'object' && data !== null && 'error' in data) {
-      const er = (data as {error?: unknown}).error;
-      if (typeof er === 'string') {
-        return er;
+    if (typeof data === 'string' && data.trim()) {
+      return data.trim();
+    }
+    if (typeof data === 'object' && data !== null) {
+      const obj = data as Record<string, unknown>;
+      if (typeof obj.error === 'string' && obj.error.trim()) {
+        return obj.error.trim();
+      }
+      if (typeof obj.detail === 'string' && obj.detail.trim()) {
+        return obj.detail.trim();
+      }
+      for (const [key, value] of Object.entries(obj)) {
+        if (key === 'error' || key === 'detail') continue;
+        if (typeof value === 'string' && value.trim()) {
+          return value.trim();
+        }
+        if (Array.isArray(value) && value.length) {
+          return String(value[0]);
+        }
       }
     }
     if (typeof rec.message === 'string') {
@@ -279,10 +294,13 @@ export default function RestaurantOrders() {
     order: RestaurantOrder,
     shouldPrint: boolean,
     paymentMethodId: number,
+    transactionId?: string,
   ) => {
     setActionBusy(true);
     try {
-      const payload = await settleRestaurantOrder(order, paymentMethodId);
+      const payload = await settleRestaurantOrder(order, paymentMethodId, {
+        ...(transactionId ? {transaction_id: transactionId} : {}),
+      });
       const receiptId = receiptLabelFromPostedPayload(payload, order.no);
 
       let receiptPrinted = false;
@@ -615,11 +633,16 @@ export default function RestaurantOrders() {
           setSettleTarget(null);
         }
       }}
-      onConfirm={(shouldPrint, paymentMethodId) => {
+      onConfirm={(shouldPrint, paymentMethodId, transactionId) => {
         if (!settleTarget) {
           return;
         }
-        void settleAndMaybePrint(settleTarget, shouldPrint, paymentMethodId);
+        void settleAndMaybePrint(
+          settleTarget,
+          shouldPrint,
+          paymentMethodId,
+          transactionId,
+        );
       }}
     />
     </>

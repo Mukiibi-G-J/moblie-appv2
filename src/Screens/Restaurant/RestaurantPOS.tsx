@@ -46,6 +46,14 @@ import {
 } from '../../services/restaurantApi';
 import PrintService from '../../services/PrintService';
 import {fetchCompanyInfoForReceipt} from '../../utils/companyReceiptInfo';
+import {formatCurrencyCompact} from '../../utils/currency';
+import {useCompanyInfo} from '../../hooks/useCompanyInfo';
+import {usePublishCustomerDisplay} from '../../hooks/usePublishCustomerDisplay';
+import {
+  buildIdleCustomerDisplay,
+  linesFromCartItems,
+  publishCustomerDisplay,
+} from '../../services/customerDisplay';
 import {
   receiptLabelFromPostedPayload,
   restaurantOrderToReceiptData,
@@ -125,10 +133,25 @@ function messageFromCaught(err: unknown): string {
   if (typeof err === 'object' && err !== null) {
     const rec = err as {message?: unknown; response?: {data?: unknown}};
     const data = rec.response?.data;
-    if (typeof data === 'object' && data !== null && 'error' in data) {
-      const er = (data as {error?: unknown}).error;
-      if (typeof er === 'string') {
-        return er;
+    if (typeof data === 'string' && data.trim()) {
+      return data.trim();
+    }
+    if (typeof data === 'object' && data !== null) {
+      const obj = data as Record<string, unknown>;
+      if (typeof obj.error === 'string' && obj.error.trim()) {
+        return obj.error.trim();
+      }
+      if (typeof obj.detail === 'string' && obj.detail.trim()) {
+        return obj.detail.trim();
+      }
+      for (const [key, value] of Object.entries(obj)) {
+        if (key === 'error' || key === 'detail') continue;
+        if (typeof value === 'string' && value.trim()) {
+          return value.trim();
+        }
+        if (Array.isArray(value) && value.length) {
+          return String(value[0]);
+        }
       }
     }
     if (typeof rec.message === 'string') {
@@ -326,6 +349,7 @@ export default function RestaurantPOS() {
   const {colors} = useTheme();
   const app = useAppContext();
   const {auth} = useAuth();
+  const {storeLabel, logoUri} = useCompanyInfo();
   const {width: screenW, height: screenH} = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const isWide = screenW >= 600;
@@ -979,6 +1003,7 @@ export default function RestaurantPOS() {
   const confirmClose = async (
     shouldPrint: boolean,
     paymentMethodId: number,
+    transactionId?: string,
   ) => {
     if (!orderToClose) {
       return;
@@ -986,8 +1011,18 @@ export default function RestaurantPOS() {
     const snap = orderToClose;
     setClosingInProgress(true);
     try {
-      const payload = await settleRestaurantOrder(snap, paymentMethodId);
+      const payload = await settleRestaurantOrder(snap, paymentMethodId, {
+        ...(transactionId ? {transaction_id: transactionId} : {}),
+      });
       const receiptId = receiptLabelFromPostedPayload(payload, snap.no);
+      publishCustomerDisplay({
+        mode: 'thanks',
+        companyName: storeLabel,
+        companyLogo: logoUri,
+        heading: 'Thank you',
+        message: 'Please take your receipt',
+        totalAmount: formatCurrencyCompact(Number(snap.total_amount) || 0),
+      });
 
       if (shouldPrint) {
         const companyInfo = await fetchCompanyInfoForReceipt();
@@ -1040,6 +1075,50 @@ export default function RestaurantPOS() {
     }
     return orders.find(o => sameOrderId(o.id, activeOrderId));
   }, [posData, activeOrderId]);
+
+  const customerDisplayPayload = useMemo(() => {
+    if (closeSheetOpen && orderToClose) {
+      const items = orderToClose.order_items || [];
+      const qty = items.reduce((sum, line) => sum + (Number(line.quantity) || 0), 0);
+      return {
+        mode: 'paying' as const,
+        companyName: storeLabel,
+        companyLogo: logoUri,
+        heading: 'Please pay',
+        message: orderToClose.table_number
+          ? `Table ${orderToClose.table_number}`
+          : 'Pay at the counter',
+        lines: linesFromCartItems(items),
+        totalLabel: 'AMOUNT DUE',
+        totalAmount: formatCurrencyCompact(Number(orderToClose.total_amount) || 0),
+        footer: `${qty} item${qty === 1 ? '' : 's'}`,
+      };
+    }
+    const items = activeOrder?.order_items || [];
+    if (!activeOrder || items.length === 0) {
+      return buildIdleCustomerDisplay(storeLabel, logoUri);
+    }
+    const qty = items.reduce((sum, line) => sum + (Number(line.quantity) || 0), 0);
+    return {
+      mode: 'cart' as const,
+      companyName: storeLabel,
+      companyLogo: logoUri,
+      heading: activeOrder.table_number
+        ? `Table ${activeOrder.table_number}`
+        : 'Your order',
+      lines: linesFromCartItems(items),
+      totalLabel: 'TOTAL',
+      totalAmount: formatCurrencyCompact(Number(activeOrder.total_amount) || 0),
+      footer: `${qty} item${qty === 1 ? '' : 's'}`,
+    };
+  }, [
+    activeOrder,
+    closeSheetOpen,
+    logoUri,
+    orderToClose,
+    storeLabel,
+  ]);
+  usePublishCustomerDisplay(customerDisplayPayload);
 
   const onPrintKot = async () => {
     if (!activeOrder) {
@@ -1975,8 +2054,8 @@ export default function RestaurantPOS() {
         }
         setCloseSheetOpen(false);
       }}
-      onConfirm={(shouldPrint, paymentMethodId) =>
-        void confirmClose(shouldPrint, paymentMethodId)
+      onConfirm={(shouldPrint, paymentMethodId, transactionId) =>
+        void confirmClose(shouldPrint, paymentMethodId, transactionId)
       }
     />
     </>

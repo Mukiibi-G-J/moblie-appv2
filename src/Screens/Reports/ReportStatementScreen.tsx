@@ -36,6 +36,7 @@ import {
   savePdfBufferAndShare,
 } from '../../utils/reportPdfDownload';
 import {BranchFilterSelect} from '../../Components/BranchFilterSelect';
+import {friendlyBalanceSheetName} from '../../utils/balanceSheetLabels';
 
 type ReportVariant = 'profit-loss' | 'balance-sheet';
 
@@ -76,6 +77,123 @@ const toYmd = (d: Date) => {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+};
+
+/**
+ * Outfit is loaded as separate family files. fontWeight is ignored on RN,
+ * so report hierarchy must switch fontFamily (same as PDF Header / Total / End-Total).
+ */
+const OUTFIT = {
+  regular: 'Outfit-Regular',
+  medium: 'Outfit-Medium',
+  semibold: 'Outfit-SemiBold',
+  bold: 'Outfit-Bold',
+} as const;
+
+const normalizeReportRowType = (rowType?: string) =>
+  (rowType || '').trim().toLowerCase().replace(/\s+/g, '-');
+
+type ReportRowVisual = {
+  isHeader: boolean;
+  isBeginTotal: boolean;
+  isEndTotal: boolean;
+  isFormulaTotal: boolean;
+  isStrong: boolean;
+  fontFamily: string;
+  fontSize: number;
+  letterSpacing: number;
+  textTransform: 'none' | 'uppercase';
+};
+
+const visualForFinancialRow = (row: FinancialReportRow): ReportRowVisual => {
+  const rowType = normalizeReportRowType(row.row_type);
+  const isHeader = rowType === 'header';
+  const isBeginTotal = rowType === 'begin-total';
+  const isEndTotal = rowType === 'end-total';
+  const isFormulaTotal = rowType === 'total';
+  const isStrong =
+    Boolean(row.bold) || isHeader || isEndTotal || isFormulaTotal;
+
+  if (isHeader) {
+    return {
+      isHeader,
+      isBeginTotal,
+      isEndTotal,
+      isFormulaTotal,
+      isStrong,
+      fontFamily: OUTFIT.semibold,
+      fontSize: 12,
+      letterSpacing: 0.6,
+      textTransform: 'uppercase',
+    };
+  }
+  if (isFormulaTotal) {
+    return {
+      isHeader,
+      isBeginTotal,
+      isEndTotal,
+      isFormulaTotal,
+      isStrong,
+      fontFamily: OUTFIT.bold,
+      fontSize: 16,
+      letterSpacing: -0.2,
+      textTransform: 'none',
+    };
+  }
+  if (isEndTotal || isStrong) {
+    return {
+      isHeader,
+      isBeginTotal,
+      isEndTotal,
+      isFormulaTotal,
+      isStrong,
+      fontFamily: OUTFIT.bold,
+      fontSize: 15,
+      letterSpacing: -0.1,
+      textTransform: 'none',
+    };
+  }
+  if (isBeginTotal) {
+    return {
+      isHeader,
+      isBeginTotal,
+      isEndTotal,
+      isFormulaTotal,
+      isStrong,
+      fontFamily: OUTFIT.semibold,
+      fontSize: 15,
+      letterSpacing: -0.1,
+      textTransform: 'none',
+    };
+  }
+  return {
+    isHeader,
+    isBeginTotal,
+    isEndTotal,
+    isFormulaTotal,
+    isStrong,
+    fontFamily: OUTFIT.regular,
+    fontSize: 15,
+    letterSpacing: 0,
+    textTransform: 'none',
+  };
+};
+
+const amountColorForValue = (
+  amount: number | null,
+  emphasize: boolean,
+  textPrimary: string,
+) => {
+  if (!emphasize || amount == null) {
+    return textPrimary;
+  }
+  if (amount < 0) {
+    return COLORS.error;
+  }
+  if (amount > 0) {
+    return COLORS.primary3;
+  }
+  return textPrimary;
 };
 
 const parseYmdLocal = (ymd: string) => {
@@ -230,13 +348,13 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
 
   const [filterMenuVisible, setFilterMenuVisible] = useState(false);
   const [periodLabel, setPeriodLabel] = useState(() =>
-    reportType === 'profit-loss' ? 'This Year to Date' : 'As of Today',
+    reportType === 'profit-loss' ? 'This Month' : 'As of Today',
   );
   const [activeFilterKey, setActiveFilterKey] = useState(() =>
-    reportType === 'profit-loss' ? 'this_year_to_date' : 'as_of_today',
+    reportType === 'profit-loss' ? 'this_month' : 'as_of_today',
   );
   const [plRange, setPlRange] = useState<DateRange>(() =>
-    profitLossRangeForPreset('this_year_to_date', getTodayDate())!,
+    profitLossRangeForPreset('this_month', getTodayDate())!,
   );
   const [bsAsOf, setBsAsOf] = useState(() =>
     balanceSheetAsOfForPreset('as_of_today', getTodayDate())!,
@@ -670,18 +788,17 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
         ) : null}
 
         {visibleRows.map((row: FinancialReportRow, index: number) => {
-          const rowType = (row.row_type || '').toLowerCase();
-          const isHeader = rowType === 'header';
-          const isBeginTotal = rowType === 'begin-total';
-          const isEndTotal = rowType === 'end-total' || rowType === 'total';
-          const isSectionBreak = isHeader || isBeginTotal;
-          const isEmphasis =
-            row.bold ||
-            isHeader ||
-            isEndTotal ||
-            /money made|profit before|total /i.test(row.description || '');
+          const visual = visualForFinancialRow(row);
           const indent = Math.max(0, row.indentation ?? 0);
-          const showTopGap = isSectionBreak && index > 0;
+          const showTopGap =
+            (visual.isHeader || visual.isBeginTotal || visual.isFormulaTotal) &&
+            index > 0;
+          const showRule = visual.isEndTotal || visual.isFormulaTotal;
+          const descriptionColor = visual.isHeader
+            ? colors.textSecondary
+            : visual.isStrong || visual.isBeginTotal
+              ? colors.textPrimary
+              : colors.textSecondary;
 
           return (
             <View
@@ -689,24 +806,25 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
               style={[
                 styles.plRow,
                 showTopGap && styles.plRowSectionGap,
-                isEndTotal && [
+                visual.isHeader && styles.plRowHeader,
+                showRule && [
                   styles.plRowTotal,
                   {borderTopColor: colors.border},
                 ],
+                visual.isFormulaTotal && styles.plRowKeyTotal,
               ]}>
               <Text
                 style={[
                   styles.plRowDescription,
                   {
-                    color: isHeader
-                      ? colors.textSecondary
-                      : colors.textPrimary,
-                    fontWeight: isEmphasis ? '600' : '400',
+                    color: descriptionColor,
+                    fontFamily: visual.fontFamily,
+                    fontSize: visual.fontSize,
+                    letterSpacing: visual.letterSpacing,
+                    textTransform: visual.textTransform,
                     fontStyle: row.italic ? 'italic' : 'normal',
                     paddingLeft: indent * 12,
-                    textTransform: isHeader ? 'uppercase' : 'none',
-                    letterSpacing: isHeader ? 0.4 : 0,
-                    fontSize: isHeader ? 12 : 15,
+                    textDecorationLine: row.underline ? 'underline' : 'none',
                   },
                 ]}
                 numberOfLines={2}>
@@ -718,7 +836,7 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
                     typeof row.amounts?.[col.key] === 'number'
                       ? row.amounts[col.key]
                       : null;
-                  if (isHeader || amount == null) {
+                  if (visual.isHeader || amount == null) {
                     return (
                       <View
                         key={col.key || 'empty'}
@@ -732,8 +850,13 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
                       style={[
                         styles.plRowAmount,
                         {
-                          color: colors.textPrimary,
-                          fontWeight: isEmphasis ? '600' : '400',
+                          color: amountColorForValue(
+                            amount,
+                            visual.isStrong,
+                            colors.textPrimary,
+                          ),
+                          fontFamily: visual.fontFamily,
+                          fontSize: visual.fontSize,
                         },
                       ]}>
                       {formatCurrency(amount)}
@@ -761,34 +884,72 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
         <Text style={[styles.sectionTitle, {color: colors.textPrimary}]}>
           {heading}
         </Text>
-        <Text style={[styles.sectionTotal, {color: colors.textPrimary}]}>
+        <Text
+          style={[
+            styles.sectionTotal,
+            {
+              color: amountColorForValue(
+                section?.total ?? null,
+                true,
+                colors.textPrimary,
+              ),
+            },
+          ]}>
           {formatCurrency(section?.total)}
         </Text>
       </View>
 
       {section?.accounts?.length ? (
-        section.accounts.map(account => (
-          <View
-            key={`${account.no ?? account.name}`}
-            style={[
-              styles.accountRow,
-              {marginLeft: (account.indentation ?? 0) * 10},
-            ]}>
-            <Text
+        section.accounts.map(account => {
+          const accountType = String(account.accountType ?? '');
+          const isHeading =
+            accountType === 'Heading' || accountType === 'Begin-Total';
+          const isTotal =
+            accountType === 'Total' || accountType === 'End-Total';
+          const fontFamily = isTotal
+            ? OUTFIT.bold
+            : isHeading
+              ? OUTFIT.semibold
+              : OUTFIT.regular;
+          const label = friendlyBalanceSheetName(account.no, account.name);
+          return (
+            <View
+              key={`${account.no ?? account.name}`}
               style={[
-                styles.accountName,
-                {color: colors.textSecondary},
-                account.accountType === 'Heading' && styles.accountHeading,
-                account.accountType === 'Total' && styles.accountHeading,
-              ]}
-              numberOfLines={2}>
-              {account.name ?? 'Account'}
-            </Text>
-            <Text style={[styles.accountAmount, {color: colors.textPrimary}]}>
-              {formatCurrency(account.balance)}
-            </Text>
-          </View>
-        ))
+                styles.accountRow,
+                {marginLeft: (account.indentation ?? 0) * 10},
+              ]}>
+              <Text
+                style={[
+                  styles.accountName,
+                  {
+                    color:
+                      isHeading || isTotal
+                        ? colors.textPrimary
+                        : colors.textSecondary,
+                    fontFamily,
+                  },
+                ]}
+                numberOfLines={2}>
+                {label}
+              </Text>
+              <Text
+                style={[
+                  styles.accountAmount,
+                  {
+                    color: amountColorForValue(
+                      account.balance ?? null,
+                      isTotal,
+                      colors.textPrimary,
+                    ),
+                    fontFamily,
+                  },
+                ]}>
+                {formatCurrency(account.balance)}
+              </Text>
+            </View>
+          );
+        })
       ) : (
         <Text style={[styles.emptySectionText, {color: colors.textSecondary}]}>
           No account lines available.
@@ -851,7 +1012,17 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
                   style={[styles.plNetLabel, {color: colors.textSecondary}]}>
                   Profit / Loss
                 </Text>
-                <Text style={[styles.plNetValue, {color: colors.textPrimary}]}>
+                <Text
+                  style={[
+                    styles.plNetValue,
+                    {
+                      color: amountColorForValue(
+                        netProfit,
+                        true,
+                        colors.textPrimary,
+                      ),
+                    },
+                  ]}>
                   {formatCurrency(netProfit)}
                 </Text>
               </View>
@@ -874,15 +1045,15 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
 
           <View style={styles.summaryGrid}>
             {renderSummaryCard(
-              'Total Assets',
+              'What you own',
               formatCurrency(balanceSheetData.assets?.total),
             )}
             {renderSummaryCard(
-              'Liabilities',
+              'What you owe',
               formatCurrency(balanceSheetData.liabilities?.total),
             )}
             {renderSummaryCard(
-              'Equity',
+              'Your money',
               formatCurrency(balanceSheetData.equity?.total),
             )}
             {renderSummaryCard(
@@ -891,12 +1062,18 @@ const ReportStatementScreen: React.FC<Props> = ({reportType}) => {
             )}
           </View>
 
-          {renderBalanceSheetAccounts('Assets', balanceSheetData.assets)}
           {renderBalanceSheetAccounts(
-            'Liabilities',
+            'What you own',
+            balanceSheetData.assets,
+          )}
+          {renderBalanceSheetAccounts(
+            'What you owe',
             balanceSheetData.liabilities,
           )}
-          {renderBalanceSheetAccounts('Equity', balanceSheetData.equity)}
+          {renderBalanceSheetAccounts(
+            'Your money in the business',
+            balanceSheetData.equity,
+          )}
         </>
       );
     }
@@ -1208,12 +1385,12 @@ const styles = StyleSheet.create({
   },
   plNetLabel: {
     ...FONTS.body5,
-    fontWeight: '500',
+    fontFamily: 'Outfit-Medium',
   },
   plNetValue: {
     ...FONTS.h2,
+    fontFamily: 'Outfit-Bold',
     marginTop: 4,
-    fontWeight: '600',
     letterSpacing: -0.3,
   },
   plStatement: {
@@ -1256,13 +1433,12 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     ...FONTS.h3,
-    fontWeight: '600',
     flex: 1,
     paddingRight: 12,
   },
   sectionTotal: {
     ...FONTS.body4,
-    fontWeight: '600',
+    fontFamily: 'Outfit-Bold',
   },
   plColumnHeaderRow: {
     flexDirection: 'row',
@@ -1274,13 +1450,13 @@ const styles = StyleSheet.create({
   },
   plColumnHeaderLabel: {
     ...FONTS.body5,
-    fontWeight: '500',
+    fontFamily: 'Outfit-SemiBold',
     flex: 1,
     paddingRight: 8,
   },
   plColumnHeaderAmount: {
     ...FONTS.body5,
-    fontWeight: '500',
+    fontFamily: 'Outfit-SemiBold',
     minWidth: 78,
     textAlign: 'right',
     marginLeft: 8,
@@ -1291,6 +1467,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 9,
   },
+  plRowHeader: {
+    paddingTop: 2,
+    paddingBottom: 6,
+  },
   plRowSectionGap: {
     marginTop: 14,
     paddingTop: 4,
@@ -1299,6 +1479,10 @@ const styles = StyleSheet.create({
     marginTop: 4,
     paddingTop: 12,
     borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  plRowKeyTotal: {
+    marginTop: 8,
+    paddingBottom: 4,
   },
   plRowDescription: {
     ...FONTS.body4,
@@ -1334,11 +1518,8 @@ const styles = StyleSheet.create({
   },
   accountAmount: {
     ...FONTS.body4,
-    fontWeight: '500',
+    fontFamily: 'Outfit-Medium',
     textAlign: 'right',
-  },
-  accountHeading: {
-    fontWeight: '600',
   },
   emptySectionText: {
     ...FONTS.body4,

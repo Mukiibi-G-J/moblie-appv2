@@ -11,7 +11,10 @@ export function formatReceiptAmount(
   return Math.round(n).toLocaleString("en-US");
 }
 
-export function formatReceiptDate(isoOrDate: string): string {
+export function formatReceiptDate(
+  isoOrDate: string,
+  compact = false,
+): string {
   try {
     const d = new Date(isoOrDate);
     if (isNaN(d.getTime())) {
@@ -24,7 +27,7 @@ export function formatReceiptDate(isoOrDate: string): string {
         year: "numeric",
         hour: "2-digit",
         minute: "2-digit",
-        second: "2-digit",
+        ...(compact ? {} : { second: "2-digit" as const }),
         hour12: false,
         timeZone: "Africa/Kampala",
       })
@@ -68,4 +71,17 @@ export function padReceiptColumns(
 export function cleanPaymentMethodLabel(desc?: string): string {
   if (!desc) return "";
   return desc.replace(/\s+cust\.?$/i, "").trim();
+}
+
+/** Keep the company name on one 58mm line (normal font, not double-width). */
+export function fitReceiptCompanyName(name: string, cols: number): string {
+  const t = name.replace(/\s+/g, " ").trim();
+  if (!t) {
+    return "";
+  }
+  if (t.length <= cols) {
+    return t;
+  }
+  const max = Math.max(1, cols - 3);
+  return `${t.slice(0, max)}...`;
 }

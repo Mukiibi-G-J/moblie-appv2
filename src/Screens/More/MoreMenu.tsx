@@ -66,13 +66,14 @@ const quickPressProps = {
 const SUPPORT_NUMBERS = ['+256750440865', '+256779899789'] as const;
 
 const MoreMenu: React.FC = () => {
-  const { colors } = useTheme();
+  const { colors, preference, setPreference, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const { auth } = useAuth();
   const app = useAppContext() as AppContextType;
   const { logout, patchAuth } = app;
   const { setSelectedTab } = useTabContext();
-  const { isModuleVisible, hasAnyPageAccess } = usePermissions();
+  const { isModuleVisible, hasAnyPageAccess, canAccessMobileNav, canManageCompany } =
+    usePermissions();
   const { storeLabel } = useCompanyInfo();
   const [profileBranchCode, setProfileBranchCode] = useState <
     string | null | undefined
@@ -274,6 +275,27 @@ const MoreMenu: React.FC = () => {
     }
   }, [app, branches, setSelectedTab, switchSelectedId]);
 
+  const appearanceLabel = useMemo(() => {
+    if (preference === 'system') {
+      return isDark ? 'System (Dark)' : 'System (Light)';
+    }
+    return preference === 'dark' ? 'Dark' : 'Light';
+  }, [preference, isDark]);
+
+  const handleAppearancePress = useCallback(() => {
+    Alert.alert(
+      'Appearance',
+      'Match your phone or choose light or dark.',
+      [
+        {text: 'System', onPress: () => setPreference('system')},
+        {text: 'Light', onPress: () => setPreference('light')},
+        {text: 'Dark', onPress: () => setPreference('dark')},
+        {text: 'Cancel', style: 'cancel'},
+      ],
+      {cancelable: true},
+    );
+  }, [setPreference]);
+
   const handleSupportPress = useCallback(async () => {
     const normalizeDigits = (raw: string) => raw.replace(/[^\d]/g, '');
 
@@ -306,14 +328,29 @@ const MoreMenu: React.FC = () => {
       await Linking.openURL(waUrl);
     };
 
+    const options: Array<{
+      text: string;
+      onPress?: () => void;
+      style?: 'cancel' | 'destructive';
+    }> = [];
+    if (canManageCompany) {
+      options.push({
+        text: 'All modules & plan',
+        onPress: () => navigate('AvailableModules', undefined),
+      });
+    }
+    options.push(
+      {
+        text: isDark ? 'Switch to light mode' : 'Switch to dark mode',
+        onPress: () => setPreference(isDark ? 'light' : 'dark'),
+      },
+    );
+
     Alert.alert(
       'Help & Support',
       'Choose an option:',
       [
-        {
-          text: 'All modules & plan',
-          onPress: () => navigate('AvailableModules', undefined),
-        },
+        ...options,
         {
           text: `Call ${SUPPORT_NUMBERS[0]}`,
           onPress: () => {
@@ -342,7 +379,7 @@ const MoreMenu: React.FC = () => {
       ],
       {cancelable: true},
     );
-  }, []);
+  }, [canManageCompany, isDark, setPreference]);
 
   const menuSections: MenuSection[] = useMemo(() => {
     const sectionDefs: MenuSection[] = [
@@ -357,7 +394,7 @@ const MoreMenu: React.FC = () => {
             icon: icons.reports,
             visible:
               isModuleVisible('sales') &&
-              hasAnyPageAccess(PAGE_NAMES.SALES_HISTORY),
+              canAccessMobileNav('salesHistory', PAGE_NAMES.SALES_HISTORY),
             onPress: () => navigate('SalesHistory', undefined),
           },
           {
@@ -366,8 +403,26 @@ const MoreMenu: React.FC = () => {
             icon: icons.reports,
             visible:
               isModuleVisible('reports') &&
-              hasAnyPageAccess(PAGE_NAMES.REPORTS),
+              canAccessMobileNav('reports', PAGE_NAMES.REPORTS),
             onPress: () => navigate('Reports', undefined),
+          },
+          {
+            key: 'profitLoss',
+            label: 'Profit & Loss',
+            icon: icons.reports,
+            visible:
+              isModuleVisible('reports') &&
+              canAccessMobileNav('reports', PAGE_NAMES.PROFIT_AND_LOSS),
+            onPress: () => navigate('ProfitLossReport', undefined),
+          },
+          {
+            key: 'balanceSheet',
+            label: 'Balance Sheet',
+            icon: icons.reports,
+            visible:
+              isModuleVisible('reports') &&
+              canAccessMobileNav('reports', PAGE_NAMES.BALANCE_SHEET),
+            onPress: () => navigate('BalanceSheetReport', undefined),
           },
         ],
       },
@@ -381,7 +436,8 @@ const MoreMenu: React.FC = () => {
             label: 'Items',
             icon: icons.product,
             visible:
-              isModuleVisible('items') && hasAnyPageAccess(PAGE_NAMES.ITEMS),
+              isModuleVisible('items') &&
+              canAccessMobileNav('items', PAGE_NAMES.ITEMS),
             onPress: () => navigate('Items', undefined),
           },
           {
@@ -390,7 +446,7 @@ const MoreMenu: React.FC = () => {
             icon: icons.itemJournal,
             visible:
               isModuleVisible('inventory') &&
-              hasAnyPageAccess(PAGE_NAMES.ITEM_JOURNAL),
+              canAccessMobileNav('itemJournal', PAGE_NAMES.ITEM_JOURNAL),
             onPress: () => navigate('ItemJournal', undefined),
           },
           {
@@ -399,7 +455,7 @@ const MoreMenu: React.FC = () => {
             icon: icons.itemJournal,
             visible:
               isModuleVisible('inventory') &&
-              hasAnyPageAccess(PAGE_NAMES.ITEM_JOURNAL),
+              canAccessMobileNav('openingBalance', PAGE_NAMES.ITEM_JOURNAL),
             onPress: () => navigate('OpeningBalanceJournal', undefined),
           },
         ],
@@ -415,7 +471,7 @@ const MoreMenu: React.FC = () => {
             icon: icons.profile,
             visible:
               isModuleVisible('customers') &&
-              hasAnyPageAccess(PAGE_NAMES.CUSTOMER_MANAGEMENT),
+              canAccessMobileNav('customers', PAGE_NAMES.CUSTOMER_MANAGEMENT),
             onPress: () => navigate('Customers', undefined),
           },
           {
@@ -424,7 +480,7 @@ const MoreMenu: React.FC = () => {
             icon: icons.company,
             visible:
               isModuleVisible('suppliers') &&
-              hasAnyPageAccess(PAGE_NAMES.SUPPLIERS),
+              canAccessMobileNav('suppliers', PAGE_NAMES.SUPPLIERS),
             onPress: () => navigate('Suppliers', undefined),
           },
           {
@@ -433,7 +489,7 @@ const MoreMenu: React.FC = () => {
             icon: icons.cart,
             visible:
               isModuleVisible('purchases') &&
-              hasAnyPageAccess(PAGE_NAMES.PURCHASES),
+              canAccessMobileNav('purchases', PAGE_NAMES.PURCHASES),
             onPress: () => navigate('Purchases', undefined),
           },
         ],
@@ -449,7 +505,7 @@ const MoreMenu: React.FC = () => {
             icon: icons.coupon,
             visible:
               isModuleVisible('expenses') &&
-              hasAnyPageAccess(PAGE_NAMES.EXPENSES),
+              canAccessMobileNav('expenses', PAGE_NAMES.EXPENSES),
             onPress: () => navigate('Expenses', undefined),
           },
         ],
@@ -465,7 +521,10 @@ const MoreMenu: React.FC = () => {
             icon: icons.wallet,
             visible:
               isModuleVisible('payments') &&
-              hasAnyPageAccess(PAGE_NAMES.BANK_ACCOUNT_MANAGEMENT),
+              canAccessMobileNav(
+                'bankAccounts',
+                PAGE_NAMES.BANK_ACCOUNT_MANAGEMENT,
+              ),
             onPress: () => navigate('BankAccounts', undefined),
           },
           {
@@ -474,8 +533,10 @@ const MoreMenu: React.FC = () => {
             icon: icons.dollar,
             visible:
               isModuleVisible('payments') &&
-              (hasAnyPageAccess(PAGE_NAMES.QUICK_PAYMENT) ||
-                hasAnyPageAccess(PAGE_NAMES.PAYMENTS)),
+              canAccessMobileNav('payments', [
+                PAGE_NAMES.QUICK_PAYMENT,
+                PAGE_NAMES.PAYMENTS,
+              ]),
             onPress: () => navigate('Payments', undefined),
           },
           {
@@ -484,26 +545,8 @@ const MoreMenu: React.FC = () => {
             icon: icons.coupon,
             visible:
               isModuleVisible('payments') &&
-              hasAnyPageAccess(PAGE_NAMES.PREPAYMENTS),
+              canAccessMobileNav('prepayments', PAGE_NAMES.PREPAYMENTS),
             onPress: () => navigate('Prepayments', undefined),
-          },
-          {
-            key: 'loans',
-            label: constants.screens.loans,
-            icon: icons.wallet,
-            visible:
-              isModuleVisible('payments') &&
-              hasAnyPageAccess(PAGE_NAMES.LOAN_REGISTRATION),
-            onPress: () => navigate('Loans', undefined),
-          },
-          {
-            key: 'loanRepayments',
-            label: constants.screens.loanRepayments,
-            icon: icons.wallet,
-            visible:
-              isModuleVisible('payments') &&
-              hasAnyPageAccess(PAGE_NAMES.LOAN_REPAYMENT),
-            onPress: () => navigate('LoanRepayments', undefined),
           },
         ],
       },
@@ -518,6 +561,7 @@ const MoreMenu: React.FC = () => {
             icon: icons.tray,
             visible:
               isModuleVisible('restaurant') &&
+              canAccessMobileNav('restaurant') &&
               RESTAURANT_MODULE_ENTRY_PAGE_NAMES.some(p =>
                 hasAnyPageAccess(p),
               ),
@@ -534,7 +578,7 @@ const MoreMenu: React.FC = () => {
             key: 'companyBilling',
             label: 'Company & Billing',
             icon: icons.company,
-            visible: true,
+            visible: canManageCompany,
             onPress: () => navigate('BusinessDetails', undefined),
           },
           {
@@ -543,7 +587,7 @@ const MoreMenu: React.FC = () => {
             icon: icons.profile,
             visible:
               isModuleVisible('userManagement') &&
-              hasAnyPageAccess(PAGE_NAMES.USER_MANAGEMENT),
+              canAccessMobileNav('userManagement', PAGE_NAMES.USER_MANAGEMENT),
             onPress: () => navigate('UserManagement', undefined),
           },
         ],
@@ -575,10 +619,17 @@ const MoreMenu: React.FC = () => {
             onPress: () => navigate('Settings', undefined),
           },
           {
+            key: 'appearance',
+            label: `Appearance · ${appearanceLabel}`,
+            icon: icons.eye,
+            visible: true,
+            onPress: handleAppearancePress,
+          },
+          {
             key: 'availableModules',
             label: 'All modules & plan',
             icon: icons.coupon,
-            visible: true,
+            visible: canManageCompany,
             onPress: () => navigate('AvailableModules', undefined),
           },
           {
@@ -609,7 +660,7 @@ const MoreMenu: React.FC = () => {
         rows: section.rows.filter(row => row.visible),
       }))
       .filter(section => section.rows.length > 0);
-  }, [isModuleVisible, hasAnyPageAccess, logout, handleSupportPress]);
+  }, [isModuleVisible, hasAnyPageAccess, canAccessMobileNav, canManageCompany, logout, handleSupportPress, handleAppearancePress, appearanceLabel]);
 
   const openSection = useMemo(
     () => menuSections.find(section => section.key === openSectionKey) ?? null,
@@ -688,31 +739,35 @@ const MoreMenu: React.FC = () => {
             style={[styles.topBarIcon, { tintColor: colors.textPrimary }]}
           />
         </Pressable>
-        <Pressable
-          {...quickPressProps}
-          onPress={() => navigate('Subscription', undefined)}
-          style={({ pressed }) => [
-            styles.circleBtn,
-            {
-              backgroundColor: colors.card,
-              borderColor: colors.border,
-              borderWidth: StyleSheet.hairlineWidth,
-              opacity: pressed ? ICON_BUTTON_ACTIVE_OPACITY : 1,
-            },
-          ]}
-          android_ripple={
-            Platform.OS === 'android'
-              ? { color: 'rgba(0,0,0,0.12)', foreground: true }
-              : undefined
-          }
-          hitSlop={ICON_BUTTON_HIT_SLOP}
-          accessibilityRole="button"
-          accessibilityLabel="Subscription and perks">
-          <Image
-            source={icons.coupon as any}
-            style={[styles.topBarIcon, { tintColor: colors.textPrimary }]}
-          />
-        </Pressable>
+        {canManageCompany ? (
+          <Pressable
+            {...quickPressProps}
+            onPress={() => navigate('Subscription', undefined)}
+            style={({ pressed }) => [
+              styles.circleBtn,
+              {
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+                borderWidth: StyleSheet.hairlineWidth,
+                opacity: pressed ? ICON_BUTTON_ACTIVE_OPACITY : 1,
+              },
+            ]}
+            android_ripple={
+              Platform.OS === 'android'
+                ? { color: 'rgba(0,0,0,0.12)', foreground: true }
+                : undefined
+            }
+            hitSlop={ICON_BUTTON_HIT_SLOP}
+            accessibilityRole="button"
+            accessibilityLabel="Subscription and perks">
+            <Image
+              source={icons.coupon as any}
+              style={[styles.topBarIcon, { tintColor: colors.textPrimary }]}
+            />
+          </Pressable>
+        ) : (
+          <View style={styles.circleBtn} />
+        )}
       </View>
 
       <View style={styles.hero}>
@@ -756,9 +811,14 @@ const MoreMenu: React.FC = () => {
         </Text>
         <Pressable
           {...quickPressProps}
-          onPress={() => navigate('BusinessDetails', undefined)}
+          onPress={() => {
+            if (canManageCompany) {
+              navigate('BusinessDetails', undefined);
+            }
+          }}
+          disabled={!canManageCompany}
           android_ripple={
-            Platform.OS === 'android'
+            canManageCompany && Platform.OS === 'android'
               ? { color: 'rgba(0,0,0,0.08)' }
               : undefined
           }
@@ -767,11 +827,13 @@ const MoreMenu: React.FC = () => {
             {
               backgroundColor: colors.screenMuted,
               borderColor: colors.border,
-              opacity: pressed ? 0.88 : 1,
+              opacity: canManageCompany && pressed ? 0.88 : 1,
             },
           ]}
-          accessibilityRole="button"
-          accessibilityLabel="Business details">
+          accessibilityRole={canManageCompany ? 'button' : 'text'}
+          accessibilityLabel={
+            canManageCompany ? 'Business details' : storeLabel
+          }>
           <View style={[styles.companyInfoIconWrap, { backgroundColor: colors.card }]}>
             <Image
               source={icons.company as any}
@@ -784,17 +846,21 @@ const MoreMenu: React.FC = () => {
               numberOfLines={2}>
               {storeLabel}
             </Text>
-            <Text style={[styles.companyInfoHint, { color: colors.textSecondary }]}>
-              Business details
-            </Text>
+            {canManageCompany ? (
+              <Text style={[styles.companyInfoHint, { color: colors.textSecondary }]}>
+                Business details
+              </Text>
+            ) : null}
           </View>
-          <Image
-          source={icons.down_arrow as any}
-            style={[
-              styles.companyInfoChevron,
-              { tintColor: colors.textTertiary, transform: [{ rotate: '-90deg' }] },
-            ]}
-          />
+          {canManageCompany ? (
+            <Image
+              source={icons.down_arrow as any}
+              style={[
+                styles.companyInfoChevron,
+                { tintColor: colors.textTertiary, transform: [{ rotate: '-90deg' }] },
+              ]}
+            />
+          ) : null}
         </Pressable>
       </View>
 

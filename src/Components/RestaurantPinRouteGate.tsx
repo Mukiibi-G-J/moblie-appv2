@@ -113,6 +113,7 @@ const RestaurantPinRouteGate = () => {
           a?.enabled_modules,
           a?.role_center_modules,
           a?.authority,
+          a?.userPermissions?.allowPinLogin,
         )
       ) {
         statusCheckedThisRestaurantVisitRef.current = true;

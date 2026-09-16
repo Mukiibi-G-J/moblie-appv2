@@ -7,10 +7,17 @@ export function shouldOfferRestaurantPinFromToken(
   roleCenterModules: string[] | undefined,
   enabledModules: string[] | undefined,
   authority: string[] | undefined,
+  allowPinLogin?: boolean,
 ): boolean {
   const r = roleCenterModules || [];
   const e = enabledModules || [];
   const a = authority || [];
+  if (allowPinLogin) {
+    if (__DEV__) {
+      console.log('[RestaurantPIN] offerPIN: yes — User Setup allow PIN sign-in');
+    }
+    return true;
+  }
   if (!e.includes('restaurant')) {
     if (__DEV__) {
       console.log('[RestaurantPIN] offerPIN: skip — no restaurant module', {
@@ -33,7 +40,11 @@ export function shouldDefinitivelySkipRestaurantPinFromClientJwt(
   enabled_modules: string[] | undefined | null,
   role_center_modules: string[] | undefined,
   authority: string[] | undefined,
+  allowPinLogin?: boolean,
 ): boolean {
+  if (allowPinLogin) {
+    return false;
+  }
   if (enabled_modules === undefined || enabled_modules === null) {
     return false;
   }
@@ -41,5 +52,6 @@ export function shouldDefinitivelySkipRestaurantPinFromClientJwt(
     role_center_modules,
     enabled_modules,
     authority,
+    allowPinLogin,
   );
 }

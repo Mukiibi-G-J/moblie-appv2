@@ -1,7 +1,7 @@
 import React, {useState, useEffect, useMemo, useRef, useCallback} from 'react';
 import {
-  formatCurrencyCompact,
   formatCurrencyLabel,
+  getLocalCurrencyCode,
 } from '../../utils/currency';
 import {
   View,
@@ -32,10 +32,28 @@ import {ExpenseServices} from '../../services/ExpenseServices';
 import Toast from 'react-native-toast-message';
 import {useTheme} from '../../context/ThemeContext';
 import {useScreenTopInset} from '../../hooks/useScreenTopInset';
-import {isUnpaidPaymentMethod} from '../../utils/paymentMethodDefaults';
+import {
+  formatDateYmdLocal,
+  parseLocalISODate,
+  todayYmdLocal,
+  toDateOnly,
+} from '../../utils/localDate';
+import {isUnpaidPaymentMethod, pickDefaultCashPaymentMethod} from '../../utils/paymentMethodDefaults';
+
+const coercePositiveId = (value: unknown): number | null => {
+  if (value == null || value === '' || value === false) {
+    return null;
+  }
+  if (typeof value === 'object') {
+    const nested = (value as {id?: unknown; pk?: unknown}).id ?? (value as {pk?: unknown}).pk;
+    return coercePositiveId(nested);
+  }
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
 
 const emptyExpenseForm = (): ExpenseFormValues => ({
-  posting_date: new Date().toISOString().split('T')[0],
+  posting_date: todayYmdLocal(),
   expense_type: null,
   description: '',
   amount: '',
@@ -43,17 +61,85 @@ const emptyExpenseForm = (): ExpenseFormValues => ({
   status: 'Open',
 });
 
-const expenseToForm = (expense: Expense): ExpenseFormValues => ({
-  posting_date: expense.posting_date,
-  expense_type: expense.expense_type,
-  description: expense.description || '',
-  amount: expense.amount != null ? String(expense.amount) : '',
-  payment_method: expense.payment_method || null,
-  status: expense.status === 'Posted' ? 'Posted' : 'Open',
-});
+const expenseToForm = (
+  expense: Expense,
+  fallback?: ExpenseFormValues | null,
+  expenseTypes: ExpenseType[] = [],
+): ExpenseFormValues => {
+  const typeFromRecord = coercePositiveId(expense.expense_type);
+  const typeFromName = expense.expense_type_name
+    ? expenseTypes.find(
+        type =>
+          type.name.trim().toLowerCase() ===
+          expense.expense_type_name!.trim().toLowerCase(),
+      )?.id ?? null
+    : null;
+
+  return {
+    posting_date: toDateOnly(expense.posting_date) || fallback?.posting_date || todayYmdLocal(),
+    expense_type: typeFromRecord ?? typeFromName ?? fallback?.expense_type ?? null,
+    description: expense.description || fallback?.description || '',
+    amount:
+      expense.amount != null && expense.amount !== ('' as any)
+        ? trimTrailingDecimalZeros(sanitizeAmountInput(String(expense.amount)))
+        : fallback?.amount || '',
+    payment_method:
+      coercePositiveId(expense.payment_method) ?? fallback?.payment_method ?? null,
+    status:
+      expense.status === 'Posted' || expense.status === 'Reversed'
+        ? expense.status
+        : 'Open',
+  };
+};
 
 const parseAmount = (value: string) =>
   parseFloat(String(value || '').replace(/,/g, '')) || 0;
+
+/** Commas are thousand separators. Keep digits and at most one decimal point. */
+const sanitizeAmountInput = (text: string) => {
+  const cleaned = String(text || '').replace(/[^0-9.]/g, '');
+  const firstDot = cleaned.indexOf('.');
+  if (firstDot === -1) {
+    return cleaned;
+  }
+  return `${cleaned.slice(0, firstDot)}.${cleaned
+    .slice(firstDot + 1)
+    .replace(/\./g, '')
+    .slice(0, 5)}`;
+};
+
+/** Drop API padding like .89000 → .89. Keep a trailing dot while typing. */
+const trimTrailingDecimalZeros = (value: string) => {
+  if (!value.includes('.')) {
+    return value;
+  }
+  if (value.endsWith('.')) {
+    return value;
+  }
+  const [whole, fraction = ''] = value.split('.');
+  const trimmed = fraction.replace(/0+$/, '');
+  return trimmed ? `${whole}.${trimmed}` : whole;
+};
+
+/** 1500000 → 1,500,000. If displayDp is set and the value has a point, show that many decimals (display only). */
+const formatAmountWithCommas = (value: string, displayDp?: number) => {
+  if (!value) {
+    return '';
+  }
+  const raw = displayDp == null ? trimTrailingDecimalZeros(value) : value;
+  const hasDecimal = raw.includes('.');
+  const [whole, fraction = ''] = raw.split('.');
+  if (displayDp != null && hasDecimal) {
+    const n = Number(`${whole || '0'}.${fraction}`);
+    if (Number.isFinite(n)) {
+      const [roundedWhole, roundedFrac = ''] = n.toFixed(displayDp).split('.');
+      const grouped = roundedWhole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      return `${grouped}.${roundedFrac}`;
+    }
+  }
+  const grouped = (whole || '').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return hasDecimal ? `${grouped}.${fraction}` : grouped;
+};
 
 const extractApiErrorMessage = (
   error: any,
@@ -87,6 +173,10 @@ interface ExpenseFormModalProps {
   expense: Expense | null;
   /** Called after a successful auto-save so the list can refresh (does not close). */
   onSave: () => void;
+  /** Called after a successful post so the parent can close and open posted expenses. */
+  onPosted?: () => void;
+  /** Called after a successful reverse so the parent can close and refresh history. */
+  onReversed?: () => void;
   /** Keeps parent selection in sync after create / update. */
   onRecordChange?: (expense: Expense) => void;
   expenseTypes: ExpenseType[];
@@ -102,6 +192,8 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
   onClose,
   expense,
   onSave,
+  onPosted,
+  onReversed,
   onRecordChange,
   expenseTypes,
   paymentMethods,
@@ -165,45 +257,78 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [showSaved, setShowSaved] = useState(false);
   const [posting, setPosting] = useState(false);
+  const [reversing, setReversing] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [amountFocused, setAmountFocused] = useState(false);
 
   const formDataRef = useRef(formData);
   const currentRecordRef = useRef(currentRecord);
+  const lastSavedRef = useRef<ExpenseFormValues>(emptyExpenseForm());
   const savingRef = useRef(false);
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const amountSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const amountFocusedRef = useRef(false);
 
   formDataRef.current = formData;
   currentRecordRef.current = currentRecord;
 
   const isPersisted = !!currentRecord?.id;
-  const isPosted =
-    currentRecord?.status === 'Posted' || expense?.status === 'Posted';
+  const recordStatus = currentRecord?.status || expense?.status;
+  const isPosted = recordStatus === 'Posted';
+  const isReversed = recordStatus === 'Reversed';
+  const isLocked = isPosted || isReversed;
   const canWrite = isPersisted ? canEdit : canCreate;
 
   useEffect(() => {
     if (!visible) {
       setCurrentRecord(null);
-      setFormData(emptyExpenseForm());
+      const blank = emptyExpenseForm();
+      setFormData(blank);
+      lastSavedRef.current = blank;
       setErrors({});
       setShowSaved(false);
       setShowDatePicker(false);
+      setAmountFocused(false);
       if (savedTimerRef.current) {
         clearTimeout(savedTimerRef.current);
         savedTimerRef.current = null;
       }
+      if (amountSaveTimerRef.current) {
+        clearTimeout(amountSaveTimerRef.current);
+        amountSaveTimerRef.current = null;
+      }
+      amountFocusedRef.current = false;
       return;
     }
 
     if (expense?.id) {
       if (currentRecordRef.current?.id !== expense.id) {
         setCurrentRecord(expense);
-        setFormData(expenseToForm(expense));
+        const next = expenseToForm(expense, formDataRef.current, expenseTypes);
+        setFormData(next);
+        lastSavedRef.current = next;
       } else {
-        setCurrentRecord(expense);
+        // List refresh often has expense_type=0 (page-data has name, not FK).
+        // Keep the in-form type/payment method instead of overwriting them.
+        setCurrentRecord(prev => ({
+          ...expense,
+          expense_type:
+            coercePositiveId(expense.expense_type) ??
+            coercePositiveId(prev?.expense_type) ??
+            expense.expense_type,
+          expense_type_name:
+            expense.expense_type_name || prev?.expense_type_name,
+          payment_method:
+            coercePositiveId(expense.payment_method) ??
+            coercePositiveId(prev?.payment_method) ??
+            expense.payment_method,
+        }));
       }
     } else if (!currentRecordRef.current?.id) {
       setCurrentRecord(null);
-      setFormData(emptyExpenseForm());
+      const blank = emptyExpenseForm();
+      setFormData(blank);
+      lastSavedRef.current = blank;
     }
     setErrors({});
     setShowSaved(false);
@@ -225,23 +350,24 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
       values: ExpenseFormValues,
       options?: {forUpdate?: boolean},
     ): Partial<Expense> => {
-      const amountValue = parseAmount(values.amount);
       const payload: Partial<Expense> = {
-        posting_date: values.posting_date,
-        expense_type: values.expense_type!,
+        posting_date: toDateOnly(values.posting_date),
         document_type: 'Expense',
-        amount: amountValue,
+        amount: sanitizeAmountInput(values.amount) as any,
         status: values.status || 'Open',
       };
+      const expenseTypeId = coercePositiveId(values.expense_type);
+      if (expenseTypeId) {
+        payload.expense_type = expenseTypeId;
+      }
       if (values.description?.trim()) {
         payload.description = values.description.trim();
       } else if (options?.forUpdate) {
         payload.description = '';
       }
-      if (values.payment_method) {
-        payload.payment_method = values.payment_method;
-      } else if (options?.forUpdate) {
-        (payload as any).payment_method = null;
+      const paymentMethodId = coercePositiveId(values.payment_method);
+      if (paymentMethodId) {
+        payload.payment_method = paymentMethodId;
       }
       return payload;
     },
@@ -250,12 +376,13 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
 
   const canCreateFromValues = (values: ExpenseFormValues) =>
     !!values.posting_date &&
-    !!values.expense_type &&
+    !!coercePositiveId(values.expense_type) &&
+    !!coercePositiveId(values.payment_method) &&
     parseAmount(values.amount) > 0;
 
   const autoSaveField = useCallback(
     async (field: keyof ExpenseFormValues, rawValue: any) => {
-      if (!visible || isPosted || !canWrite || savingRef.current) {
+      if (!visible || isLocked || !canWrite || savingRef.current) {
         return;
       }
 
@@ -265,8 +392,7 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
           : rawValue;
       const record = currentRecordRef.current;
       const values = {...formDataRef.current, [field]: rawValue};
-
-      const previous = (formDataRef.current as any)[field];
+      const previous = lastSavedRef.current[field];
       if (field === 'amount') {
         if (parseAmount(String(previous ?? '')) === parseAmount(String(value ?? ''))) {
           return;
@@ -286,6 +412,13 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
         setErrors(prev => ({
           ...prev,
           expense_type: 'Expense type is required',
+        }));
+        return;
+      }
+      if (field === 'payment_method' && !value) {
+        setErrors(prev => ({
+          ...prev,
+          payment_method: 'Payment method is required to credit the bank or cash account',
         }));
         return;
       }
@@ -315,8 +448,10 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
           const created = await ExpenseServices.createExpense(
             buildPayload(values),
           );
+          const next = expenseToForm(created, values, expenseTypes);
           setCurrentRecord(created);
-          setFormData(expenseToForm(created));
+          setFormData(next);
+          lastSavedRef.current = next;
           onRecordChange?.(created);
           onSave();
           flashSaved();
@@ -325,8 +460,10 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
             record.id,
             buildPayload(values, {forUpdate: true}),
           );
+          const next = expenseToForm(updated, values, expenseTypes);
           setCurrentRecord(updated);
-          setFormData(expenseToForm(updated));
+          setFormData(next);
+          lastSavedRef.current = next;
           onRecordChange?.(updated);
           onSave();
           flashSaved();
@@ -351,36 +488,41 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     },
     [
       visible,
-      isPosted,
+      isLocked,
       canWrite,
       buildPayload,
       onRecordChange,
       onSave,
       flashSaved,
+      expenseTypes,
     ],
   );
 
-  const handleDateChange = (_event: any, selectedDate?: Date) => {
-    setShowDatePicker(false);
-    if (!selectedDate) {
+  const handleAmountChange = (text: string) => {
+    if (!amountFocusedRef.current) {
       return;
     }
-    const nextDate = selectedDate.toISOString().split('T')[0];
+    const numericValue = sanitizeAmountInput(text);
+    setFormData(prev => ({...prev, amount: numericValue}));
+    if (amountSaveTimerRef.current) {
+      clearTimeout(amountSaveTimerRef.current);
+    }
+    amountSaveTimerRef.current = setTimeout(() => {
+      amountSaveTimerRef.current = null;
+      void autoSaveField('amount', numericValue);
+    }, 700);
+  };
+
+  const handleDateChange = (event: any, selectedDate?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowDatePicker(false);
+    }
+    if (event?.type === 'dismissed' || !selectedDate) {
+      return;
+    }
+    const nextDate = formatDateYmdLocal(selectedDate);
     setFormData(prev => ({...prev, posting_date: nextDate}));
     void autoSaveField('posting_date', nextDate);
-  };
-
-  const handleAmountChange = (text: string) => {
-    const numericValue = text.replace(/[^0-9.]/g, '');
-    setFormData(prev => ({...prev, amount: numericValue}));
-  };
-
-  const formatAmount = (value: string) => {
-    if (!value) {
-      return '';
-    }
-    const numValue = parseFloat(value.replace(/,/g, '')) || 0;
-    return numValue.toLocaleString();
   };
 
   const expenseTypeName = useMemo(() => {
@@ -394,6 +536,18 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     () => paymentMethods.filter(method => !isUnpaidPaymentMethod(method)),
     [paymentMethods],
   );
+
+  useEffect(() => {
+    if (!visible || isLocked || formData.payment_method) {
+      return;
+    }
+    const method = pickDefaultCashPaymentMethod(expensePaymentMethods);
+    if (method?.id != null) {
+      setFormData(prev =>
+        prev.payment_method ? prev : {...prev, payment_method: method.id},
+      );
+    }
+  }, [visible, isLocked, formData.payment_method, expensePaymentMethods]);
 
   const paymentMethodName = useMemo(() => {
     if (!formData.payment_method) {
@@ -430,7 +584,11 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     if (!raw || parseFloat(raw) <= 0) {
       return '—';
     }
-    return formatCurrencyCompact(parseFloat(raw) || 0);
+    const display = formatAmountWithCommas(
+      raw,
+      raw.includes('.') ? 2 : undefined,
+    );
+    return `${getLocalCurrencyCode()} ${display}`;
   }, [formData.amount]);
 
   const handlePost = async () => {
@@ -451,8 +609,8 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     }
 
     Alert.alert(
-      'Post Expense',
-      'Are you sure you want to post this expense? This will create G/L entries.',
+      'Post expense',
+      'Are you sure you want to post this expense? This will take the amount from the selected payment method.',
       [
         {text: 'Cancel', style: 'cancel'},
         {
@@ -466,11 +624,15 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                 text1: 'Success',
                 text2: result.message || 'Expense posted successfully',
               });
+              onSave();
+              if (onPosted) {
+                onPosted();
+                return;
+              }
               const refreshed = await ExpenseServices.getExpense(currentRecord.id);
               setCurrentRecord(refreshed);
-              setFormData(expenseToForm(refreshed));
+              setFormData(expenseToForm(refreshed, formDataRef.current, expenseTypes));
               onRecordChange?.(refreshed);
-              onSave();
             } catch (error: any) {
               Toast.show({
                 type: 'error',
@@ -486,6 +648,71 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
       ],
     );
   };
+
+  const handleReverse = async () => {
+    if (!isPersisted || !currentRecord || !isPosted) {
+      return;
+    }
+
+    Alert.alert(
+      'Reverse entries',
+      'To reverse these entries, correcting entries will be posted.\n\nDo you want to reverse the entries?',
+      [
+        {text: 'No', style: 'cancel'},
+        {
+          text: 'Yes',
+          onPress: async () => {
+            setReversing(true);
+            try {
+              const result = await ExpenseServices.reverseExpense(
+                currentRecord.id,
+              );
+              Toast.show({
+                type: 'success',
+                text1: 'Reversed',
+                text2:
+                  result.message ||
+                  'Correcting G/L entries were posted for this expense.',
+              });
+              onSave();
+              if (onReversed) {
+                onReversed();
+                return;
+              }
+              const refreshed = await ExpenseServices.getExpense(
+                currentRecord.id,
+              );
+              setCurrentRecord(refreshed);
+              setFormData(
+                expenseToForm(refreshed, formDataRef.current, expenseTypes),
+              );
+              onRecordChange?.(refreshed);
+            } catch (error: any) {
+              Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: extractApiErrorMessage(
+                  error,
+                  'error',
+                  'Failed to reverse expense',
+                ),
+              });
+            } finally {
+              setReversing(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const pageTitle = isReversed
+    ? 'Reversed expense'
+    : isPosted
+      ? 'Posted expense'
+      : isPersisted
+        ? 'Edit expense'
+        : 'Add expense';
 
   return (
     <Modal
@@ -519,23 +746,7 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
               </QuickIconPressable>
 
               <View style={styles.headerRightActions}>
-                {canPost && isPersisted && currentRecord?.status === 'Open' ? (
-                  <TouchableOpacity
-                    style={[
-                      styles.headerPostButton,
-                      posting && styles.buttonDisabled,
-                    ]}
-                    onPress={handlePost}
-                    disabled={posting || isSaving}
-                    activeOpacity={0.85}>
-                    {posting ? (
-                      <ActivityIndicator size="small" color={COLORS.white} />
-                    ) : (
-                      <Text style={styles.headerPostText}>Post</Text>
-                    )}
-                  </TouchableOpacity>
-                ) : null}
-                {canWrite && !isPosted && (isSaving || showSaved) ? (
+                {canWrite && !isLocked && (isSaving || showSaved) ? (
                   <View
                     style={styles.headerStatus}
                     accessibilityRole="text"
@@ -548,6 +759,39 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                       {isSaving ? 'Saving...' : 'Saved'}
                     </Text>
                   </View>
+                ) : null}
+                {canPost && isPersisted && currentRecord?.status === 'Open' ? (
+                  <TouchableOpacity
+                    style={[
+                      styles.headerPostButton,
+                      posting && styles.buttonDisabled,
+                    ]}
+                    onPress={handlePost}
+                    disabled={posting || isSaving}
+                    activeOpacity={0.85}
+                    accessibilityLabel="Post expense">
+                    {posting ? (
+                      <ActivityIndicator size="small" color={COLORS.white} />
+                    ) : (
+                      <Text style={styles.headerPostText}>Post</Text>
+                    )}
+                  </TouchableOpacity>
+                ) : canPost && isPosted ? (
+                  <TouchableOpacity
+                    style={[
+                      styles.headerPostButton,
+                      reversing && styles.buttonDisabled,
+                    ]}
+                    onPress={handleReverse}
+                    disabled={reversing}
+                    activeOpacity={0.85}
+                    accessibilityLabel="Reverse expense entries">
+                    {reversing ? (
+                      <ActivityIndicator size="small" color={COLORS.white} />
+                    ) : (
+                      <Text style={styles.headerPostText}>Reverse</Text>
+                    )}
+                  </TouchableOpacity>
                 ) : (
                   <View style={styles.headerStatusSpacer} />
                 )}
@@ -560,9 +804,9 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled">
               <Text style={[styles.pageTitle, expTheme.pageTitle]}>
-                {isPersisted ? 'Edit expense' : 'Add expense'}
+                {pageTitle}
               </Text>
-              {!isPosted ? (
+              {!isLocked ? (
                 <Text style={[styles.autoSaveHint, expTheme.autoSaveHint]}>
                   Changes save automatically when you leave a field
                 </Text>
@@ -619,14 +863,14 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                   style={[
                     styles.selectRow,
                     expTheme.selectRow,
-                    isPosted && [
+                    isLocked && [
                       styles.selectRowDisabled,
                       expTheme.selectRowDisabled,
                     ],
                   ]}
-                  onPress={() => !isPosted && canWrite && setShowDatePicker(true)}
+                  onPress={() => !isLocked && canWrite && setShowDatePicker(true)}
                   activeOpacity={0.7}
-                  disabled={isPosted || !canWrite}>
+                  disabled={isLocked || !canWrite}>
                   <Text
                     style={[
                       styles.selectRowText,
@@ -635,9 +879,9 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                         styles.selectRowPlaceholder,
                         expTheme.selectRowPlaceholder,
                       ],
-                      isPosted && [styles.disabledText, expTheme.disabledText],
+                      isLocked && [styles.disabledText, expTheme.disabledText],
                     ]}>
-                    {formData.posting_date || 'Select date'}
+                    {toDateOnly(formData.posting_date) || 'Select date'}
                   </Text>
                   <Text
                     style={[styles.selectRowChevron, expTheme.selectRowChevron]}>
@@ -649,7 +893,9 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                 ) : null}
                 {showDatePicker ? (
                   <DateTimePicker
-                    value={new Date(formData.posting_date)}
+                    value={
+                      parseLocalISODate(formData.posting_date) ?? new Date()
+                    }
                     mode="date"
                     display="default"
                     onChange={handleDateChange}
@@ -681,16 +927,16 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                     style={[
                       styles.selectRow,
                       expTheme.selectRow,
-                      isPosted && [
+                      isLocked && [
                         styles.selectRowDisabled,
                         expTheme.selectRowDisabled,
                       ],
                     ]}
                     onPress={() =>
-                      !isPosted && canWrite && setExpenseTypePickerVisible(true)
+                      !isLocked && canWrite && setExpenseTypePickerVisible(true)
                     }
                     activeOpacity={0.7}
-                    disabled={isPosted || !canWrite}>
+                    disabled={isLocked || !canWrite}>
                     <Text
                       style={[
                         styles.selectRowText,
@@ -699,7 +945,7 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                           styles.selectRowPlaceholder,
                           expTheme.selectRowPlaceholder,
                         ],
-                        isPosted && [styles.disabledText, expTheme.disabledText],
+                        isLocked && [styles.disabledText, expTheme.disabledText],
                       ]}>
                       {expenseTypeName || 'Select expense type'}
                     </Text>
@@ -740,7 +986,7 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                   placeholderTextColor={colors.placeholder}
                   multiline
                   numberOfLines={4}
-                  editable={!isPosted && canWrite}
+                  editable={!isLocked && canWrite}
                 />
 
                 <Text
@@ -757,18 +1003,31 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                     expTheme.input,
                     errors.amount && styles.inputError,
                   ]}
-                  value={formatAmount(formData.amount)}
+                  value={formatAmountWithCommas(
+                    formData.amount,
+                    amountFocused ? undefined : 2,
+                  )}
                   onChangeText={handleAmountChange}
-                  onBlur={() =>
+                  onFocus={() => {
+                    amountFocusedRef.current = true;
+                    setAmountFocused(true);
+                  }}
+                  onBlur={() => {
+                    amountFocusedRef.current = false;
+                    setAmountFocused(false);
+                    if (amountSaveTimerRef.current) {
+                      clearTimeout(amountSaveTimerRef.current);
+                      amountSaveTimerRef.current = null;
+                    }
                     void autoSaveField(
                       'amount',
                       formDataRef.current.amount || '',
-                    )
-                  }
+                    );
+                  }}
                   placeholder="0"
                   placeholderTextColor={colors.placeholder}
-                  keyboardType="numeric"
-                  editable={!isPosted && canWrite}
+                  keyboardType="decimal-pad"
+                  editable={!isLocked && canWrite}
                 />
                 {errors.amount ? (
                   <Text style={styles.errorText}>{errors.amount}</Text>
@@ -780,23 +1039,23 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                     expTheme.fieldLabel,
                     styles.fieldLabelSpaced,
                   ]}>
-                  Payment method
-                  {isPosted ? '' : ' (optional)'}
+                  Payment method *
                 </Text>
                 <TouchableOpacity
                   style={[
                     styles.selectRow,
                     expTheme.selectRow,
-                    isPosted && [
+                    errors.payment_method && styles.inputError,
+                    isLocked && [
                       styles.selectRowDisabled,
                       expTheme.selectRowDisabled,
                     ],
                   ]}
                   onPress={() =>
-                    !isPosted && canWrite && setPaymentMethodPickerVisible(true)
+                    !isLocked && canWrite && setPaymentMethodPickerVisible(true)
                   }
                   activeOpacity={0.7}
-                  disabled={isPosted || !canWrite}>
+                  disabled={isLocked || !canWrite}>
                   <Text
                     style={[
                       styles.selectRowText,
@@ -805,7 +1064,7 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                         styles.selectRowPlaceholder,
                         expTheme.selectRowPlaceholder,
                       ],
-                      isPosted && [styles.disabledText, expTheme.disabledText],
+                      isLocked && [styles.disabledText, expTheme.disabledText],
                     ]}>
                     {paymentMethodName || 'Select payment method'}
                   </Text>
@@ -814,6 +1073,9 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                     ›
                   </Text>
                 </TouchableOpacity>
+                {errors.payment_method ? (
+                  <Text style={styles.errorText}>{errors.payment_method}</Text>
+                ) : null}
               </View>
 
               {isPersisted ? (
@@ -842,12 +1104,18 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                 </Text>
                 <View style={[styles.infoCard, expTheme.infoCard]}>
                   <Text style={[styles.infoCardTitle, expTheme.infoCardTitle]}>
-                    {isPosted ? 'This expense is posted' : 'Before you post'}
+                    {isReversed
+                      ? 'This expense is reversed'
+                      : isPosted
+                        ? 'This expense is posted'
+                        : 'Before you post'}
                   </Text>
                   <Text style={[styles.infoCardBody, expTheme.infoCardBody]}>
-                    {isPosted
-                      ? 'Posted expenses are read-only. Create a reversal from the list if you need to adjust.'
-                      : 'Fill expense type and amount to auto-save as Open, then use Post when you are ready to create G/L entries. A payment method is required to post.'}
+                    {isReversed
+                      ? 'Correcting G/L entries have been posted. This record is read-only.'
+                      : isPosted
+                        ? 'Posted expenses are read-only. Reverse the entries to post correcting G/L entries, the same way Business Central reverses a G/L register.'
+                        : 'Fill expense type, amount, and payment method to auto-save as Open. Payment method is required because posting credits that bank or cash account.'}
                   </Text>
                 </View>
               </View>
@@ -877,14 +1145,14 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
         options={paymentMethodOptions}
         selectedId={formData.payment_method}
         searchPlaceholder="Search payment methods…"
-        allowClear
-        clearLabel="No payment method"
         onClose={() => setPaymentMethodPickerVisible(false)}
         onSelect={id => {
-          const nextMethod = typeof id === 'number' ? id : null;
-          setFormData(prev => ({...prev, payment_method: nextMethod}));
+          if (typeof id !== 'number') {
+            return;
+          }
+          setFormData(prev => ({...prev, payment_method: id}));
           setPaymentMethodPickerVisible(false);
-          void autoSaveField('payment_method', nextMethod);
+          void autoSaveField('payment_method', id);
         }}
       />
     </Modal>
@@ -929,7 +1197,10 @@ const styles = StyleSheet.create({
   headerRightActions: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'flex-end',
     gap: 10,
+    flex: 1,
+    marginLeft: 12,
   },
   headerPostButton: {
     minWidth: 88,
@@ -949,7 +1220,7 @@ const styles = StyleSheet.create({
     minWidth: 72,
     height: 48,
     justifyContent: 'center',
-    alignItems: 'center',
+    alignItems: 'flex-end',
     paddingHorizontal: 8,
     backgroundColor: 'transparent',
   },

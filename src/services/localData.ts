@@ -92,10 +92,13 @@ export async function getLocalPaymentMethods(): Promise<PaymentMethod[]> {
   if (!methods.length) {
     return [];
   }
-  const {filterCollectablePaymentMethods} = await import(
-    '../utils/paymentMethodDefaults'
+  const {
+    filterCollectablePaymentMethods,
+    withNormalizedTransactionIdFlag,
+  } = await import('../utils/paymentMethodDefaults');
+  return filterCollectablePaymentMethods(methods).map(
+    withNormalizedTransactionIdFlag,
   );
-  return filterCollectablePaymentMethods(methods);
 }
 
 export async function getLocalCustomers(): Promise<Customer[]> {

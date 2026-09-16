@@ -17,7 +17,7 @@ import {
   RefreshControl,
   TextInput,
 } from 'react-native';
-import {useNavigation, useIsFocused} from '@react-navigation/native';
+import {useNavigation, useIsFocused, useRoute} from '@react-navigation/native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import {COLORS, FONTS, SIZES, icons} from '../../constants';
 import PurchaseHistoryListItem from './PurchaseHistoryListItem';
@@ -62,6 +62,7 @@ const FILTERS: {id: PurchaseHistoryFilter; label: string}[] = [
 
 const PurchaseHistory = () => {
   const navigation = useNavigation();
+  const route = useRoute<any>();
   const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
   const {colors, isDark} = useTheme();
@@ -116,6 +117,17 @@ const PurchaseHistory = () => {
   const [totalPages, setTotalPages] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
   const itemsPerPage = 20;
+
+  useEffect(() => {
+    const nextSearch = route.params?.initialSearch as string | undefined;
+    if (typeof nextSearch === 'string' && nextSearch.trim()) {
+      setSearchQuery(nextSearch);
+      setActiveFilter('last30days');
+    }
+    if (route.params?.statusFilter === 'all') {
+      setStatusFilter('all');
+    }
+  }, [route.params?.initialSearch, route.params?.statusFilter]);
 
   const {startDate, endDate} = useMemo(() => {
     // Get current date in local timezone (Uganda)

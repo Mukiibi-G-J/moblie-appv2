@@ -42,7 +42,7 @@ export interface ExpenseFormValues {
   amount: string; // String for input, converted to number
   payment_method: number | null;
   external_document_no?: string;
-  status?: 'Open' | 'Posted';
+  status?: 'Open' | 'Posted' | 'Reversed';
 }
 
 export interface PostingPreview {

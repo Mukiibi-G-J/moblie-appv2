@@ -3,6 +3,7 @@ import { appendMandatorySystemFooter } from "./systemFooter";
 import {
   cleanPaymentMethodLabel,
   effectiveReceiptCols,
+  fitReceiptCompanyName,
   formatReceiptAmount,
   formatReceiptDate,
   padReceiptColumns,
@@ -46,52 +47,74 @@ function lineTotal(item: {
   return q * u;
 }
 
+function amountsMatch(a?: number, b?: number): boolean {
+  if (a == null || b == null) {
+    return false;
+  }
+  return Math.abs(Number(a) - Number(b)) < 0.5;
+}
+
+function hasPrintableLogo(logo?: string | null): boolean {
+  if (!logo?.trim()) {
+    return false;
+  }
+  return !logo.includes("company_logos/default.png");
+}
+
+function pushCompanyName(
+  nodes: ReceiptDocumentNode[],
+  branding: ReceiptBranding,
+  cols = 32,
+): void {
+  const name = fitReceiptCompanyName(
+    branding.displayName || branding.name || "",
+    cols,
+  );
+  if (!name) {
+    return;
+  }
+  nodes.push({
+    type: "text",
+    text: name,
+    style: { align: "center" },
+  });
+}
+
 function buildSaleSection(
   section: TemplateSection,
   payload: SaleReceiptPayload,
   branding: ReceiptBranding,
   cols: number,
   nodes: ReceiptDocumentNode[],
+  compactLayout: boolean,
 ): void {
   const isPrepayment = payload.receiptType === "prepayment";
   const cfg = section.config || {};
 
   switch (section.id) {
     case "logo":
-      if (branding.logo) {
-        nodes.push({ type: "image", src: branding.logo, style: { align: "center" } });
-        nodes.push({ type: "feed", lines: 1 });
+      if (hasPrintableLogo(branding.logo)) {
+        nodes.push({ type: "image", src: branding.logo as string, style: { align: "center" } });
       }
       break;
     case "title":
       nodes.push({
         type: "text",
         text: String(cfg.text || (isPrepayment ? "PAYMENT RECEIPT" : "SALES RECEIPT")),
-        style: { align: "center", bold: true, double: true },
+        style: { align: "center", bold: true },
       });
-      nodes.push({ type: "feed", lines: 1 });
       break;
     case "company_block": {
-      const name = branding.displayName || branding.name;
-      if (name) {
-        nodes.push({ type: "text", text: name, style: { align: "center", bold: true } });
-      }
+      pushCompanyName(nodes, branding, cols);
       if (branding.address) {
         nodes.push({ type: "text", text: branding.address, style: { align: "center" } });
       }
       if (branding.phone) {
-        nodes.push({ type: "text", text: `Tel: ${branding.phone}`, style: { align: "center" } });
-      }
-      if (branding.email) {
-        nodes.push({ type: "text", text: branding.email, style: { align: "center" } });
-      }
-      if (branding.tin) {
-        nodes.push({ type: "text", text: `TIN: ${branding.tin}`, style: { align: "center" } });
+        nodes.push({ type: "text", text: branding.phone, style: { align: "center" } });
       }
       if (branding.vatNo) {
         nodes.push({ type: "text", text: `VAT No: ${branding.vatNo}`, style: { align: "center" } });
       }
-      nodes.push({ type: "feed", lines: 1 });
       break;
     }
     case "branch_line": {
@@ -104,11 +127,21 @@ function buildSaleSection(
     }
     case "receipt_meta":
       if (!isPrepayment) {
-        nodes.push({ type: "text", text: `Invoice: ${payload.invoiceNo}`, style: { align: "center" } });
+        nodes.push({
+          type: "text",
+          text: compactLayout ? String(payload.invoiceNo) : `Invoice: ${payload.invoiceNo}`,
+          style: { align: "center", bold: true },
+        });
       }
-      nodes.push({ type: "text", text: `Date: ${formatReceiptDate(payload.documentDate)}` });
-      if (payload.sellerName) {
-        nodes.push({ type: "text", text: `Cashier: ${payload.sellerName}` });
+      if (compactLayout) {
+        const date = formatReceiptDate(payload.documentDate, true);
+        const who = payload.sellerName ? `  ${payload.sellerName}` : "";
+        nodes.push({ type: "text", text: `${date}${who}`, style: { align: "center" } });
+      } else {
+        nodes.push({ type: "text", text: `Date: ${formatReceiptDate(payload.documentDate)}` });
+        if (payload.sellerName) {
+          nodes.push({ type: "text", text: `Cashier: ${payload.sellerName}` });
+        }
       }
       nodes.push({ type: "rule" });
       break;
@@ -129,13 +162,15 @@ function buildSaleSection(
     case "line_items_compact":
     case "line_items": {
       const compact = section.id === "line_items_compact";
-      nodes.push({
-        type: "row",
-        left: "Qty",
-        right: "Amount",
-        style: { bold: true },
-      });
-      nodes.push({ type: "rule" });
+      if (!compact) {
+        nodes.push({
+          type: "row",
+          left: "Qty",
+          right: "Amount",
+          style: { bold: true },
+        });
+        nodes.push({ type: "rule" });
+      }
       for (const item of payload.lines) {
         const lt = lineTotal(item);
         const qty = item.quantity;
@@ -195,7 +230,7 @@ function buildSaleSection(
         type: "row",
         left: isPrepayment ? "Total:" : "TOTAL:",
         right: formatReceiptAmount(payload.totalAmount),
-        style: { bold: true },
+        style: compactLayout ? undefined : { bold: true },
       });
       if (payload.discount && payload.discount > 0) {
         nodes.push({
@@ -215,7 +250,7 @@ function buildSaleSection(
             type: "row",
             left: "Paid today:",
             right: formatReceiptAmount(payload.amountReceived),
-            style: { bold: true },
+            style: compactLayout ? undefined : { bold: true },
           });
         }
         if (payload.remainingBalance != null) {
@@ -223,16 +258,22 @@ function buildSaleSection(
             type: "row",
             left: "Still to pay:",
             right: formatReceiptAmount(payload.remainingBalance),
-            style: { bold: true },
+            style: compactLayout ? undefined : { bold: true },
           });
         }
       } else {
-        if (payload.amountReceived != null && payload.amountReceived > 0) {
+        const showTendered =
+          payload.amountReceived != null &&
+          payload.amountReceived > 0 &&
+          (!compactLayout ||
+            !amountsMatch(payload.amountReceived, payload.totalAmount) ||
+            (payload.changeAmount != null && payload.changeAmount > 0));
+        if (showTendered) {
           nodes.push({
             type: "row",
             left: "Tendered:",
             right: formatReceiptAmount(payload.amountReceived),
-            style: { bold: true },
+            style: compactLayout ? undefined : { bold: true },
           });
         }
         if (payload.changeAmount != null && payload.changeAmount > 0) {
@@ -240,7 +281,7 @@ function buildSaleSection(
             type: "row",
             left: "Change:",
             right: formatReceiptAmount(payload.changeAmount),
-            style: { bold: true },
+            style: compactLayout ? undefined : { bold: true },
           });
         }
       }
@@ -261,13 +302,10 @@ function buildSaleSection(
     case "footer_thanks": {
       nodes.push({
         type: "text",
-        text: "Thank you for your purchase!",
-        style: { align: "center" },
-      });
-      nodes.push({
-        type: "text",
-        text: "Please come again",
-        style: { align: "center" },
+        text: "THANK YOU",
+        style: compactLayout
+          ? { align: "center" }
+          : { align: "center", bold: true },
       });
       break;
     }
@@ -275,12 +313,16 @@ function buildSaleSection(
       const lines =
         (cfg.lines as string[])?.length > 0
           ? (cfg.lines as string[])
-          : [
-              "www.zentroapp.app",
-              "Contact: 0750440865 / 0779899789",
-              "Powered by Zentroapp",
-            ];
-      nodes.push({ type: "rule" });
+          : compactLayout
+            ? ["Powered by Zentroapp"]
+            : [
+                "www.zentroapp.app",
+                "Contact: 0750440865 / 0779899789",
+                "Powered by Zentroapp",
+              ];
+      if (!compactLayout) {
+        nodes.push({ type: "rule" });
+      }
       for (const ln of lines) {
         nodes.push({ type: "text", text: ln, style: { align: "center" } });
       }
@@ -368,7 +410,7 @@ function buildKotBarSection(
         text: String(cfg.text || "*** KITCHEN COPY ***"),
         style: { align: "center", bold: true },
       });
-      nodes.push({ type: "feed", lines: 2 });
+      nodes.push({ type: "feed", lines: 1 });
       break;
     default:
       break;
@@ -380,6 +422,7 @@ function buildPaymentJournalSection(
   payload: PaymentJournalPayload,
   branding: ReceiptBranding,
   nodes: ReceiptDocumentNode[],
+  cols = 32,
 ): void {
   const cfg = section.config || {};
   switch (section.id) {
@@ -391,9 +434,7 @@ function buildPaymentJournalSection(
       });
       break;
     case "company_block":
-      if (branding.name) {
-        nodes.push({ type: "text", text: branding.displayName || branding.name, style: { align: "center", bold: true } });
-      }
+      pushCompanyName(nodes, branding, cols);
       if (branding.address) {
         nodes.push({ type: "text", text: branding.address, style: { align: "center" } });
       }
@@ -444,6 +485,7 @@ export function buildReceiptDocument(
     template.paperProfile?.widthMm ?? 58,
   );
   const nodes: ReceiptDocumentNode[] = [];
+  const compactLayout = template.layoutPreset === "compact";
 
   if (
     template.editorMode === "format_string" &&
@@ -474,6 +516,7 @@ export function buildReceiptDocument(
         payload as PaymentJournalPayload,
         branding,
         nodes,
+        cols,
       );
     } else {
       buildSaleSection(
@@ -482,6 +525,7 @@ export function buildReceiptDocument(
         branding,
         cols,
         nodes,
+        compactLayout,
       );
     }
   }
