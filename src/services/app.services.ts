@@ -54,8 +54,15 @@ export const fetchSalesByCategory = async (
         startDate,
         endDate,
       },
-      skipAuthFailure: true,
-    } as any);
+      // 403 means this login cannot see the report. Do not treat that as a bad token.
+      validateStatus: status => status < 500,
+    });
+    if (response.status === 403 || response.status === 404) {
+      return null;
+    }
+    if (response.status >= 400) {
+      throw response;
+    }
     return response.data as SalesCategoryStatement;
   } catch (error: any) {
     const status = error?.response?.status;
