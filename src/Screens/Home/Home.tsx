@@ -42,6 +42,7 @@ import {
   KPIMetrics,
 } from '../../services/app.services';
 import TodayMySalesBar from '../../Components/TodayMySalesBar';
+import SalesCategoryHomeReport from '../../Components/SalesCategoryHomeReport';
 import {formatCurrency} from '../../utils/currency';
 import {constrainedWidthStyle, isWideLayout, SHEET_MAX_WIDTH} from '../../utils/layout';
 
@@ -936,6 +937,10 @@ export default function Home() {
 
         {renderMetricCards()}
         {renderFinancialReports()}
+        <SalesCategoryHomeReport
+          pageId={auth.roleCentrePageId ?? null}
+          refreshKey={mySalesRefreshKey}
+        />
 
         <View style={styles.sectionBlock}>
           <Options wide={isWide} lowStockCount={lowStockItems.length} />

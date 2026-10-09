@@ -327,7 +327,7 @@ const createAxiosInstance = (tenant?: string) => {
         return Promise.reject({
           ...error,
           customMessage: USE_TEST_ENV
-            ? 'Unable to connect to test server. Make sure:\n1. Your device and computer are on the same WiFi network\n2. The server is running on http://10.10.0.3:8000\n3. For Android: Run "adb reverse tcp:8000 tcp:8000" and use "http://localhost:8000" instead'
+            ? `Unable to connect to test server. Make sure:\n1. Your device and computer are on the same WiFi network\n2. The server is running on ${TEST_API_BASE_URL}\n3. Django is bound to 0.0.0.0, not 127.0.0.1`
             : 'Please check your internet connection and try again.',
         });
       }

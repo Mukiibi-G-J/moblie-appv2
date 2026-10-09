@@ -638,7 +638,9 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                 type: 'error',
                 text1: 'Error',
                 text2:
-                  error?.response?.data?.detail || 'Failed to post expense',
+                  error?.response?.data?.error ||
+                  error?.response?.data?.detail ||
+                  'Failed to post expense',
               });
             } finally {
               setPosting(false);

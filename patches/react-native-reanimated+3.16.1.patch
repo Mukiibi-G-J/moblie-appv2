@@ -1,0 +1,26 @@
+diff --git a/node_modules/react-native-reanimated/android/CMakeLists.txt b/node_modules/react-native-reanimated/android/CMakeLists.txt
+--- a/node_modules/react-native-reanimated/android/CMakeLists.txt
++++ b/node_modules/react-native-reanimated/android/CMakeLists.txt
+@@ -47,7 +47,21 @@ set(ignoreMe "${JS_RUNTIME_DIR}")
+ 
+ set(BUILD_DIR "${CMAKE_SOURCE_DIR}/build")
+ set(ANDROID_CPP_DIR "${CMAKE_SOURCE_DIR}/src/main/cpp")
+-set(COMMON_CPP_DIR "${CMAKE_SOURCE_DIR}/../Common/cpp")
++# Common/ sits outside android/, so CMake names those object files with the
++# full project path. On Windows that exceeds MAX_PATH. A junction inside this
++# source tree keeps the object paths short.
++set(REANIMATED_COMMON_LINK "${CMAKE_SOURCE_DIR}/reanimated-common")
++if(NOT EXISTS "${REANIMATED_COMMON_LINK}/cpp")
++    execute_process(
++        COMMAND cmd /c mklink /J "reanimated-common" "..\\Common"
++        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
++        RESULT_VARIABLE REANIMATED_LINK_RESULT
++    )
++    if(NOT REANIMATED_LINK_RESULT EQUAL 0)
++        message(FATAL_ERROR "Failed to junction reanimated-common to Common")
++    endif()
++endif()
++set(COMMON_CPP_DIR "${REANIMATED_COMMON_LINK}/cpp")
+ 
+ add_subdirectory("${ANDROID_CPP_DIR}/worklets")
+ add_subdirectory("${ANDROID_CPP_DIR}/reanimated")
