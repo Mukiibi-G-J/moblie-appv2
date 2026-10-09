@@ -12,6 +12,7 @@ import {
 import {useNavigation} from '@react-navigation/native';
 import {FONTS, SIZES, COLORS, icons, dummyData} from '../../constants';
 import Options from './Options';
+import SalesByCategory from './SalesByCategory';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {ScrollView} from 'react-native-gesture-handler';
 import {MenuItem, MenuCategory} from '../../@types/types.dto';
@@ -290,6 +291,8 @@ export default function Home() {
         contentContainerStyle={styles.scrollContent}>
         {renderHeader()}
         {/* {renderQuickStats()} */}
+
+        <SalesByCategory />
 
         <View style={styles.mainContent}>
           <Options />

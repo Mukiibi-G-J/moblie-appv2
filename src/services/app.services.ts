@@ -22,6 +22,50 @@ export const searchItems = async (searchQuery: string) => {
   }
 };
 
+export type SalesCategoryRow = {
+  Label: string;
+  Amount: number;
+  FormattedAmount: string;
+  Share: number;
+};
+
+export type SalesCategoryStatement = {
+  Title: string;
+  CompanyName: string;
+  StartDate: string;
+  EndDate: string;
+  CurrencyCode: string;
+  Total: number;
+  TotalFormatted: string;
+  Rows: SalesCategoryRow[];
+};
+
+/** Home report. 403/404 return null so callers can hide the card. */
+export const fetchSalesByCategory = async (
+  startDate: string,
+  endDate: string,
+): Promise<SalesCategoryStatement | null> => {
+  try {
+    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+    const client = createAxiosInstance(tenant);
+    const response = await client.get('/api/pages/dashboard-report/', {
+      params: {
+        code: 'sales-by-sales-category',
+        startDate,
+        endDate,
+      },
+      skipAuthFailure: true,
+    } as any);
+    return response.data as SalesCategoryStatement;
+  } catch (error: any) {
+    const status = error?.response?.status;
+    if (status === 403 || status === 404) {
+      return null;
+    }
+    throw error;
+  }
+};
+
 // New function to fetch sales data
 export const fetchSalesData = async (filters?: {
   startDate?: string;

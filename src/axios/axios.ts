@@ -53,7 +53,12 @@ const createAxiosInstance = (tenant?: string) => {
         return Promise.reject(error.response?.data.detail);
       }
 
+      const skipAuthFailure = Boolean(
+        (error.config as InternalAxiosRequestConfig & {skipAuthFailure?: boolean})
+          ?.skipAuthFailure,
+      );
       if (
+        !skipAuthFailure &&
         error.response &&
         (error.response.status === 401 || error.response.status === 403)
       ) {
