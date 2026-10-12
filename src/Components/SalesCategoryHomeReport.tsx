@@ -157,7 +157,7 @@ export default function SalesCategoryHomeReport({pageId, refreshKey = 0}: Props)
         {section.Caption || 'Sales by category'}
       </Text>
       <View style={[styles.card, {backgroundColor: cardBg, borderColor: colors.border}]}>
-        <View style={styles.chips}>
+        <View collapsable={false} style={styles.chips}>
           {PRESETS.map(item => {
             const selected = preset === item.id;
             return (
@@ -183,7 +183,7 @@ export default function SalesCategoryHomeReport({pageId, refreshKey = 0}: Props)
           })}
         </View>
         {preset === 'custom' ? (
-          <View style={styles.dates}>
+          <View collapsable={false} style={styles.dates}>
             <TextInput
               value={customStart}
               onChangeText={setCustomStart}
@@ -200,9 +200,11 @@ export default function SalesCategoryHomeReport({pageId, refreshKey = 0}: Props)
             />
           </View>
         ) : (
-          <Text style={[styles.period, {color: colors.textSecondary}]}>
-            {dates.startDate} – {dates.endDate}
-          </Text>
+          <View collapsable={false} style={styles.periodRow}>
+            <Text style={[styles.period, {color: colors.textSecondary}]}>
+              {dates.startDate} – {dates.endDate}
+            </Text>
+          </View>
         )}
         {loading ? (
           <ActivityIndicator color={COLORS.primary} style={styles.loader} />
@@ -243,7 +245,7 @@ export default function SalesCategoryHomeReport({pageId, refreshKey = 0}: Props)
 }
 
 const styles = StyleSheet.create({
-  block: {marginBottom: 8},
+  block: {marginBottom: 0},
   eyebrow: {
     fontSize: 13,
     fontWeight: '700',
@@ -256,15 +258,25 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 14,
   },
-  chips: {flexDirection: 'row', flexWrap: 'wrap', gap: 8},
+  chips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'flex-start',
+    paddingBottom: 12,
+  },
   chip: {
     borderWidth: 1,
     borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginRight: 8,
+    marginBottom: 8,
   },
-  chipText: {fontSize: 12, fontWeight: '600'},
-  dates: {flexDirection: 'row', gap: 8, marginTop: 10},
+  chipText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  dates: {flexDirection: 'row', gap: 8, marginBottom: 12},
   dateInput: {
     flex: 1,
     borderWidth: 1,
@@ -273,7 +285,12 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     fontSize: 13,
   },
-  period: {marginTop: 10, fontSize: 12},
+  periodRow: {
+    marginBottom: 12,
+  },
+  period: {
+    fontSize: 13,
+  },
   loader: {marginVertical: 16},
   empty: {marginVertical: 16, fontSize: 13},
   row: {

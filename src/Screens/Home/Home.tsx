@@ -937,10 +937,12 @@ export default function Home() {
 
         {renderMetricCards()}
         {renderFinancialReports()}
-        <SalesCategoryHomeReport
-          pageId={auth.roleCentrePageId ?? null}
-          refreshKey={mySalesRefreshKey}
-        />
+        <View style={styles.sectionBlock}>
+          <SalesCategoryHomeReport
+            pageId={auth.roleCentrePageId ?? null}
+            refreshKey={mySalesRefreshKey}
+          />
+        </View>
 
         <View style={styles.sectionBlock}>
           <Options wide={isWide} lowStockCount={lowStockItems.length} />

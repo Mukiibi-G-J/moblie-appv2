@@ -82,8 +82,8 @@ android {
         applicationId "com.zentroapp"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 9
-        versionName "1.0.9"
+        versionCode 11
+        versionName "1.0.11"
     }
     signingConfigs {
          release {
@@ -115,6 +115,26 @@ android {
             }
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+        }
+    }
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
+        }
+    }
+}
+
+def align16kbScript = file("${rootDir}/align_16kb_elf.py")
+tasks.configureEach { task ->
+    if (task.name == "stripReleaseDebugSymbols") {
+        task.doLast {
+            def outDir = layout.buildDirectory.dir("intermediates/stripped_native_libs/release/stripReleaseDebugSymbols/out").get().asFile
+            if (!outDir.exists()) {
+                throw new GradleException("16 KB alignment input is missing: ${outDir}")
+            }
+            exec {
+                commandLine "python", align16kbScript.absolutePath, outDir.absolutePath
+            }
         }
     }
 }
