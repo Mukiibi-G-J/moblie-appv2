@@ -1419,6 +1419,7 @@ export const fetchItemsFromRest = async (
   page: number = 1,
   searchQuery: string = '',
   categoryId?: number | string | null,
+  extraParams?: Record<string, string | number>,
 ) => {
   const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
   const axiosInstance = createAxiosInstance(tenant) || undefined;
@@ -1426,6 +1427,7 @@ export const fetchItemsFromRest = async (
     page,
     page_size: 20,
     q: searchQuery.trim(),
+    ...extraParams,
   };
   if (categoryId != null && categoryId !== '') {
     params.category_id = String(categoryId);

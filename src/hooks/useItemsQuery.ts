@@ -128,7 +128,10 @@ async function fetchItemsViaPageData(
     PAGE_IDS.ItemList,
     FALLBACK_CONTROL_IDS[PAGE_IDS.ItemList],
   );
-  const filters: Record<string, string> = {};
+  const filters: Record<string, string> = {
+    // Items list is the only place blocked items stay visible.
+    include_blocked: '1',
+  };
   if (categoryId != null && categoryId !== '') {
     filters.item_category = String(categoryId);
   }
@@ -144,7 +147,9 @@ async function fetchItemsViaPageData(
     rows.length > 0 && rows.every(row => !('bar_code_no' in row));
   if (omitsBarcode) {
     const page = Math.floor(offset / PAGE_DATA_PAGE_SIZE) + 1;
-    const data = await fetchItemsFromRest(page, searchQuery, categoryId);
+    const data = await fetchItemsFromRest(page, searchQuery, categoryId, {
+      include_blocked: 1,
+    });
     const restRows = Array.isArray(data?.results) ? data.results : [];
     return {
       count: data?.count ?? restRows.length,
