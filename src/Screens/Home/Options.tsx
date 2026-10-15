@@ -1,169 +1,210 @@
-import React from 'react';
+import React, {useMemo} from 'react';
 import {
   View,
   Text,
-  TouchableOpacity,
-  FlatList,
-  Image,
+  Pressable,
   StyleSheet,
+  Platform,
+  useWindowDimensions,
 } from 'react-native';
 import {useNavigation} from '@react-navigation/native';
-import {COLORS, icons} from '../../constants';
+import {constants, COLORS} from '../../constants';
+import {PAGE_NAMES} from '../../constants/pageNames';
+import {usePermissions} from '../../hooks/usePermissions';
+import {useTheme} from '../../context/ThemeContext';
+import {useTabContext} from '../../context/Store';
+import {isWideLayout} from '../../utils/layout';
 
-const Options = () => {
+type AttentionCard = {
+  key: string;
+  title: string;
+  body: string;
+  cta: string;
+  onPress: () => void;
+  tone?: 'default' | 'warning';
+};
+
+type OptionsProps = {
+  lowStockCount?: number;
+  wide?: boolean;
+};
+
+const quickPressProps = {
+  delayPressIn: 0 as const,
+  delayHoverIn: 0 as const,
+  unstable_pressDelay: 0 as const,
+};
+
+/**
+ * Home attention cards only (QuickBooks-style).
+ * Module shortcuts live in More — keep Home breathable.
+ */
+const Options = ({lowStockCount = 0, wide}: OptionsProps) => {
   const navigation = useNavigation();
+  const {setSelectedTab} = useTabContext();
+  const {isModuleVisible, canAccessMobileNav} = usePermissions();
+  const {colors, isDark} = useTheme();
+  const {width, height} = useWindowDimensions();
+  const isWide = wide ?? isWideLayout(width, height);
 
-  const options = [
-    {
-      icon: icons.cart,
-      iconColor: COLORS.primary,
-      title: 'Sales',
-      subtitle: 'Manage sales',
-      link: 'Sales',
-      color: 'rgba(76, 175, 80, 0.1)',
-      borderColor: 'rgba(76, 175, 80, 0.3)',
-    },
-    {
-      icon: icons.product,
-      iconColor: COLORS.secondary,
-      title: 'Items',
-      subtitle: 'Inventory & stock',
-      link: 'Items',
-      color: 'rgba(33, 150, 243, 0.1)',
-      borderColor: 'rgba(33, 150, 243, 0.3)',
-    },
-    {
-      icon: icons.printer, // Assuming you have a label icon
-      iconColor: COLORS.warning,
-      title: 'Print Labels',
-      subtitle: 'Generate labels',
-      link: 'PrintLabels',
-      color: 'rgba(255, 152, 0, 0.1)',
-      borderColor: 'rgba(255, 152, 0, 0.3)',
-    },
-    {
-      icon: icons.cart,
-      iconColor: COLORS.error,
-      title: 'Cart',
-      subtitle: 'Quick checkout',
-      link: 'Cart',
-      color: 'rgba(244, 67, 54, 0.1)',
-      borderColor: 'rgba(244, 67, 54, 0.3)',
-    },
-  ];
+  const canMakeSale =
+    isModuleVisible('sales') &&
+    canAccessMobileNav('makeSale', PAGE_NAMES.SALES);
 
-  const renderOption = ({item}) => (
-    <TouchableOpacity
-      style={styles.optionButton}
-      onPress={() => navigation.navigate(item.link)}
-      activeOpacity={0.7}>
+  const cards: AttentionCard[] = useMemo(() => {
+    const next: AttentionCard[] = [];
+
+    if (
+      lowStockCount > 0 &&
+      isModuleVisible('items') &&
+      canAccessMobileNav('items', PAGE_NAMES.ITEMS)
+    ) {
+      next.push({
+        key: 'low-stock',
+        title: 'Low stock',
+        body: `${lowStockCount} item${
+          lowStockCount === 1 ? '' : 's'
+        } need attention before you run out.`,
+        cta: 'Review stock',
+        tone: 'warning',
+        onPress: () =>
+          navigation.navigate(
+            'AllItems' as never,
+            {stockFilter: 'low_stock'} as never,
+          ),
+      });
+    }
+
+    // Empty-state nudge only when nothing else needs attention
+    if (next.length === 0 && canMakeSale) {
+      next.push({
+        key: 'make-sale',
+        title: 'Ready to sell?',
+        body: 'Start a sale for a walk-in or customer and get paid faster.',
+        cta: 'Make sale',
+        onPress: () => setSelectedTab(constants.screens.makeSale),
+      });
+    }
+
+    return next.slice(0, 2);
+  }, [
+    canMakeSale,
+    lowStockCount,
+    isModuleVisible,
+    canAccessMobileNav,
+    navigation,
+    setSelectedTab,
+  ]);
+
+  if (cards.length === 0) {
+    return null;
+  }
+
+  const cardSurface = {
+    backgroundColor: colors.card,
+    borderColor: isDark ? colors.border : 'transparent',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: {width: 0, height: 2},
+        shadowOpacity: isDark ? 0.25 : 0.07,
+        shadowRadius: 10,
+      },
+      android: {elevation: isDark ? 0 : 2},
+      default: {},
+    }),
+  };
+
+  const cardNodes = cards.map(card => {
+    const accent = card.tone === 'warning' ? COLORS.warning : COLORS.primary;
+    return (
       <View
-        style={[
-          styles.iconContainer,
-          {
-            backgroundColor: item.color,
-            borderColor: item.borderColor,
-          },
-        ]}>
-        <Image
-          source={item.icon}
-          style={[styles.icon, {tintColor: item.iconColor}]}
-          resizeMode="contain"
-        />
+        key={card.key}
+            style={[styles.card, isWide && styles.cardWide, cardSurface]}>
+        <Text
+          style={[styles.title, {color: colors.textPrimary}]}
+          numberOfLines={1}>
+          {card.title}
+        </Text>
+        <Text
+          style={[styles.body, {color: colors.textSecondary}]}
+          numberOfLines={3}>
+          {card.body}
+        </Text>
+        <Pressable
+          {...quickPressProps}
+          onPress={card.onPress}
+          style={({pressed}) => [
+            styles.cta,
+            isWide && styles.ctaWide,
+            {
+              borderColor: accent,
+              opacity: pressed ? 0.85 : 1,
+            },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel={card.cta}>
+          <Text style={[styles.ctaLabel, {color: accent}]}>{card.cta}</Text>
+        </Pressable>
       </View>
-      <View style={styles.textContainer}>
-        <Text style={styles.title}>{item.title}</Text>
-        <Text style={styles.subtitle}>{item.subtitle}</Text>
-      </View>
-    </TouchableOpacity>
-  );
+    );
+  });
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerText}>Quick Actions</Text>
-        <TouchableOpacity>
-          <Text style={styles.seeAllText}>See All</Text>
-        </TouchableOpacity>
-      </View>
-      <View style={styles.gridContainer}>
-        <FlatList
-          data={options}
-          renderItem={renderOption}
-          keyExtractor={item => item.title}
-          numColumns={2}
-          columnWrapperStyle={styles.columnWrapper}
-          showsVerticalScrollIndicator={false}
-          scrollEnabled={false}
-        />
-      </View>
-    </View>
+    <View style={isWide ? styles.grid : styles.container}>{cardNodes}</View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    paddingHorizontal: 16,
-    marginVertical: 16,
+    gap: 14,
   },
-  header: {
+  grid: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 16,
+    flexWrap: 'wrap',
+    gap: 14,
+    alignItems: 'stretch',
   },
-  headerText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: COLORS.darkGray,
-  },
-  seeAllText: {
-    fontSize: 14,
-    color: COLORS.primary,
-    fontWeight: '500',
-  },
-  gridContainer: {
-    marginTop: 8,
-  },
-  optionButton: {
-    width: '48%',
-    backgroundColor: '#fff',
+  card: {
     borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.05,
-    shadowRadius: 8,
-    elevation: 2,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 18,
+    paddingTop: 18,
+    paddingBottom: 16,
   },
-  iconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-    borderWidth: 1,
-  },
-  icon: {
-    width: 24,
-    height: 24,
-  },
-  textContainer: {
-    gap: 4,
+  cardWide: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: '47%',
+    minWidth: 280,
   },
   title: {
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+    marginBottom: 6,
+  },
+  body: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 16,
+  },
+  cta: {
+    minHeight: 44,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  ctaWide: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 20,
+    minWidth: 160,
+  },
+  ctaLabel: {
     fontSize: 15,
-    fontWeight: '600',
-    color: COLORS.darkGray,
-  },
-  subtitle: {
-    fontSize: 12,
-    color: COLORS.gray,
-  },
-  columnWrapper: {
-    justifyContent: 'space-between',
+    fontWeight: '700',
   },
 });
 

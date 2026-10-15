@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useState} from 'react';
 import {
   View,
   TextInput,
@@ -8,7 +8,13 @@ import {
   TextInputProps,
   ActivityIndicator,
 } from 'react-native';
-import {COLORS, FONTS, SIZES} from '../constants';
+import {COLORS} from '../constants';
+import {authOnboarding} from '../design-system/authOnboardingTokens';
+import {useTheme} from '../context/ThemeContext';
+
+const ao = authOnboarding;
+const fieldGap = ao.sectionSpacing.betweenFields;
+const bw = ao.borderWidth;
 
 interface FormInputProps extends TextInputProps {
   label: string;
@@ -34,10 +40,23 @@ const FormInput: React.FC<FormInputProps> = ({
   endIcon,
   ...textInputProps
 }) => {
+  const {colors, isDark} = useTheme();
+  const [focused, setFocused] = useState(false);
+  const emphasisBorder =
+    !error && !successMessage && focused ? bw.sm : bw.hairline;
+  const borderColor = error
+    ? COLORS.error
+    : focused && !error
+      ? colors.borderStrong
+      : colors.border;
+
+  const errorBg = isDark ? 'rgba(255, 71, 87, 0.12)' : '#fff5f5';
+  const successBg = isDark ? 'rgba(0, 184, 148, 0.12)' : '#f5fff5';
+
   return (
     <View style={[styles.container, containerStyle]}>
       <View style={styles.labelContainer}>
-        <Text style={styles.label}>
+        <Text style={[styles.label, {color: colors.textPrimary}]}>
           {label}
           {required && <Text style={styles.required}> *</Text>}
         </Text>
@@ -46,7 +65,12 @@ const FormInput: React.FC<FormInputProps> = ({
       <View
         style={[
           styles.inputContainer,
-          error ? styles.inputError : successMessage ? styles.inputSuccess : {},
+          {borderWidth: emphasisBorder, borderColor, backgroundColor: colors.inputBackground},
+          error
+            ? [styles.inputError, {backgroundColor: errorBg}]
+            : successMessage
+              ? [styles.inputSuccess, {backgroundColor: successBg}]
+              : {},
         ]}>
         {startIcon && (
           <View style={styles.startIconContainer}>{startIcon}</View>
@@ -55,10 +79,19 @@ const FormInput: React.FC<FormInputProps> = ({
         <TextInput
           style={[
             styles.input,
-            startIcon ? {paddingLeft: 48} : {paddingLeft: 16},
-            endIcon || isLoading ? {paddingRight: 48} : {paddingRight: 16},
+            {color: colors.textPrimary},
+            startIcon ? {paddingLeft: 48} : {paddingLeft: ao.spacing.md},
+            endIcon || isLoading ? {paddingRight: 48} : {paddingRight: ao.spacing.md},
           ]}
-          placeholderTextColor="#999"
+          placeholderTextColor={colors.textTertiary}
+          onFocus={e => {
+            setFocused(true);
+            textInputProps.onFocus?.(e);
+          }}
+          onBlur={e => {
+            setFocused(false);
+            textInputProps.onBlur?.(e);
+          }}
           {...textInputProps}
         />
 
@@ -74,7 +107,9 @@ const FormInput: React.FC<FormInputProps> = ({
       </View>
 
       {helpText && !error && !successMessage && (
-        <Text style={styles.helpText}>{helpText}</Text>
+        <Text style={[styles.helpText, {color: colors.textSecondary}]}>
+          {helpText}
+        </Text>
       )}
 
       {error && <Text style={styles.errorText}>{error}</Text>}
@@ -88,35 +123,30 @@ const FormInput: React.FC<FormInputProps> = ({
 
 const styles = StyleSheet.create({
   container: {
-    marginBottom: 20,
+    marginBottom: fieldGap,
   },
   labelContainer: {
-    marginBottom: 8,
+    marginBottom: ao.spacing.sm,
   },
   label: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#1a1a1a',
+    fontSize: ao.typo.caption,
+    fontWeight: '500',
   },
   required: {
     color: COLORS.error,
   },
   inputContainer: {
-    height: 52,
-    backgroundColor: '#f8f9fa',
-    borderWidth: 1,
-    borderColor: '#e9ecef',
-    borderRadius: 12,
+    minHeight: ao.form.inputMinHeight,
+    borderRadius: ao.form.inputRadius,
     flexDirection: 'row',
     alignItems: 'center',
     position: 'relative',
   },
   input: {
     flex: 1,
-    height: 52,
-    paddingHorizontal: 16,
-    fontSize: 16,
-    color: '#1a1a1a',
+    minHeight: ao.form.inputMinHeight,
+    paddingHorizontal: ao.spacing.md,
+    fontSize: ao.typo.body,
   },
   startIconContainer: {
     position: 'absolute',
@@ -135,16 +165,15 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
   inputError: {
+    borderWidth: bw.sm,
     borderColor: COLORS.error,
-    backgroundColor: '#fff5f5',
   },
   inputSuccess: {
+    borderWidth: bw.hairline,
     borderColor: COLORS.success,
-    backgroundColor: '#f5fff5',
   },
   helpText: {
     fontSize: 14,
-    color: '#666',
     marginTop: 4,
   },
   errorText: {

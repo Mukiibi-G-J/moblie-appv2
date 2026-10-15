@@ -22,7 +22,7 @@ const AuthGuard: React.FC<AuthGuardProps> = ({
         routes: [{name: 'SignIn'}],
       });
     } else if (!requireAuth && accessToken) {
-      // User is authenticated but trying to access auth screens - redirect to home
+      // Branch picker is a global modal overlay (web parity), not a guest-stack route.
       navigation.reset({
         index: 0,
         routes: [{name: 'Home'}],

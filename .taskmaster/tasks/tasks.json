@@ -1,0 +1,267 @@
+{
+  "master": {
+    "tasks": [
+      {
+        "id": "11",
+        "title": "Setup project structure and validate screenshot assets",
+        "description": "Initialize the project structure, validate the presence of required screenshot files, and establish the output file location for the design system JSON",
+        "details": "Create the necessary directory structure for the design system output. Verify that all required screenshot files (shared image (4).jpeg through shared image (10).jpeg) exist in the 'square screen shoots/' folder. Set up the output path at 'src/design-system/design-system.json' or '.taskmaster/docs/design-system.json'. Implement file validation logic to ensure all 7 screenshot files are present and accessible. Create basic error handling for missing files.",
+        "testStrategy": "Verify that all 7 screenshot files are detected and accessible. Test that the output directory can be created and is writable. Validate that the file structure matches the expected repository layout.",
+        "priority": "high",
+        "dependencies": [],
+        "status": "done",
+        "subtasks": [],
+        "complexity": 3,
+        "recommendedSubtasks": 3,
+        "expansionPrompt": "Break down into: 1) Create directory structure and output paths, 2) Implement file validation logic for 7 screenshot files, 3) Add error handling and accessibility checks",
+        "updatedAt": "2026-03-27T19:18:22.580Z"
+      },
+      {
+        "id": "12",
+        "title": "Load and integrate brand palette with design system foundation",
+        "description": "Load the external brand palette JSON file and integrate primary/secondary brand colors into the design system foundation structure",
+        "details": "Implement brand palette loading functionality that reads the external brand JSON/documented hex keys. Create the base JSON structure with meta, brand, and color sections. Map brand.primary and brand.secondary from the palette source without modification. Initialize the meta section with name, version, colorSchemeDefault: 'dark', platformTarget: 'react-native', sourceScreenshotFolder: 'square screen shoots', and generatedAtIso timestamp. Preserve exact brand color values as the single source of truth.",
+        "testStrategy": "Validate that brand colors are loaded correctly without modification. Test that the base JSON structure matches the required schema. Verify that meta fields are populated with correct values and timestamp is in ISO format.",
+        "priority": "high",
+        "dependencies": [
+          "11"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "complexity": 4,
+        "recommendedSubtasks": 4,
+        "expansionPrompt": "Split into: 1) Implement brand palette loading from external JSON, 2) Create base JSON structure with meta/brand/color sections, 3) Map brand colors without modification, 4) Initialize meta fields with timestamps and configuration",
+        "updatedAt": "2026-03-27T19:18:45.766Z"
+      },
+      {
+        "id": "13",
+        "title": "Analyze screenshots and extract visual patterns",
+        "description": "Process all screenshot files to identify reusable visual patterns, color usage, typography hierarchy, and spacing without extracting domain-specific content",
+        "details": "Implement image analysis to extract visual patterns from screenshots focusing on: color usage patterns (backgrounds, surfaces, text colors), typography hierarchy (font sizes, weights, line heights), spacing patterns between elements, border radii usage, elevation/shadow patterns, and component structures. Use computer vision or manual analysis to identify recurring UI patterns while strictly avoiding domain-specific content extraction. Focus on structural and visual patterns only - no business labels, amounts, or app-specific semantics.",
+        "testStrategy": "Verify that extracted patterns are purely visual/structural without domain content. Test that color analysis identifies distinct color roles and hierarchies. Validate that typography and spacing patterns are consistently identified across multiple screenshots.",
+        "priority": "high",
+        "dependencies": [
+          "12"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "complexity": 8,
+        "recommendedSubtasks": 6,
+        "expansionPrompt": "Decompose into: 1) Implement image loading and preprocessing, 2) Extract color usage patterns and hierarchies, 3) Analyze typography patterns (sizes, weights, spacing), 4) Identify spacing and layout patterns, 5) Detect border radii and elevation patterns, 6) Filter out domain-specific content while preserving structural patterns",
+        "updatedAt": "2026-03-27T19:19:08.473Z"
+      },
+      {
+        "id": "14",
+        "title": "Build comprehensive color system with dark-mode focus",
+        "description": "Create the complete color system including semantic colors, neutral palette, utility colors, and gradient definitions based on screenshot analysis",
+        "details": "Build the color system with dark-mode as default. Create color.schemes.dark and color.schemes.light objects with background (canvas, elevated, sunken), surface (primary, secondary, tertiary), text (primary, secondary, tertiary, inverse, disabled), icon (primary, secondary, inverse), border (subtle, strong, focusRing), and control (fill, fillPressed, border) tokens. Generate neutral color scale (50-950) and utility colors (success, warning, error, info, overlayScrim, overlayScrimStrong, focus, link). Define gradients in color.gradients with type, angle, value string, and stops array. All colors must be hex strings (#RRGGBB or #RRGGBBAA format).",
+        "testStrategy": "Validate all color values are valid hex strings. Test that dark mode colors provide sufficient contrast ratios. Verify gradient definitions include both value strings and stops arrays. Check that semantic color roles are consistently applied.",
+        "priority": "high",
+        "dependencies": [
+          "13"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "complexity": 7,
+        "recommendedSubtasks": 5,
+        "expansionPrompt": "Break into: 1) Create dark/light scheme structures with semantic color roles, 2) Generate neutral color scale (50-950), 3) Define utility colors (success, warning, error, etc.), 4) Create gradient definitions with stops and values, 5) Validate hex color formats and contrast ratios",
+        "updatedAt": "2026-03-27T19:19:34.383Z"
+      },
+      {
+        "id": "15",
+        "title": "Define typography system with pixel-based measurements",
+        "description": "Create the typography scale with font families, sizes, weights, line heights, and letter spacing based on screenshot text analysis",
+        "details": "Establish typography.fontFamily with primary and mono font families. Create typography.scale with display, title, heading, body, caption, and micro levels. Each level must include fontSize (numeric pixels), lineHeight (numeric), fontWeight (numeric), and letterSpacing (numeric). Analyze screenshots to determine appropriate font size hierarchy and spacing. Use reasonable defaults for any unidentifiable values. Ensure all measurements are numeric values without 'px' strings.",
+        "testStrategy": "Verify all typography values are numeric without unit strings. Test that font size hierarchy creates clear visual distinction. Validate that line heights and letter spacing values are reasonable for mobile interfaces.",
+        "priority": "medium",
+        "dependencies": [
+          "13"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "complexity": 5,
+        "recommendedSubtasks": 4,
+        "expansionPrompt": "Split into: 1) Establish font family definitions (primary/mono), 2) Create typography scale hierarchy (display through micro), 3) Extract and validate numeric measurements from screenshots, 4) Ensure mobile-appropriate line heights and letter spacing",
+        "updatedAt": "2026-03-27T19:20:11.949Z"
+      },
+      {
+        "id": "16",
+        "title": "Establish spatial system and layout tokens",
+        "description": "Define spacing scale, border radii, border widths, and layout constraints based on screenshot measurements",
+        "details": "Create spacing tokens (0, xs, sm, md, lg, xl, xxl) with numeric pixel values. Define radii tokens (none, sm, md, lg, xl, full) for corner radius variations. Establish border.widths (none, hairline, sm, md) with numeric values. Create layout tokens including screenPaddingHorizontal, screenPaddingVertical, sectionGap, minTouchTarget (44px minimum for mobile), and breakpoints (sm, md, lg). Analyze screenshot spacing patterns to determine appropriate token values.",
+        "testStrategy": "Validate all spacing and radius values are numeric pixels. Test that minTouchTarget meets mobile accessibility standards (44px minimum). Verify that spacing scale provides sufficient granularity for common layout needs.",
+        "priority": "medium",
+        "dependencies": [
+          "13"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "complexity": 5,
+        "recommendedSubtasks": 4,
+        "expansionPrompt": "Decompose into: 1) Create spacing token scale with pixel values, 2) Define border radii and width tokens, 3) Establish layout constraints and breakpoints, 4) Ensure mobile accessibility standards (44px touch targets)",
+        "updatedAt": "2026-03-27T19:20:37.364Z"
+      },
+      {
+        "id": "17",
+        "title": "Create elevation and motion token systems",
+        "description": "Define shadow/elevation tokens and motion timing/easing tokens for interactive feedback",
+        "details": "Create elevation tokens (0, 1, 2) with shadowOffsetY, shadowBlur, shadowOpacity (numeric 0-1), and shadowColor (hex with alpha). Define motion.durationMs tokens (instant, fast, normal, slow) with millisecond values. Create motion.easing tokens (standard, decelerate, accelerate) with cubic-bezier string values. Use standard Material Design or iOS elevation and timing values as defaults. Analyze screenshots for any visible shadow patterns.",
+        "testStrategy": "Verify elevation values create appropriate visual hierarchy. Test that motion durations are within acceptable ranges (0-500ms typically). Validate that easing curves use proper cubic-bezier syntax.",
+        "priority": "medium",
+        "dependencies": [
+          "14"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "complexity": 4,
+        "recommendedSubtasks": 3,
+        "expansionPrompt": "Break into: 1) Define elevation tokens with shadow properties (offset, blur, opacity, color), 2) Create motion duration tokens with millisecond values, 3) Establish easing tokens with cubic-bezier curves",
+        "updatedAt": "2026-03-27T19:21:20.108Z"
+      },
+      {
+        "id": "18",
+        "title": "Extract and define reusable component patterns",
+        "description": "Identify recurring UI patterns across screenshots and create component definitions with anatomy, layout, variants, and states",
+        "details": "Analyze screenshots to identify reusable component patterns: buttonPrimary, inputField, card, listRow, navigationHeader, fab, modal, and others. For each component, define: anatomy (array of slot names), layout (dimensions and token references), variants (different visual styles), and states (default, pressed, disabled, focused, error). Use token references (e.g., 'radii.md') rather than hardcoded values. Focus on structural patterns without domain-specific content. Include common mobile patterns like tab bars, chips, and headers.",
+        "testStrategy": "Verify component definitions reference existing tokens correctly. Test that anatomy slots cover all visual elements. Validate that variants and states provide comprehensive interaction coverage.",
+        "priority": "high",
+        "dependencies": [
+          "15",
+          "16",
+          "17"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "complexity": 8,
+        "recommendedSubtasks": 6,
+        "expansionPrompt": "Split into: 1) Identify recurring UI patterns across screenshots, 2) Define component anatomy (slot structures), 3) Create layout definitions with token references, 4) Define component variants and visual styles, 5) Establish component states (default, pressed, disabled, etc.), 6) Validate token references and avoid domain-specific content",
+        "updatedAt": "2026-03-27T19:21:54.376Z"
+      },
+      {
+        "id": "19",
+        "title": "Validate JSON structure and token references",
+        "description": "Perform comprehensive validation of the complete JSON structure, token references, and schema compliance",
+        "details": "Implement strict JSON validation to ensure: no trailing commas, valid JSON syntax, all required schema fields present, token references resolve correctly, numeric values are proper numbers (not strings), hex colors are valid format, gradient definitions are complete, and component definitions reference existing tokens. Use JSON.parse() to verify parseability. Check that all required Appendix schema keys exist with appropriate data types.",
+        "testStrategy": "Parse the JSON with strict parser to catch syntax errors. Validate all token references resolve to existing tokens. Test that all required schema fields are present and properly typed. Verify hex color format compliance.",
+        "priority": "high",
+        "dependencies": [
+          "18"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "complexity": 6,
+        "recommendedSubtasks": 5,
+        "expansionPrompt": "Decompose into: 1) Implement strict JSON syntax validation, 2) Validate all token references resolve correctly, 3) Check data type compliance (numeric vs string values), 4) Verify hex color format compliance, 5) Ensure complete schema compliance with all required fields",
+        "updatedAt": "2026-03-27T19:22:20.247Z"
+      },
+      {
+        "id": "20",
+        "title": "Generate final design system JSON file",
+        "description": "Output the complete, validated design system JSON file ready for AI coding tools and mobile development",
+        "details": "Generate the final design-system.json file with all tokens and component definitions. Ensure the output is strictly parseable JSON with no markdown wrapper, comments, or trailing commas. Include proper formatting for readability while maintaining valid JSON syntax. Add final validation pass to ensure the file meets all constraints: dark-mode-first color scheme, numeric pixel values, hex color strings, complete component definitions with token references, and full schema compliance per the Appendix requirements.",
+        "testStrategy": "Validate the final JSON file parses correctly with JSON.parse(). Test that the file size is reasonable and all sections are populated. Verify the output can be consumed by AI coding tools without syntax errors. Confirm all brand colors are preserved exactly as provided.",
+        "priority": "high",
+        "dependencies": [
+          "19"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "complexity": 4,
+        "recommendedSubtasks": 3,
+        "expansionPrompt": "Break into: 1) Assemble complete JSON structure from all validated components, 2) Apply final formatting and syntax validation, 3) Perform final compliance check and output generation",
+        "updatedAt": "2026-03-27T19:22:47.024Z"
+      },
+      {
+        "id": "21",
+        "title": "Set implementation focus: auth and onboarding (splash out of scope)",
+        "description": "Lock current UI work to authentication and onboarding flows only. Explicitly exclude splash and welcome hero screens from this phase.",
+        "details": "Document scope for implementers: prioritize Sign-in, Sign-up, OTP/verification, password recovery, and company/user onboarding flows. Do not refactor or redesign splash, cold-start welcome, or loading splash screens in this phase unless blocking bugs. Consume tokens from src/design-system/design-system.json and brand-palette.json. Reference React Native screens under src/Screens/Authentication and any onboarding-related screens (e.g. company onboarding service flows).",
+        "testStrategy": "Confirm navigation entry still works; splash remains unchanged. No regressions on app launch.",
+        "priority": "high",
+        "dependencies": [
+          "20"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-03-27T19:29:19.808Z"
+      },
+      {
+        "id": "22",
+        "title": "Audit auth and onboarding screens against design system",
+        "description": "Inventory all auth and onboarding routes and map them to design tokens and gaps.",
+        "details": "List each screen and component: login, signup, OTP, password fields, onboarding steps, headers, buttons, inputs. Compare current styles to design-system.json (color.schemes, typography.scale, spacing, radii, components.buttonPrimary, inputField). Produce a short gap list (missing token usage, hardcoded colors) without changing splash-related files.",
+        "testStrategy": "Checklist covers every auth/onboarding route; gaps documented for tasks 23–24.",
+        "priority": "high",
+        "dependencies": [
+          "21"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-03-27T19:29:34.351Z"
+      },
+      {
+        "id": "23",
+        "title": "Apply design system tokens to authentication screens",
+        "description": "Refactor authentication stack UI to use shared tokens and component patterns from design-system.json.",
+        "details": "Update styles for sign-in, sign-up, OTP, and related auth screens: replace ad hoc colors/spacing with token-aligned values (or a thin theme module that reads from design-system.json or mirrors its hex/radius/spacing). Align primary actions with buttonPrimary variants; inputs with inputField outlined pattern; headers with navigationHeader layout tokens. Keep behavior and API calls unchanged.",
+        "testStrategy": "Visual pass on Android/iOS for auth flows; no broken navigation; keyboard and safe areas still correct.",
+        "priority": "high",
+        "dependencies": [
+          "22"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-03-27T19:29:56.301Z"
+      },
+      {
+        "id": "24",
+        "title": "Apply design system tokens to onboarding flows",
+        "description": "Refactor onboarding and company-setup UI to match the same token system as auth.",
+        "details": "Apply design-system.json tokens to onboarding screens (multi-step flows, forms, progress if any). Reuse spacing, radii, typography scale, and component recipes consistent with task 23. Exclude splash and post-auth marketing welcome screens.",
+        "testStrategy": "Complete onboarding path in dev build; contrast and touch targets meet layout.minTouchTarget; no layout breakage.",
+        "priority": "high",
+        "dependencies": [
+          "22"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-03-27T19:30:31.344Z"
+      },
+      {
+        "id": "25",
+        "title": "QA pass: auth and onboarding only",
+        "description": "End-to-end verification of styled auth and onboarding before any splash work.",
+        "details": "Run through login, signup, OTP, password flows, and full onboarding. Verify brand primary/secondary and gradients where used, focus states, and error states. Document issues as follow-up tasks. Do not test splash styling changes (none expected).",
+        "testStrategy": "Manual test script completed; critical issues logged; ready to close phase or file bugs.",
+        "priority": "medium",
+        "dependencies": [
+          "23",
+          "24"
+        ],
+        "status": "done",
+        "subtasks": [],
+        "updatedAt": "2026-03-27T19:31:05.473Z"
+      },
+      {
+        "id": "26",
+        "title": "Splash / welcome screen visual pass",
+        "description": "Deferred: align splash or first-launch welcome with design system when prioritized.",
+        "details": "Intentionally deferred. Do not start until product asks or auth/onboarding phase is signed off. May include animated splash, brand hero, or cold-start welcome. Not part of the current focus per task 21.",
+        "testStrategy": "N/A until task is moved from deferred.",
+        "priority": "low",
+        "dependencies": [],
+        "status": "deferred",
+        "subtasks": []
+      }
+    ],
+    "metadata": {
+      "version": "1.0.0",
+      "lastModified": "2026-03-27T19:31:05.488Z",
+      "taskCount": 16,
+      "completedCount": 15,
+      "tags": [
+        "master"
+      ]
+    }
+  }
+}

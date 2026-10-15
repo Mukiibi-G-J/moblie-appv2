@@ -111,6 +111,7 @@ export interface SalesInvoiceData {
   amount_received: number;
   change_amount: number;
   payment_method: number;
+  transaction_id?: string;
   user?: number;
   lines: Array<{
     id: number;
@@ -122,21 +123,77 @@ export interface SalesInvoiceData {
     total_amount: string;
     unit_of_measure: string;
     tracking_code: string;
+    serial_nos?: string[];
     description: string;
   }>;
 }
 
-export interface ItemJournalData {
-  document_ids: number[];
+export interface TrackingCodeRequirement {
+  system_id?: string;
+  code?: string;
+  description?: string;
+  require_serial_no?: boolean;
+  require_lot_no?: boolean;
+  require_expiry_date?: boolean;
+}
+
+export interface SelectedTrackingDetails {
+  lotNo?: string | null;
+  serialNo?: string | null;
+  expiryDate?: string | null;
+  code?: string | null;
+}
+
+/** Item journal line entry types (stored as enum name in API). */
+export type ItemJournalEntryType =
+  | 'Purchase'
+  | 'Sales'
+  | 'PositiveAdjustment'
+  | 'NegativeAdjustment'
+  | 'DirectCost';
+
+export type ItemJournalAdjustmentType = 'operational' | 'opening_balance';
+
+/** Create/update body for POST /api/item-journals/upsert/ */
+export interface ItemJournalUpsertPayload {
+  id?: number;
+  system_id?: string;
+  document_no?: string;
+  item?: string;
+  entry_type: ItemJournalEntryType;
+  quantity: number;
+  unit_cost?: number;
+  unit_amount?: number;
+  description?: string;
+  date?: string;
+  user: number;
+  item_unit_of_measure?: number | null;
+  item_specification?: number | null;
+  adjustment_type?: ItemJournalAdjustmentType;
+  deleted?: boolean;
 }
 
 export interface CartItem {
   item_id?: number;
   system_id: string;
   item_name: string;
+  /**
+   * Display / sell unit price (already adjusted for the selected UOM).
+   * Cart totals use this × quantity. API payloads convert back to base.
+   */
   unit_price: number;
+  /**
+   * Base catalog unit price (qty_per_unit = 1). Used to recalculate when UOM changes.
+   */
+  original_price?: number;
   quantity: number;
   inventory: number;
+  /** Item type from API (e.g. Inventory) — used to decide if lot tracking is enforced */
+  type?: string;
+  unit_of_measure?: string;
+  unit_of_measure_description?: string;
+  /** How many base units one sell UOM represents (e.g. carton of 12). */
+  quantity_per_unit?: number;
   no?: string; // Add the item number field
   item_images?: {
     id: number;
@@ -148,6 +205,12 @@ export interface CartItem {
     item: number;
   }[];
   date_sold: string;
+  tracking_code?: TrackingCodeRequirement | null;
+  /** Selected lot number (lot-tracked items). */
+  selectedTrackingCode?: string | null;
+  /** Selected serial numbers (serial-tracked items; length should match qty). */
+  selectedSerialNos?: string[];
+  trackingDetails?: SelectedTrackingDetails;
   bar_code_no?: string;
 }
 
@@ -166,8 +229,37 @@ export type CartAction =
   | {type: 'CLEAR_CART'};
 
 export type RootStackParamList = {
+  OnBoarding: undefined;
+  SignIn: undefined;
+  SignUp: undefined;
+  CompanyProvisioning:
+    | {
+        tenant?: string;
+        email?: string;
+        autoLogin?: boolean;
+      }
+    | undefined;
+  Otp: {email?: string};
+  ForgotPassword: {email?: string};
   Login: undefined;
   Home: undefined;
+  RestaurantPinSignIn: undefined;
+  RestaurantPinSetup:
+    | {
+        fromSettings?: boolean;
+        pinSetupMode?: 'new' | 'change' | 'renew';
+      }
+    | undefined;
+  SelectBranch: undefined;
+  RestaurantHub: undefined;
+  RestaurantPOS: undefined;
+  RestaurantOrders: undefined;
+  RestaurantKitchen: undefined;
+  RestaurantDashboard: undefined;
+  RestaurantTables: undefined;
+  RestaurantReservations: undefined;
+  RestaurantMenus: undefined;
+  RestaurantSettings: undefined;
 };
 
 export interface MenuItem {

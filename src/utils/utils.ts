@@ -23,22 +23,37 @@ function validatePassword(
   value: string,
   setPasswordError: (error: string) => void,
 ): void {
-  // {{ edit_3 }}
   if (value.length < 8) {
     setPasswordError('Password must be 8 characters');
+    return;
   }
-  // check if password contains at least one uppercase letter, one lowercase letter, and one number
-  else if (
-    !/[A-Z]/.test(value) ||
-    !/[a-z]/.test(value) ||
-    !/[0-9]/.test(value)
-  ) {
+
+  if (!/[A-Z]/.test(value)) {
+    if (/\p{Lu}/u.test(value)) {
+      setPasswordError(
+        'Password must use standard English uppercase letters (A-Z)',
+      );
+    } else {
+      setPasswordError(
+        'Password must contain at least one uppercase letter (A-Z)',
+      );
+    }
+    return;
+  }
+
+  if (!/[a-z]/.test(value)) {
     setPasswordError(
-      'Password must contain at least one uppercase letter, one lowercase letter, and one number',
+      'Password must contain at least one lowercase letter (a-z)',
     );
-  } else {
-    setPasswordError('');
+    return;
   }
+
+  if (!/[0-9]/.test(value)) {
+    setPasswordError('Password must contain at least one number');
+    return;
+  }
+
+  setPasswordError('');
 }
 
 function validateInput(

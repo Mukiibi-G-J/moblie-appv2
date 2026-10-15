@@ -1,0 +1,9 @@
+<resources>
+    <color name="input_autofill_highlight">#00000000</color>
+    <color name="customer_display_bg">#0B3D3A</color>
+    <color name="customer_display_surface">#0F4A46</color>
+    <color name="customer_display_muted">#A7D4CF</color>
+    <color name="customer_display_text">#FFFFFF</color>
+    <color name="customer_display_accent">#5EEAD4</color>
+    <color name="customer_display_line">#1A5C57</color>
+</resources>

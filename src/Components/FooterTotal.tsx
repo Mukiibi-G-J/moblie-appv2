@@ -1,19 +1,16 @@
 import React from 'react';
+import {formatCurrencyCompact, getLocalCurrencyCode} from '../utils/currency';
 import {
   View,
   Text,
-  TouchableOpacity,
+  Pressable,
   StyleSheet,
   ActivityIndicator,
   Platform,
-  Alert,
 } from 'react-native';
-import LinearGradient from 'react-native-linear-gradient';
-
-import {FONTS, SIZES, COLORS, icons, images, dummyData} from '../constants';
-import TextButton from './TextButton';
-import LineDivider from './LineDivider';
-import CustomSwitch from './CustomSwitch';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
+import {FONTS, COLORS, ICON_BUTTON_QUICK_PRESS} from '../constants';
+import {useTheme} from '../context/ThemeContext';
 
 interface FooterTotalProps {
   subTotal: number;
@@ -23,145 +20,105 @@ interface FooterTotalProps {
   onPress: () => void;
   printReceipt: boolean;
   setPrintReceipt: (value: boolean) => void;
+  /** When true, checkout stays disabled even if the cart has items (e.g. no sales permission). */
+  checkoutBlocked?: boolean;
+  /**
+   * When true (Make Sale tab), skip extra safe-area bottom padding —
+   * the tab bar already clears the home indicator.
+   */
+  embeddedInTabBar?: boolean;
 }
 
 const FooterTotal: React.FC<FooterTotalProps> = ({
-  subTotal,
+  subTotal: _subTotal,
   totalQuantity,
   total,
   isLoading,
   onPress,
-  printReceipt,
-  setPrintReceipt,
+  printReceipt: _printReceipt,
+  setPrintReceipt: _setPrintReceipt,
+  checkoutBlocked = false,
+  embeddedInTabBar = false,
 }) => {
-  const handleCheckout = () => {
-    Alert.alert(
-      'Confirm Sale',
-      `Are you sure you want to complete this sale?`,
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Complete Sale',
-          onPress: onPress,
-          style: 'default',
-        },
-      ],
-      {cancelable: true},
-    );
-  };
+  const {colors, isDark} = useTheme();
+  const insets = useSafeAreaInsets();
+  const disabled = isLoading || totalQuantity === 0 || checkoutBlocked;
+  const bottomPad = embeddedInTabBar
+    ? 10
+    : Math.max(insets.bottom, 12);
 
   return (
-    <View style={styles.container}>
-      {/* Left side - Totals */}
-      <View style={styles.totalsContainer}>
-        <Text style={styles.totalQuantity}>{totalQuantity} items</Text>
-        <Text style={styles.totalAmount}>
-          UGX {total?.toLocaleString() || '0'}
-        </Text>
-      </View>
-
-      {/* Right side - Actions */}
-      <View style={styles.actionsContainer}>
-        {/* <TouchableOpacity
-          style={[
-            styles.actionButton,
-            printReceipt
-              ? styles.printButtonActive
-              : styles.printButtonInactive,
-          ]}
-          onPress={() => setPrintReceipt(!printReceipt)}>
-          <Text
-            style={[
-              styles.printButtonText,
-              printReceipt
-                ? styles.printButtonTextActive
-                : styles.printButtonTextInactive,
-            ]}>
-            {printReceipt ? 'Print' : 'No Print'}
-          </Text>
-        </TouchableOpacity> */}
-
-        <TouchableOpacity
-          style={[
-            styles.actionButton,
-            styles.checkoutButton,
-            (isLoading || totalQuantity === 0) && styles.disabledButton,
-          ]}
-          onPress={handleCheckout}
-          disabled={isLoading || totalQuantity === 0}>
-          {isLoading ? (
-            <ActivityIndicator color={COLORS.white} />
-          ) : (
-            <Text style={styles.checkoutButtonText}>Checkout</Text>
-          )}
-        </TouchableOpacity>
-      </View>
+    <View
+      style={[
+        styles.container,
+        {
+          backgroundColor: colors.background,
+          borderTopColor: isDark ? 'rgba(255,255,255,0.1)' : colors.border,
+          paddingBottom: bottomPad,
+        },
+      ]}>
+      <Pressable
+        {...ICON_BUTTON_QUICK_PRESS}
+        accessibilityRole="button"
+        accessibilityLabel={`Charge ${getLocalCurrencyCode()} ${
+          total?.toLocaleString() || '0'
+        }`}
+        disabled={disabled}
+        android_ripple={
+          Platform.OS === 'android' && !disabled
+            ? {color: 'rgba(255,255,255,0.22)', foreground: true}
+            : undefined
+        }
+        style={({pressed}) => [
+          styles.checkoutButton,
+          disabled && styles.disabledButton,
+          !disabled && pressed && styles.checkoutButtonPressed,
+        ]}
+        onPress={onPress}>
+        {isLoading ? (
+          <ActivityIndicator color={COLORS.white} />
+        ) : (
+          <>
+            <Text style={styles.checkoutButtonText}>
+              Charge {formatCurrencyCompact(total || 0)}
+            </Text>
+            <Text style={styles.checkoutButtonSubtext}>
+              {totalQuantity} {totalQuantity === 1 ? 'item' : 'items'}
+            </Text>
+          </>
+        )}
+      </Pressable>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: COLORS.white,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.lightGray2,
-    height: 64, // Reduced height
-  },
-  totalsContainer: {
-    flex: 1,
-  },
-  totalQuantity: {
-    ...FONTS.body4,
-    color: COLORS.gray,
-    marginBottom: 2,
-  },
-  totalAmount: {
-    ...FONTS.h3,
-    color: COLORS.primary,
-  },
-  actionsContainer: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  actionButton: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  printButtonActive: {
-    backgroundColor: COLORS.success,
-  },
-  printButtonInactive: {
-    backgroundColor: COLORS.lightGray2,
-  },
-  printButtonText: {
-    ...FONTS.body4,
-    fontWeight: '600',
-  },
-  printButtonTextActive: {
-    color: COLORS.white,
-  },
-  printButtonTextInactive: {
-    color: COLORS.darkGray,
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
   checkoutButton: {
-    backgroundColor: COLORS.primary,
-    minWidth: 100,
+    backgroundColor: COLORS.primary2,
+    minHeight: 64,
+    borderRadius: 999,
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
+  checkoutButtonPressed: {
+    opacity: 0.88,
+    transform: [{scale: 0.992}],
   },
   checkoutButtonText: {
-    ...FONTS.body4,
+    ...FONTS.h3,
     color: COLORS.white,
-    fontWeight: '600',
+    fontWeight: '700',
+  },
+  checkoutButtonSubtext: {
+    ...FONTS.body5,
+    color: COLORS.white,
+    marginTop: 2,
   },
   disabledButton: {
     opacity: 0.6,

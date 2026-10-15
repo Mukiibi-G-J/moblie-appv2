@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- Match any USB device so POS terminals can grant permission. -->
+  <usb-device />
+  <!-- USB printer class (ESC/POS thermal printers). -->
+  <usb-device class="7" />
+  <!-- Common Xprinter / 58mm ESC/POS USB vendor IDs (decimal). -->
+  <usb-device vendor-id="1155" />
+  <usb-device vendor-id="1046" />
+  <usb-device vendor-id="8137" />
+  <usb-device vendor-id="10473" />
+  <usb-device vendor-id="1659" />
+  <usb-device vendor-id="6790" />
+  <usb-device vendor-id="26728" />
+  <usb-device vendor-id="4070" />
+  <usb-device vendor-id="1317" />
+  <usb-device vendor-id="1137" />
+  <usb-device vendor-id="5380" />
+  <usb-device vendor-id="3540" />
+</resources>

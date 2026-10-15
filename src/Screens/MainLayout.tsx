@@ -1,409 +1,126 @@
-import React, {useEffect, useRef} from 'react';
-import {
-  View,
-  TouchableOpacity,
-  TouchableWithoutFeedback,
-  Image,
-  FlatList,
-  Text,
-  StyleSheet,
-} from 'react-native';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-  interpolate,
-  useAnimatedReaction,
-  interpolateColor,
-} from 'react-native-reanimated';
-import LinearGradient from 'react-native-linear-gradient';
-import {
-  useDrawerProgress,
-  DrawerNavigationProp,
-} from '@react-navigation/drawer';
-import {useAppContext} from '../context/Store';
-import {COLORS, FONTS, SIZES, icons, constants, dummyData} from '../constants';
-import Header from '../Components/Header';
+import React, {useCallback, useEffect, useMemo, useState} from 'react';
+import {View, StyleSheet} from 'react-native';
+import {StackNavigationProp} from '@react-navigation/stack';
+import {useTheme} from '../context/ThemeContext';
+import {constants} from '../constants';
+import {PAGE_NAMES} from '../constants/pageNames';
+import {usePermissions} from '../hooks/usePermissions';
+import {useTabContext} from '../context/Store';
+import MainBottomTabBar from '../Components/MainBottomTabBar';
+import {CatalogSyncModal} from '../Components/CatalogSyncModal';
+import {useOfflineBootstrap} from '../hooks/useOfflineBootstrap';
 import Home from './Home/Home';
-// import { Search } from './Search/Search';
-// import { CartTab } from './Cart/CartTab';
-// import { Favourite } from './Favourite/Favourite';
-// import { Notification } from './Notification/Notification';
-
-// Define types for props
-type TabButtonProps = {
-  label: string;
-  icon: any;
-  isFocused: boolean;
-  outerContainerStyle: any;
-  innerContainerStyle: any;
-  onPress: () => void;
-};
-
-const TabButton: React.FC<TabButtonProps> = ({
-  label,
-  icon,
-  isFocused,
-  outerContainerStyle,
-  innerContainerStyle,
-  onPress,
-}) => {
-  return (
-    <TouchableWithoutFeedback onPress={onPress}>
-      <Animated.View
-        style={[
-          {
-            flex: 1,
-            alignItems: 'center',
-            justifyContent: 'center',
-          },
-          outerContainerStyle,
-        ]}>
-        <Animated.View
-          style={[
-            {
-              flexDirection: 'row',
-              width: '80%',
-              height: 50,
-              alignItems: 'center',
-              justifyContent: 'center',
-              borderRadius: 25,
-            },
-            innerContainerStyle,
-          ]}>
-          <Image
-            source={icon}
-            style={{
-              width: 20,
-              height: 20,
-              tintColor: isFocused ? COLORS.white : COLORS.gray,
-            }}
-          />
-          {isFocused && (
-            <Text
-              numberOfLines={1}
-              style={{
-                marginLeft: SIZES.base,
-                color: COLORS.white,
-                ...FONTS.h3,
-              }}>
-              {label}
-            </Text>
-          )}
-        </Animated.View>
-      </Animated.View>
-    </TouchableWithoutFeedback>
-  );
-};
+import Cart from './Cart/Cart';
+import MoreMenu from './More/MoreMenu';
 
 type MainLayoutProps = {
-  navigation: DrawerNavigationProp<any, any>;
-  selectedTab: string;
-  setSelectedTab: (tab: string) => void;
+  navigation: StackNavigationProp<any>;
 };
 
-const MainLayout: React.FC<MainLayoutProps> = ({
-  navigation,
-  selectedTab,
-  setSelectedTab,
-}) => {
-  const flatListRef = useRef<FlatList>(null);
-  // const { selectedTab, setSelectedTab } = useAppContext() ?? { selectedTab: '', setSelectedTab: () => { } };
-  // const {}
+const MemoHome = React.memo(Home);
+const MemoCart = Cart;
+const MemoMoreMenu = React.memo(MoreMenu);
 
-  const progress = useDrawerProgress();
+const MainLayout: React.FC<MainLayoutProps> = ({navigation}) => {
+  const {colors} = useTheme();
+  const {syncModalVisible, syncMessage, syncProgress} = useOfflineBootstrap();
+  const {selectedTab, setSelectedTab} = useTabContext();
+  const {isModuleVisible, canAccessMobileNav} = usePermissions();
+  const showMakeSaleTab =
+    isModuleVisible('sales') &&
+    canAccessMobileNav('makeSale', PAGE_NAMES.SALES);
 
-  // Drawer Animation
-  const scale = useSharedValue(1);
-  const borderRadius = useSharedValue(0);
+  const bottomTabs = useMemo(() => {
+    if (showMakeSaleTab) {
+      return constants.bottom_tabs;
+    }
+    return constants.bottom_tabs.filter(
+      t => t.label !== constants.screens.makeSale,
+    );
+  }, [showMakeSaleTab]);
 
-  useAnimatedReaction(
-    () => progress.value,
-    value => {
-      scale.value = interpolate(value, [0, 1], [1, 0.8]);
-      borderRadius.value = interpolate(value, [0, 1], [0, 26]);
-    },
-    [progress],
-  );
-
-  const animatedStyle = useAnimatedStyle(() => {
-    return {
-      borderRadius: borderRadius.value,
-      transform: [{scale: scale.value}],
-      backgroundColor: interpolateColor(
-        progress.value,
-        [0, 1],
-        [COLORS.white, COLORS.primary],
-      ),
-    };
+  const [mountedTabs, setMountedTabs] = useState<Record<string, boolean>>({
+    [selectedTab]: true,
   });
 
-  // Reanimated Shared Value
-  const homeTabFlex = useSharedValue(1);
-  const homeTabColor = useSharedValue(COLORS.white);
-  const searchTabFlex = useSharedValue(1);
-  const searchTabColor = useSharedValue(COLORS.white);
-  const cartTabFlex = useSharedValue(1);
-  const cartTabColor = useSharedValue(COLORS.white);
-  const favouriteTabFlex = useSharedValue(1);
-  const favouriteTabColor = useSharedValue(COLORS.white);
-  const notificationTabFlex = useSharedValue(1);
-  const notificationTabColor = useSharedValue(COLORS.white);
-
-  // Reanimated Animated Style
-  const homeFlexStyle = useAnimatedStyle(() => ({flex: homeTabFlex.value}));
-  const homeColorStyle = useAnimatedStyle(() => ({
-    backgroundColor: homeTabColor.value,
-  }));
-  const searchFlexStyle = useAnimatedStyle(() => ({flex: searchTabFlex.value}));
-  const searchColorStyle = useAnimatedStyle(() => ({
-    backgroundColor: searchTabColor.value,
-  }));
-  const cartFlexStyle = useAnimatedStyle(() => ({flex: cartTabFlex.value}));
-  const cartColorStyle = useAnimatedStyle(() => ({
-    backgroundColor: cartTabColor.value,
-  }));
-  const favouriteFlexStyle = useAnimatedStyle(() => ({
-    flex: favouriteTabFlex.value,
-  }));
-  const favouriteColorStyle = useAnimatedStyle(() => ({
-    backgroundColor: favouriteTabColor.value,
-  }));
-  const notificationFlexStyle = useAnimatedStyle(() => ({
-    flex: notificationTabFlex.value,
-  }));
-  const notificationColorStyle = useAnimatedStyle(() => ({
-    backgroundColor: notificationTabColor.value,
-  }));
+  useEffect(() => {
+    if (!showMakeSaleTab && selectedTab === constants.screens.makeSale) {
+      setSelectedTab(constants.screens.home);
+    }
+  }, [showMakeSaleTab, selectedTab, setSelectedTab]);
 
   useEffect(() => {
-    setSelectedTab(constants.screens.home);
-  }, []);
-
-  useEffect(() => {
-    if (selectedTab === constants.screens.home) {
-      flatListRef.current?.scrollToIndex({index: 0, animated: false});
-      homeTabFlex.value = withTiming(4, {duration: 500});
-      homeTabColor.value = withTiming(COLORS.primary2, {duration: 500});
-    } else {
-      homeTabFlex.value = withTiming(1, {duration: 500});
-      homeTabColor.value = withTiming(COLORS.white, {duration: 500});
-    }
-
-    if (selectedTab === constants.screens.search) {
-      flatListRef.current?.scrollToIndex({index: 1, animated: false});
-      searchTabFlex.value = withTiming(4, {duration: 500});
-      searchTabColor.value = withTiming(COLORS.primary2, {duration: 500});
-    } else {
-      searchTabFlex.value = withTiming(1, {duration: 500});
-      searchTabColor.value = withTiming(COLORS.white, {duration: 500});
-    }
-
-    if (selectedTab === constants.screens.cart) {
-      flatListRef.current?.scrollToIndex({index: 2, animated: false});
-      cartTabFlex.value = withTiming(4, {duration: 500});
-      cartTabColor.value = withTiming(COLORS.primary2, {duration: 500});
-    } else {
-      cartTabFlex.value = withTiming(1, {duration: 500});
-      cartTabColor.value = withTiming(COLORS.white, {duration: 500});
-    }
-
-    if (selectedTab === constants.screens.favourite) {
-      flatListRef.current?.scrollToIndex({index: 3, animated: false});
-      favouriteTabFlex.value = withTiming(4, {duration: 500});
-      favouriteTabColor.value = withTiming(COLORS.primary2, {duration: 500});
-    } else {
-      favouriteTabFlex.value = withTiming(1, {duration: 500});
-      favouriteTabColor.value = withTiming(COLORS.white, {duration: 500});
-    }
-
-    if (selectedTab === constants.screens.notification) {
-      flatListRef.current?.scrollToIndex({index: 4, animated: false});
-      notificationTabFlex.value = withTiming(4, {duration: 500});
-      notificationTabColor.value = withTiming(COLORS.primary2, {duration: 500});
-    } else {
-      notificationTabFlex.value = withTiming(1, {duration: 500});
-      notificationTabColor.value = withTiming(COLORS.white, {duration: 500});
-    }
+    setMountedTabs(prev =>
+      prev[selectedTab] ? prev : {...prev, [selectedTab]: true},
+    );
   }, [selectedTab]);
 
+  const renderTabScreen = useCallback(
+    (tabLabel: string) => {
+      switch (tabLabel) {
+        case constants.screens.home:
+          return <MemoHome />;
+        case constants.screens.makeSale:
+          return <MemoCart navigation={navigation} isTabMode />;
+        case constants.screens.more:
+          return <MemoMoreMenu />;
+        default:
+          return null;
+      }
+    },
+    [navigation],
+  );
+
   return (
-    <Animated.View
-      style={[
-        {
-          flex: 1,
-          overflow: 'hidden',
-          zIndex: 1000,
-        },
-        animatedStyle,
-      ]}>
-      <View style={{flex: 1, backgroundColor: COLORS.white}}>
-        {/* Header */}
-        <Header
-          title={selectedTab.toUpperCase()}
-          leftComponent={
-            <TouchableOpacity
-              style={styles.menuButton}
-              onPress={() => navigation.openDrawer()}>
-              <Image source={icons.menu} style={styles.menuIcon} />
-            </TouchableOpacity>
-          }
-          rightComponent={
-            <TouchableOpacity style={styles.profileButton}>
-              <Image
-                source={dummyData?.myProfile?.profile_image}
-                style={styles.profileImage}
-              />
-            </TouchableOpacity>
-          }
-        />
-        {/* Content */}
-        <View style={{flex: 1}}>
-          <FlatList
-            ref={flatListRef}
-            horizontal
-            scrollEnabled={false}
-            pagingEnabled
-            snapToAlignment="center"
-            snapToInterval={SIZES.width}
-            showsHorizontalScrollIndicator={false}
-            data={constants.bottom_tabs}
-            keyExtractor={item => `${item.id}`}
-            renderItem={({item}) => {
-              return (
-                <View
-                  style={{
-                    height: SIZES.height,
-                    width: SIZES.width,
-                  }}>
-                  {item.label === constants.screens.home && <Home />}
-                  {/* {item.label === constants.screens.search && <Search />}
-                                    {item.label === constants.screens.cart && <CartTab />}
-                                    {item.label === constants.screens.favourite && <Favourite />}
-                                    {item.label === constants.screens.notification && <Notification />} */}
-                </View>
-              );
-            }}
-          />
-        </View>
-
-        {/* Footer */}
-        <View style={{height: 60, justifyContent: 'flex-end'}}>
-          {/* Shadow */}
-          <LinearGradient
-            start={{x: 0, y: 0}}
-            end={{x: 0, y: 1}}
-            colors={[COLORS.transparent, COLORS.lightGray1]}
-            style={{
-              position: 'absolute',
-              top: -15,
-              left: 0,
-              right: 0,
-              height: 100,
-              borderTopLeftRadius: 15,
-              borderTopRightRadius: 15,
-            }}
-          />
-
-          {/* Tabs */}
+    <View style={[styles.root, {backgroundColor: colors.background}]}>
+      <CatalogSyncModal
+        visible={syncModalVisible}
+        message={syncMessage}
+        progress={syncProgress}
+      />
+      <View style={styles.content}>
+        {bottomTabs.map(item => (
           <View
-            style={{
-              flex: 1,
-              flexDirection: 'row',
-              paddingHorizontal: SIZES.radius,
-              paddingBottom: 10,
-              paddingTop: 4,
-              borderTopLeftRadius: 20,
-              borderTopRightRadius: 20,
-              backgroundColor: COLORS.white,
-            }}>
-            <TabButton
-              label={constants.screens.home}
-              icon={icons.home}
-              isFocused={selectedTab === constants.screens.home}
-              outerContainerStyle={homeFlexStyle}
-              innerContainerStyle={homeColorStyle}
-              onPress={() => setSelectedTab(constants.screens.home)}
-            />
-
-            <TabButton
-              label={constants.screens.search}
-              icon={icons.search}
-              isFocused={selectedTab === constants.screens.search}
-              outerContainerStyle={searchFlexStyle}
-              innerContainerStyle={searchColorStyle}
-              onPress={() => setSelectedTab(constants.screens.search)}
-            />
-
-            {/* <TabButton
-                            label={constants.screens.cart}
-                            icon={icons.cart}
-                            isFocused={selectedTab === constants.screens.cart}
-                            outerContainerStyle={cartFlexStyle}
-                            innerContainerStyle={cartColorStyle}
-                            onPress={() => setSelectedTab(constants.screens.cart)}
-                        /> */}
-
-            <TabButton
-              label={constants.screens.favourite}
-              icon={icons.favourite}
-              isFocused={selectedTab === constants.screens.favourite}
-              outerContainerStyle={favouriteFlexStyle}
-              innerContainerStyle={favouriteColorStyle}
-              onPress={() => setSelectedTab(constants.screens.favourite)}
-            />
-
-            <TabButton
-              label={constants.screens.notification}
-              icon={icons.notification}
-              isFocused={selectedTab === constants.screens.notification}
-              outerContainerStyle={notificationFlexStyle}
-              innerContainerStyle={notificationColorStyle}
-              onPress={() => setSelectedTab(constants.screens.notification)}
-            />
+            key={item.id}
+            pointerEvents={selectedTab === item.label ? 'auto' : 'none'}
+            style={[
+              styles.tabPane,
+              selectedTab === item.label
+                ? styles.tabPaneVisible
+                : styles.tabPaneHidden,
+            ]}>
+            {mountedTabs[item.label] ? renderTabScreen(item.label) : null}
           </View>
-        </View>
+        ))}
       </View>
-    </Animated.View>
+
+      <MainBottomTabBar
+        selectedTab={selectedTab}
+        onSelectTab={setSelectedTab}
+        tabs={bottomTabs}
+      />
+    </View>
   );
 };
 
 export default MainLayout;
 
 const styles = StyleSheet.create({
-  menuButton: {
-    width: 40,
-    height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.lightGray2,
-    borderRadius: 12,
-    backgroundColor: COLORS.white,
-  },
-  menuIcon: {
-    width: 20,
-    height: 20,
-    tintColor: COLORS.black,
-  },
-  profileButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
+  root: {
+    flex: 1,
     overflow: 'hidden',
-    backgroundColor: COLORS.white,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
-    elevation: 3,
+    zIndex: 1000,
   },
-  profileImage: {
-    width: '100%',
-    height: '100%',
-    borderRadius: 12,
+  content: {
+    flex: 1,
+  },
+  tabPane: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  tabPaneVisible: {
+    opacity: 1,
+  },
+  tabPaneHidden: {
+    opacity: 0,
   },
 });

@@ -1,0 +1,377 @@
+{
+  "meta": {
+    "name": "auth-onboarding-visual-profile",
+    "version": "1.0.0",
+    "source": "style-reference-screenshots",
+    "scope": "authentication-flows-and-onboarding-hero"
+  },
+  "designStyle": {
+    "theme": "dual-context",
+    "tone": "professional-minimal",
+    "visualDirection": "high-contrast-mobile-first",
+    "modes": {
+      "heroOnboarding": {
+        "description": "full-bleed-media-with-overlay",
+        "density": "spacious",
+        "depth": "layered-translucency-over-photography"
+      },
+      "formAuth": {
+        "description": "light-surface-form-centric",
+        "density": "comfortable-whitespace",
+        "depth": "flat-no-drop-shadow-primary"
+      }
+    }
+  },
+  "colorSystem": {
+    "brand": {
+      "primaryGradient": {
+        "role": "primary-interactive-accent",
+        "usage": "primary-cta-filled-actions-brand-highlights"
+      },
+      "onBrand": {
+        "role": "foreground-on-gradient-or-saturated-fill",
+        "usage": "labels-icons-on-primary-actions"
+      }
+    },
+    "modes": {
+      "heroDark": {
+        "canvas": {
+          "role": "full-screen-backdrop",
+          "treatment": "photographic-or-video-with-darkening-overlay"
+        },
+        "overlay": {
+          "role": "readability-scrim",
+          "treatment": "vertical-gradient-darkening-toward-bottom"
+        },
+        "textPrimary": {
+          "role": "headline-and-primary-copy-on-media",
+          "contrast": "maximum-against-darkened-regions"
+        },
+        "textSecondary": {
+          "role": "supporting-copy-on-media",
+          "contrast": "high-subtle-translucent-white"
+        },
+        "primaryCta": {
+          "role": "highest-priority-action",
+          "fill": "solid-light-surface",
+          "foreground": "dark-on-light"
+        },
+        "secondaryCta": {
+          "role": "alternate-path",
+          "fill": "translucent-dark-neutral",
+          "foreground": "light-on-dark",
+          "opacityRange": "0.65-0.78"
+        },
+        "utilityControl": {
+          "role": "top-bar-icon-button",
+          "fill": "translucent-dark",
+          "foreground": "light"
+        }
+      },
+      "formLight": {
+        "canvas": {
+          "role": "screen-background",
+          "valueHint": "near-white-solid"
+        },
+        "surface": {
+          "role": "cards-and-sheets",
+          "valueHint": "pure-white"
+        },
+        "textPrimary": {
+          "role": "titles-and-primary-field-text"
+        },
+        "textSecondary": {
+          "role": "helper-and-placeholder"
+        },
+        "border": {
+          "role": "input-outlines-dividers",
+          "weightHint": "hairline-to-medium"
+        },
+        "primaryActionSolid": {
+          "role": "default-primary-button-fill",
+          "pairing": "inverted-foreground-on-solid-fill"
+        },
+        "secondaryActionMuted": {
+          "role": "secondary-button-fill",
+          "valueHint": "very-light-neutral-gray"
+        },
+        "focusRing": {
+          "role": "keyboard-and-accessibility-focus",
+          "pairing": "brand-or-high-contrast-accent"
+        }
+      }
+    },
+    "neutrals": {
+      "scale": {
+        "usage": "backgrounds-borders-dividers-disabled-text"
+      }
+    },
+    "states": {
+      "error": {
+        "role": "validation-and-failure",
+        "application": "border-text-icon"
+      },
+      "success": {
+        "role": "positive-validation",
+        "application": "text-or-subtle-border"
+      },
+      "disabled": {
+        "role": "non-interactive",
+        "application": "reduced-opacity-and-muted-text"
+      }
+    }
+  },
+  "typography": {
+    "family": {
+      "primary": "geometric-humanist-sans",
+      "fallback": "system-ui-sans"
+    },
+    "hierarchy": {
+      "heroHeadline": {
+        "scaleStep": "display",
+        "weight": "medium-to-semibold",
+        "alignment": "start",
+        "lineTightness": "tight"
+      },
+      "screenTitle": {
+        "scaleStep": "title",
+        "weight": "bold",
+        "alignment": "start"
+      },
+      "sectionLabel": {
+        "scaleStep": "caption",
+        "weight": "regular",
+        "alignment": "start"
+      },
+      "body": {
+        "scaleStep": "body",
+        "weight": "regular",
+        "alignment": "start-or-center-by-context"
+      },
+      "controlLabel": {
+        "scaleStep": "caption",
+        "weight": "regular-to-medium",
+        "placement": "inside-field-or-above"
+      },
+      "button": {
+        "scaleStep": "body",
+        "weight": "semibold",
+        "alignment": "center"
+      },
+      "link": {
+        "scaleStep": "body-or-caption",
+        "decoration": "underline-when-inline",
+        "weight": "medium"
+      }
+    },
+    "numericScale": {
+      "unit": "px",
+      "display": 48,
+      "title": 32,
+      "heading": 20,
+      "body": 16,
+      "caption": 14,
+      "micro": 12
+    },
+    "letterSpacing": {
+      "headline": "slightly-tight",
+      "ui": "default"
+    }
+  },
+  "layoutAndSpacing": {
+    "grid": {
+      "type": "single-column-stack",
+      "maxReadableWidth": {
+        "role": "optional-constraint-on-tablet",
+        "unit": "px"
+      }
+    },
+    "screenPadding": {
+      "horizontal": 24,
+      "vertical": 16,
+      "heroBottomSafeArea": "respect-system-insets"
+    },
+    "sectionSpacing": {
+      "afterTitle": 24,
+      "betweenFields": 16,
+      "beforePrimaryAction": 24,
+      "betweenStackedActions": 12
+    },
+    "alignment": {
+      "hero": {
+        "headline": "start",
+        "actions": "stretch"
+      },
+      "form": {
+        "titleBlock": "start",
+        "fields": "start",
+        "primaryActions": "stretch"
+      }
+    }
+  },
+  "components": {
+    "buttons": {
+      "primary": {
+        "shape": "pill",
+        "height": 56,
+        "width": "full-minus-horizontal-padding",
+        "variants": {
+          "filledBrand": {
+            "usage": "gradient-or-brand-solid-on-light-context"
+          },
+          "filledLightOnDark": {
+            "usage": "hero-primary-cta"
+          },
+          "filledDarkOnLight": {
+            "usage": "form-primary-cta-monochrome"
+          }
+        }
+      },
+      "secondary": {
+        "shape": "pill",
+        "height": 56,
+        "width": "full-minus-horizontal-padding",
+        "variants": {
+          "translucentOnMedia": {
+            "usage": "hero-secondary-cta"
+          },
+          "mutedOnLight": {
+            "usage": "form-secondary-cta"
+          }
+        }
+      },
+      "text": {
+        "usage": "tertiary-links-skip-learn-more"
+      }
+    },
+    "inputs": {
+      "textField": {
+        "shape": "rounded-rectangle",
+        "cornerRadius": 8,
+        "borderWidth": {
+          "default": 1,
+          "emphasis": 2
+        },
+        "paddingHorizontal": 16,
+        "minHeight": 56,
+        "labelPlacement": "inside-top-left-floating-or-static",
+        "trailingIcon": {
+          "optional": true,
+          "alignment": "center-vertical-end"
+        }
+      },
+      "select": {
+        "shape": "matches-text-field",
+        "leadingSlot": "optional-icon-or-image",
+        "trailing": "chevron"
+      }
+    },
+    "cards": {
+      "form": {
+        "cornerRadius": 16,
+        "padding": 24,
+        "shadow": "subtle-elevation-on-light-background",
+        "background": "elevated-surface"
+      }
+    },
+    "navigation": {
+      "backButton": {
+        "shape": "circle",
+        "size": 40,
+        "background": "very-light-neutral",
+        "icon": "line-arrow",
+        "placement": "top-leading"
+      },
+      "topBar": {
+        "hero": {
+          "leading": "brand-mark",
+          "trailing": "optional-icon-in-circle"
+        }
+      }
+    },
+    "lists": {
+      "row": {
+        "minHeight": 56,
+        "separator": "hairline"
+      }
+    },
+    "controls": {
+      "checkbox": {
+        "cornerRadius": 4,
+        "size": 24,
+        "borderWidth": 2
+      }
+    }
+  },
+  "interactionPatterns": {
+    "hover": {
+      "applicable": "web-and-hover-capable",
+      "buttons": "slight-darken-or-lighten-overlay"
+    },
+    "pressed": {
+      "buttons": "opacity-or-scale-down-slightly",
+      "listRows": "background-highlight"
+    },
+    "focus": {
+      "keyboard": "visible-focus-ring-on-inputs-and-controls",
+      "contrast": "meets-visible-focus-requirement"
+    },
+    "active": {
+      "tabsAndSegments": "elevated-or-inverted-surface-for-active"
+    },
+    "loading": {
+      "buttons": "inline-spinner-or-disabled-state"
+    }
+  },
+  "designTokens": {
+    "spacing": {
+      "0": 0,
+      "xs": 4,
+      "sm": 8,
+      "md": 16,
+      "lg": 24,
+      "xl": 32,
+      "xxl": 48
+    },
+    "radius": {
+      "none": 0,
+      "sm": 4,
+      "md": 8,
+      "lg": 12,
+      "xl": 16,
+      "pill": 9999
+    },
+    "borderWidth": {
+      "hairline": 1,
+      "sm": 2,
+      "md": 3
+    },
+    "elevation": {
+      "none": 0,
+      "low": 1,
+      "medium": 2
+    },
+    "motion": {
+      "durationMs": {
+        "fast": 150,
+        "normal": 250,
+        "slow": 400
+      },
+      "easing": "platform-standard-interactive"
+    }
+  },
+  "guidelines": {
+    "consistency": [
+      "Use one primary action per vertical screen region when possible.",
+      "Maintain identical pill geometry for stacked primary and secondary actions.",
+      "On dark media, prefer light solid primary CTA and translucent dark secondary CTA.",
+      "On light forms, prefer solid dark primary CTA and light gray secondary CTA.",
+      "Keep horizontal padding consistent between hero and form contexts.",
+      "Avoid mixing drop shadows on flat monochrome form screens unless elevating a single card.",
+      "Use tight line height for hero headlines; comfortable line height for body copy.",
+      "Left-align titles and field groups in form flows; preserve thumb-friendly full-width actions.",
+      "Reserve maximum contrast for primary CTA and critical validation states.",
+      "Use hairline dividers for list structure; avoid heavy borders except for active input emphasis."
+    ]
+  }
+}

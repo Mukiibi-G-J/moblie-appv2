@@ -28,20 +28,6 @@ class NetworkManager {
     }
 
     private setupAxiosInterceptors() {
-        // Request Interceptor
-        axiosInstance.interceptors.request.use(
-            async config => {
-                const networkState = await NetInfo.fetch();
-                if (!networkState.isConnected) {
-                    throw new Error('No Internet Connection');
-                }
-                return config;
-            },
-            error => {
-                return Promise.reject(error);
-            }
-        );
-
         // Response Interceptor
         axiosInstance.interceptors.response.use(
             response => response,
@@ -63,6 +49,9 @@ class NetworkManager {
     }
 
     private handleApiError(error: any) {
+        if (error?.code === 'SIMULATED_OFFLINE') {
+            return;
+        }
         if (!error.response) {
             // Network error
             Toast.show({
@@ -84,6 +73,10 @@ class NetworkManager {
                     text2: 'Please sign in again',
                     position: 'bottom',
                 });
+                break;
+            case 402:
+                // Subscription expired is handled by the axios interceptor navigation.
+                // Avoid showing a generic error toast here (would conflict with redirect).
                 break;
             case 403:
                 Toast.show({

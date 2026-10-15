@@ -1,0 +1,34 @@
+diff --git a/node_modules/react-native-contacts/ios/RCTContacts/RCTContacts.mm b/node_modules/react-native-contacts/ios/RCTContacts/RCTContacts.mm
+index e78ecd0..812c9cb 100644
+--- a/node_modules/react-native-contacts/ios/RCTContacts/RCTContacts.mm
++++ b/node_modules/react-native-contacts/ios/RCTContacts/RCTContacts.mm
+@@ -63,7 +63,8 @@ - (NSDictionary *)constantsToExport
+     } else if (authStatus == CNAuthorizationStatusAuthorized) {
+         resolve(@"authorized");
+     } else if (@available(iOS 18, *)) {
+-        if (authStatus == CNAuthorizationStatusLimited) {
++        // CNAuthorizationStatusLimited (= 4) is only in the iOS 18 SDK.
++        if (authStatus == (CNAuthorizationStatus)4) {
+             resolve(@"limited");
+         } else {
+             resolve(@"undefined");
+@@ -1483,7 +1484,8 @@ + (NSData *)loadImageAsset:(NSURL *)assetURL {
+     // Check authorization
+     CNAuthorizationStatus authStatus = [CNContactStore authorizationStatusForEntityType:CNEntityTypeContacts];
+     if (@available(iOS 18.0, *)) {
+-        if (authStatus != CNAuthorizationStatusAuthorized && authStatus != CNAuthorizationStatusLimited) {
++        // CNAuthorizationStatusLimited (= 4) is only in the iOS 18 SDK.
++        if (authStatus != CNAuthorizationStatusAuthorized && authStatus != (CNAuthorizationStatus)4) {
+             reject(@"permission_denied", @"Contacts permission denied", nil);
+             return;
+         }
+@@ -1557,7 +1559,8 @@ + (NSData *)loadImageAsset:(NSURL *)assetURL {
+     // Check authorization status
+     CNAuthorizationStatus authStatus = [CNContactStore authorizationStatusForEntityType:CNEntityTypeContacts];
+     if (@available(iOS 18.0, *)) {
+-        if (authStatus != CNAuthorizationStatusAuthorized && authStatus != CNAuthorizationStatusLimited) {
++        // CNAuthorizationStatusLimited (= 4) is only in the iOS 18 SDK.
++        if (authStatus != CNAuthorizationStatusAuthorized && authStatus != (CNAuthorizationStatus)4) {
+             reject(@"permission_denied", @"Contacts permission denied", nil);
+             return;
+         }

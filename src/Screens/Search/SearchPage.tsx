@@ -1,4 +1,4 @@
-import React, {useState, useRef, useEffect} from 'react';
+import React, {useState, useRef, useEffect, useCallback} from 'react';
 import {
   View,
   Text,
@@ -6,28 +6,83 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  FlatList,
+  SectionList,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {useNavigation} from '@react-navigation/native';
+import {safeGoBack} from '../../hooks/NavigationService';
 import Toast from 'react-native-toast-message';
+import AppToastHost from '../../Components/AppToastHost';
 
 import {FONTS, SIZES, COLORS, icons} from '../../constants';
-import {Header, IconButton} from '../../Components';
-import {useCart} from '../../context/CartStore';
+import {Header, QuickIconPressable} from '../../Components';
 import {useSearchMode} from '../../context/SearchModeStore';
-import {searchItems} from '../../services/app.services';
-import {CartItem} from '../../@types/types.dto';
+import {useTheme} from '../../context/ThemeContext';
+import {
+  globalSearch,
+  type GlobalSearchHit,
+  type GlobalSearchSection,
+} from '../../services/app.services';
+import {usePermissions} from '../../hooks/usePermissions';
+import {enginePagesForSearch} from '../../utils/roleCentreNav';
+
+function resolveSearchScreen(
+  sectionTitle: string,
+  hit: GlobalSearchHit,
+): string {
+  const page = hit.pageName || '';
+  switch (page) {
+    case 'ItemCard':
+      return 'AllItems';
+    case 'SalesInvoice':
+      return 'SalesHistory';
+    case 'CustomerCard':
+      return 'Customers';
+    case 'PurchaseInvoice':
+      return 'Purchases';
+    case 'VendorCard':
+      return 'Suppliers';
+    case 'GLAccountCard':
+      return 'Reports';
+    case 'PaymentJournalCard':
+      return 'Payments';
+    case 'ItemJournalCard':
+      return 'ItemJournal';
+    default:
+      break;
+  }
+
+  switch (sectionTitle) {
+    case 'Sales':
+      return 'SalesHistory';
+    case 'Customers':
+      return 'Customers';
+    case 'Purchases':
+      return 'Purchases';
+    case 'Vendors':
+      return 'Suppliers';
+    case 'Financials':
+      return 'Reports';
+    case 'Payments':
+      return 'Payments';
+    case 'Item Journals':
+      return 'ItemJournal';
+    case 'Inventory':
+    default:
+      return 'AllItems';
+  }
+}
 
 const SearchPage = () => {
-  const navigation = useNavigation();
-  const {state, dispatch} = useCart();
+  const navigation = useNavigation<any>();
+  const {colors} = useTheme();
   const {state: searchMode} = useSearchMode();
+  const {canAccessMobileScreen} = usePermissions();
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<CartItem[]>([]);
+  const [sections, setSections] = useState<GlobalSearchSection[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const isRealtimeMode = searchMode.searchMode === 'realtime';
@@ -35,7 +90,6 @@ const SearchPage = () => {
   const searchInputRef = useRef<TextInput>(null);
   const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Focus input when page loads
   useEffect(() => {
     const timer = setTimeout(() => {
       searchInputRef.current?.focus();
@@ -43,7 +97,6 @@ const SearchPage = () => {
     return () => clearTimeout(timer);
   }, []);
 
-  // Cleanup debounce timeout
   useEffect(() => {
     return () => {
       if (debounceTimeoutRef.current) {
@@ -52,9 +105,9 @@ const SearchPage = () => {
     };
   }, []);
 
-  const handleSearch = async (query: string) => {
+  const handleSearch = useCallback(async (query: string) => {
     if (!query.trim()) {
-      setSearchResults([]);
+      setSections([]);
       setHasSearched(false);
       return;
     }
@@ -63,91 +116,64 @@ const SearchPage = () => {
     setHasSearched(true);
 
     try {
-      const results = await searchItems(query);
-      setSearchResults(results);
+      const results = await globalSearch(query.trim());
+      const allowed = results
+        .map(section => ({
+          ...section,
+          data: (section.data || []).filter(hit =>
+            canAccessMobileScreen(
+              enginePagesForSearch(section.title, hit.pageName),
+            ),
+          ),
+        }))
+        .filter(section => (section.data?.length || 0) > 0);
+      setSections(allowed);
     } catch (error) {
       console.error('Search error:', error);
-      setSearchResults([]);
+      setSections([]);
       Toast.show({
         type: 'error',
         text1: 'Search Error',
-        text2: 'Failed to search items. Please try again.',
+        text2: 'Could not search the system. Please try again.',
       });
     } finally {
       setIsSearching(false);
     }
-  };
+  }, [canAccessMobileScreen]);
 
-  const addToCart = (item: CartItem) => {
-    const existItem = state.cartItems.find(
-      (x: CartItem) => x.system_id === item.system_id,
-    );
-    const quantity = existItem ? (Number(existItem.quantity) || 0) + 1 : 1;
+  const openResult = useCallback(
+    (sectionTitle: string, hit: GlobalSearchHit) => {
+      const screen = resolveSearchScreen(sectionTitle, hit);
+      navigation.navigate(screen, {
+        initialSearch: hit.title || searchQuery.trim(),
+        ...(screen === 'SalesHistory' ? {dateFilter: 'alltime'} : {}),
+        ...(screen === 'Purchases' ? {statusFilter: 'all'} : {}),
+      });
+    },
+    [navigation, searchQuery],
+  );
 
-    if (quantity > item.inventory) {
+  const openBarcodeScanner = () => {
+    if (!searchMode.barcodeScannerEnabled) {
       Toast.show({
-        type: 'error',
-        text1: 'Error',
-        text2: `Sorry, only ${item.inventory} items available in stock.`,
+        type: 'info',
+        text1: 'Scanner Disabled',
+        text2: 'Enable barcode scanner in Settings to use camera scan.',
       });
       return;
     }
 
-    // Add current date as date_sold
-    const currentDate = new Date().toISOString();
-
-    dispatch({
-      type: 'CART_ADD_ITEM',
-      payload: {
-        ...item,
-        quantity,
-        date_sold: currentDate,
+    navigation.navigate('BarcodeScanner' as never, {
+      onScan: (scannedCode: string) => {
+        setSearchQuery(scannedCode);
+        handleSearch(scannedCode);
       },
-    });
-
-    Toast.show({
-      type: 'success',
-      text1: 'Item Added',
-      text2: `${item.item_name} has been added to your cart.`,
-    });
-
-    // Clear search and go back to cart
-    setSearchQuery('');
-    setSearchResults([]);
-    setHasSearched(false);
-    navigation.goBack();
+    } as never);
   };
 
-  const renderSearchItem = ({item}: {item: CartItem}) => (
-    <TouchableOpacity style={styles.searchItem} onPress={() => addToCart(item)}>
-      <View style={styles.itemImageContainer}>
-        <Image
-          source={
-            item.item_images && item.item_images[0]?.url
-              ? {uri: item.item_images[0].url}
-              : icons.product2
-          }
-          style={styles.itemImage}
-          resizeMode="cover"
-        />
-      </View>
-
-      <View style={styles.itemDetails}>
-        <Text style={styles.itemName} numberOfLines={2}>
-          {item.item_name}
-        </Text>
-        <View style={styles.itemInfo}>
-          <Text style={styles.stockText}>Stock: {item.inventory}</Text>
-          <Text style={styles.priceText}>
-            UGX {item.unit_price?.toLocaleString()}
-          </Text>
-        </View>
-      </View>
-
-      <View style={styles.addButton}>
-        <Text style={styles.addButtonText}>+</Text>
-      </View>
-    </TouchableOpacity>
+  const resultCount = sections.reduce(
+    (sum, section) => sum + (section.data?.length || 0),
+    0,
   );
 
   const renderEmptyState = () => {
@@ -155,20 +181,22 @@ const SearchPage = () => {
       return (
         <View style={styles.emptyContainer}>
           <ActivityIndicator size="large" color={COLORS.primary} />
-          <Text style={styles.emptyText}>Searching...</Text>
+          <Text style={[styles.emptyText, {color: colors.textSecondary}]}>
+            Searching...
+          </Text>
         </View>
       );
     }
 
-    if (hasSearched && searchResults.length === 0) {
+    if (hasSearched && resultCount === 0) {
       return (
         <View style={styles.emptyContainer}>
           <Image source={icons.search} style={styles.emptyIcon} />
-          <Text style={styles.emptyText}>
-            No items found for "{searchQuery}"
+          <Text style={[styles.emptyText, {color: colors.textSecondary}]}>
+            No results for "{searchQuery}"
           </Text>
-          <Text style={styles.emptySubtext}>
-            Try searching with different keywords
+          <Text style={[styles.emptySubtext, {color: colors.textTertiary}]}>
+            Try a customer, invoice, item, vendor, or payment
           </Text>
         </View>
       );
@@ -177,51 +205,64 @@ const SearchPage = () => {
     return (
       <View style={styles.emptyContainer}>
         <Image source={icons.search} style={styles.emptyIcon} />
-        <Text style={styles.emptyText}>Search for items</Text>
-        <Text style={styles.emptySubtext}>
-          Enter item name, barcode, or description
+        <Text style={[styles.emptyText, {color: colors.textSecondary}]}>
+          Search the system
+        </Text>
+        <Text style={[styles.emptySubtext, {color: colors.textTertiary}]}>
+          Items, customers, sales, purchases, vendors, and more
         </Text>
       </View>
     );
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={[styles.container, {backgroundColor: colors.background}]}>
       <KeyboardAvoidingView
         style={styles.keyboardView}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <Header
-          title="Search Items"
+          title="Search"
           showBack={true}
-          onBackPress={() => navigation.goBack()}
+          onBackPress={() => safeGoBack(navigation, 'Home')}
           containerStyle={styles.header}
         />
 
-        {/* Search Input */}
-        <View style={styles.searchContainer}>
-          <View style={styles.searchInputContainer}>
-            <Image source={icons.search} style={styles.searchIcon} />
+        <View
+          style={[
+            styles.searchContainer,
+            {
+              backgroundColor: colors.surface,
+              borderBottomColor: colors.border,
+            },
+          ]}>
+          <View
+            style={[
+              styles.searchInputContainer,
+              {backgroundColor: colors.inputBackground, borderColor: colors.border},
+            ]}>
+            <Image
+              source={icons.search}
+              style={[styles.searchIcon, {tintColor: colors.iconMuted}]}
+            />
             <TextInput
               ref={searchInputRef}
-              style={styles.searchInput}
-              placeholder="Search items..."
-              placeholderTextColor={COLORS.gray}
+              style={[styles.searchInput, {color: colors.textPrimary}]}
+              placeholder="Search items, customers, invoices..."
+              placeholderTextColor={colors.placeholder}
               value={searchQuery}
               onChangeText={text => {
                 setSearchQuery(text);
                 if (isRealtimeMode) {
-                  // Clear previous timeout
                   if (debounceTimeoutRef.current) {
                     clearTimeout(debounceTimeoutRef.current);
                   }
 
                   if (text.trim()) {
-                    // Set new timeout for debounced search
                     debounceTimeoutRef.current = setTimeout(() => {
                       handleSearch(text);
-                    }, 300); // 300ms debounce
+                    }, 300);
                   } else {
-                    setSearchResults([]);
+                    setSections([]);
                     setHasSearched(false);
                   }
                 }
@@ -233,15 +274,19 @@ const SearchPage = () => {
               autoFocus={true}
             />
             {searchQuery.length > 0 && (
-              <TouchableOpacity
+              <QuickIconPressable
                 style={styles.clearButton}
                 onPress={() => {
                   setSearchQuery('');
-                  setSearchResults([]);
+                  setSections([]);
                   setHasSearched(false);
-                }}>
-                <Image source={icons.cross} style={styles.clearIcon} />
-              </TouchableOpacity>
+                }}
+                accessibilityLabel="Clear search">
+                <Image
+                  source={icons.cross}
+                  style={[styles.clearIcon, {tintColor: colors.iconMuted}]}
+                />
+              </QuickIconPressable>
             )}
           </View>
 
@@ -257,15 +302,67 @@ const SearchPage = () => {
               )}
             </TouchableOpacity>
           )}
+
+          {searchMode.barcodeScannerEnabled && (
+            <TouchableOpacity
+              style={styles.scanButton}
+              onPress={openBarcodeScanner}
+              disabled={isSearching}>
+              <Image source={icons.focus} style={styles.scanIcon} />
+            </TouchableOpacity>
+          )}
         </View>
 
-        {/* Search Results */}
         <View style={styles.resultsContainer}>
-          {searchResults.length > 0 ? (
-            <FlatList
-              data={searchResults}
-              renderItem={renderSearchItem}
-              keyExtractor={item => item.system_id}
+          {resultCount > 0 ? (
+            <SectionList
+              sections={sections}
+              keyExtractor={(item, index) =>
+                `${item.pageName || item.category || 'row'}-${item.systemId || item.title}-${index}`
+              }
+              renderSectionHeader={({section}) => (
+                <Text
+                  style={[
+                    styles.sectionTitle,
+                    {
+                      color: colors.textSecondary,
+                      backgroundColor: colors.background,
+                    },
+                  ]}>
+                  {section.title}
+                </Text>
+              )}
+              renderItem={({item, section}) => (
+                <TouchableOpacity
+                  style={[
+                    styles.resultRow,
+                    {backgroundColor: colors.card, borderColor: colors.border},
+                  ]}
+                  onPress={() => openResult(section.title, item)}
+                  activeOpacity={0.75}>
+                  <View style={styles.resultTextWrap}>
+                    <Text
+                      style={[styles.resultTitle, {color: colors.textPrimary}]}
+                      numberOfLines={1}>
+                      {item.title}
+                    </Text>
+                    {item.description ? (
+                      <Text
+                        style={[
+                          styles.resultDescription,
+                          {color: colors.textSecondary},
+                        ]}
+                        numberOfLines={2}>
+                        {item.description}
+                      </Text>
+                    ) : null}
+                  </View>
+                  <Text style={[styles.openHint, {color: COLORS.primary}]}>
+                    Open
+                  </Text>
+                </TouchableOpacity>
+              )}
+              stickySectionHeadersEnabled
               showsVerticalScrollIndicator={false}
               contentContainerStyle={styles.resultsList}
               keyboardShouldPersistTaps="handled"
@@ -276,7 +373,7 @@ const SearchPage = () => {
         </View>
       </KeyboardAvoidingView>
 
-      <Toast />
+      <AppToastHost />
     </SafeAreaView>
   );
 };
@@ -284,7 +381,6 @@ const SearchPage = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.white,
   },
   keyboardView: {
     flex: 1,
@@ -297,29 +393,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: SIZES.padding,
     paddingVertical: SIZES.base,
-    backgroundColor: COLORS.white,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.lightGray2,
   },
   searchInputContainer: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.lightGray2,
     borderRadius: SIZES.radius,
+    borderWidth: 1,
     paddingHorizontal: SIZES.radius,
     marginRight: SIZES.base,
   },
   searchIcon: {
     width: 20,
     height: 20,
-    tintColor: COLORS.gray,
     marginRight: SIZES.base,
   },
   searchInput: {
     flex: 1,
     height: 45,
-    color: COLORS.black,
     ...FONTS.body3,
   },
   clearButton: {
@@ -328,7 +420,6 @@ const styles = StyleSheet.create({
   clearIcon: {
     width: 16,
     height: 16,
-    tintColor: COLORS.gray,
   },
   searchButton: {
     backgroundColor: COLORS.primary,
@@ -338,6 +429,21 @@ const styles = StyleSheet.create({
     minWidth: 80,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  scanButton: {
+    marginLeft: SIZES.base,
+    backgroundColor: COLORS.primary2,
+    paddingHorizontal: SIZES.base + 2,
+    paddingVertical: SIZES.base,
+    borderRadius: SIZES.radius,
+    minWidth: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scanIcon: {
+    width: 20,
+    height: 20,
+    tintColor: COLORS.white,
   },
   searchButtonText: {
     color: COLORS.white,
@@ -350,67 +456,36 @@ const styles = StyleSheet.create({
   resultsList: {
     paddingHorizontal: SIZES.padding,
     paddingTop: SIZES.base,
+    paddingBottom: SIZES.padding,
   },
-  searchItem: {
+  sectionTitle: {
+    ...FONTS.h4,
+    fontWeight: '700',
+    paddingTop: SIZES.base,
+    paddingBottom: 6,
+  },
+  resultRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.white,
     borderRadius: SIZES.radius,
-    padding: SIZES.base,
+    borderWidth: 1,
+    padding: SIZES.padding - 4,
     marginBottom: SIZES.base,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 1},
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
   },
-  itemImageContainer: {
-    width: 60,
-    height: 60,
-    borderRadius: SIZES.radius,
-    overflow: 'hidden',
-    backgroundColor: COLORS.lightGray2,
-  },
-  itemImage: {
-    width: '100%',
-    height: '100%',
-  },
-  itemDetails: {
+  resultTextWrap: {
     flex: 1,
-    marginLeft: SIZES.base,
+    marginRight: SIZES.base,
   },
-  itemName: {
+  resultTitle: {
     ...FONTS.h4,
-    color: COLORS.darkGray,
-    marginBottom: 4,
+    marginBottom: 2,
   },
-  itemInfo: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  stockText: {
+  resultDescription: {
     ...FONTS.body5,
-    color: COLORS.gray,
   },
-  priceText: {
-    ...FONTS.h4,
-    color: COLORS.primary,
+  openHint: {
+    ...FONTS.body5,
     fontWeight: '600',
-  },
-  addButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: COLORS.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: SIZES.base,
-  },
-  addButtonText: {
-    color: COLORS.white,
-    fontSize: 20,
-    fontWeight: 'bold',
   },
   emptyContainer: {
     flex: 1,
@@ -427,15 +502,13 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     ...FONTS.h3,
-    color: COLORS.gray,
     textAlign: 'center',
     marginBottom: SIZES.base,
   },
   emptySubtext: {
     ...FONTS.body4,
-    color: COLORS.gray,
     textAlign: 'center',
-    opacity: 0.7,
+    opacity: 0.85,
   },
 });
 

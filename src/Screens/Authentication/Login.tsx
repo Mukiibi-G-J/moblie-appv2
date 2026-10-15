@@ -1,97 +1,281 @@
-import React, {useState} from 'react';
+import React, {useState, useCallback, useRef} from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   View,
   Text,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
-  Dimensions,
   Image,
 } from 'react-native';
-import {useNavigation} from '@react-navigation/native';
-import {NativeStackNavigationProp} from '@react-navigation/native-stack';
-import {icons, images} from '../../constants';
+import {useNavigation, useFocusEffect} from '@react-navigation/native';
+import type {NativeStackNavigationProp} from '@react-navigation/native-stack';
+import {icons} from '../../constants';
 import AuthLayout from '../../Components/layouts/AuthLayout';
 import FormInput from '../../Components/FormInput2';
+import LoginMethodToggle, {
+  type LoginMethod,
+} from '../../Components/LoginMethodToggle';
+import CustomPhoneInput, {
+  UGANDA_DIAL_CODE,
+} from '../../Components/CustomPhoneInput';
 import {COLORS} from '../../constants';
-import {authService} from '../../services/auth.services';
+import {restaurantCompanyLookup} from '../../services/restaurantPinApi';
 import Toast from 'react-native-toast-message';
 import {RootStackParamList} from '../../@types/types.dto';
-import {useAppContext, AppContextType} from '../../context/Store';
+import {useAppContext} from '../../context/Store';
+import {getEmail, getTenant} from '../../utils/tenant';
+import {
+  LOGIN_DRAFT_TENANT,
+  LOGIN_DRAFT_EMAIL,
+  LOGIN_DRAFT_PASSWORD,
+  LOGIN_DRAFT_LOGIN_METHOD,
+  resolveLoginMethodFromCredential,
+  type LoginDraftMethod,
+} from '../../utils/loginCredentials';
+import {loginAndRouteAfterCredentials} from '../../utils/postAuthNavigation';
+import {showAuthSupportAlert} from '../../utils/authSupport';
+import {isWorkspaceProvisioningError} from '../../services/companyOnboarding.service';
+import {ensureRestaurantPinDeviceForCompany} from '../../storage/restaurantDeviceStorage';
+import {radii} from '../../design-system/theme';
+import {authOnboarding} from '../../design-system/authOnboardingTokens';
+import {useTheme} from '../../context/ThemeContext';
 
-const {width} = Dimensions.get('window');
+const ao = authOnboarding;
 
-type LoginScreenNavigationProp = NativeStackNavigationProp<
-  RootStackParamList,
-  'Login'
->;
+/** Continue CTA solid fill */
+const CONTINUE_BRAND = '#005151';
+
+type LoginNav = NativeStackNavigationProp<RootStackParamList, 'SignIn'>;
+
+const emailLooksValid = (value: string) => /\S+@\S+\.\S+/.test(value.trim());
+
+const E164_RE = /^\+[1-9]\d{1,14}$/;
+
+function nationalFromStoredPhone(value: string): string {
+  let d = value.replace(/\D/g, '');
+  if (d.startsWith('256')) {
+    d = d.slice(3);
+  }
+  d = d.replace(/^0+/, '');
+  return d.slice(0, 9);
+}
+
+const LOGIN_DRAFT_COMPANY_DISPLAY = '@zentro_login_draft_company_display';
 
 const Login = () => {
-  const navigation = useNavigation<LoginScreenNavigationProp>();
+  const {colors, isDark, setPreference} = useTheme();
+  const navigation = useNavigation<LoginNav>();
   const context = useAppContext();
+  const [step, setStep] = useState<1 | 2>(1);
+  const [loginMethod, setLoginMethod] = useState<LoginMethod>('email');
   const [tenant, setTenant] = useState('');
   const [email, setEmail] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [isPhoneValid, setIsPhoneValid] = useState(false);
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [tenantError, setTenantError] = useState('');
   const [isCheckingTenant, setIsCheckingTenant] = useState(false);
+  const [continuing, setContinuing] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [passwordError, setPasswordError] = useState('');
+  const tenantLookupGenRef = useRef(0);
+  const tenantLookupTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+
+  const buildLoginPhone = useCallback(() => {
+    const digits = phoneNumber.replace(/\D/g, '');
+    return `${UGANDA_DIAL_CODE}${digits}`;
+  }, [phoneNumber]);
+
+  const resolveLoginCredential = useCallback(() => {
+    if (loginMethod === 'phone') {
+      return buildLoginPhone();
+    }
+    return email.trim();
+  }, [loginMethod, email, buildLoginPhone]);
+
+  const saveLoginDraft = useCallback(
+    async (includePassword: boolean) => {
+      try {
+        const pairs: [string, string][] = [
+          [LOGIN_DRAFT_TENANT, tenant.trim()],
+          [LOGIN_DRAFT_EMAIL, resolveLoginCredential()],
+          [LOGIN_DRAFT_LOGIN_METHOD, loginMethod],
+        ];
+        if (includePassword) {
+          pairs.push([LOGIN_DRAFT_PASSWORD, password]);
+        }
+        await AsyncStorage.multiSet(pairs);
+      } catch {
+        /* ignore */
+      }
+    },
+    [tenant, resolveLoginCredential, loginMethod, password],
+  );
+
+  const clearStoredLoginPassword = useCallback(async () => {
+    try {
+      await AsyncStorage.removeItem(LOGIN_DRAFT_PASSWORD);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (loading) {
+        return;
+      }
+      let cancelled = false;
+      void (async () => {
+        try {
+          const rows = await AsyncStorage.multiGet([
+            LOGIN_DRAFT_TENANT,
+            LOGIN_DRAFT_EMAIL,
+            LOGIN_DRAFT_PASSWORD,
+            LOGIN_DRAFT_LOGIN_METHOD,
+          ]);
+          if (cancelled) {
+            return;
+          }
+          const map = Object.fromEntries(rows) as Record<
+            string,
+            string | undefined
+          >;
+          const storedTenant = ((await getTenant()) || '').trim();
+          const storedEmail = ((await getEmail()) || '').trim();
+          const p = map[LOGIN_DRAFT_PASSWORD];
+
+          let t = storedTenant || map[LOGIN_DRAFT_TENANT]?.trim() || '';
+          const draftCredential = map[LOGIN_DRAFT_EMAIL]?.trim() || '';
+          let e = draftCredential || storedEmail;
+          const storedMethod = resolveLoginMethodFromCredential(
+            e,
+            map[LOGIN_DRAFT_LOGIN_METHOD] as LoginDraftMethod | undefined,
+          );
+
+          if (t) {
+            setTenant(t);
+          }
+          setLoginMethod(storedMethod);
+          if (storedMethod === 'phone') {
+            setPhoneNumber(nationalFromStoredPhone(e));
+            setEmail('');
+          } else if (e) {
+            setEmail(e);
+            setPhoneNumber('');
+          }
+          if (p) {
+            setPassword(p);
+            if (t && e) {
+              setStep(2);
+            }
+          } else {
+            setPassword('');
+            setStep(1);
+          }
+        } catch {
+          /* ignore */
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [loading]),
+  );
+
+  const goBackToCredentials = useCallback(() => {
+    setPassword('');
+    setPasswordError('');
+    setShowPassword(false);
+    setStep(1);
+    void clearStoredLoginPassword();
+  }, [clearStoredLoginPassword]);
+
+  const handleLoginMethodChange = useCallback((method: LoginMethod) => {
+    setLoginMethod(method);
+    if (method === 'email') {
+      setPhoneNumber('');
+      setIsPhoneValid(false);
+    } else if (method === 'phone') {
+      setEmail('');
+    } else {
+      setEmail('');
+      setPhoneNumber('');
+      setIsPhoneValid(false);
+    }
+  }, []);
+
   const handleLogin = async () => {
-    if (!tenant || !email || !password) {
+    const credential = resolveLoginCredential();
+    if (!tenant || !credential || !password) {
       Toast.show({
         type: 'error',
-        text1: `Please ${!tenant ? 'enter company name' : ''} ${
-          !email ? 'enter email' : ''
-        } ${!password ? 'enter password' : ''}`,
+        text1: 'Please enter your password',
       });
       return;
     }
 
+    const schemaTenant =
+      ((await AsyncStorage.getItem('tenant')) || '').trim().toLowerCase() ||
+      tenant.trim().toLowerCase();
+
     setLoading(true);
     try {
-      // Add your login logic here
-      const response = await authService.login({tenant, email, password});
-      if (response) {
-        Toast.show({
-          type: 'success',
-          text1: 'Login successful',
-          text2: 'Redirecting to dashboard...',
-        });
+      const loginResult = await loginAndRouteAfterCredentials({
+        context: context ?? null,
+        navigation,
+        credential,
+        password,
+        tenant: schemaTenant,
+      });
 
-        // Keep loading state active during context update and navigation
-        // Update the context to trigger navigation change
-        // This will make the 'Home' screen available in the navigation stack
-        await context?.login({email, password});
-
-        // Add a timeout to ensure loading state is cleared if navigation takes too long
-        setTimeout(() => {
-          setLoading(false);
-        }, 5000); // 5 second timeout as fallback
-      } else {
+      if (loginResult === 'otp') {
         setLoading(false);
-        Toast.show({
-          type: 'error',
-          text1: 'Login failed',
-          text2: 'Please check your credentials and try again',
-        });
+        return;
       }
+
+      if (loginResult === 'home') {
+        await clearStoredLoginPassword();
+        await saveLoginDraft(false);
+        setLoading(false);
+        return;
+      }
+
+      setLoading(false);
+      await saveLoginDraft(true);
+      Toast.show({
+        type: 'error',
+        text1: 'Login failed',
+        text2: 'Please check your credentials and try again',
+      });
     } catch (error: any) {
-      console.log(error);
       setLoading(false);
 
-      // Handle specific error types
+      if (isWorkspaceProvisioningError(error)) {
+        await saveLoginDraft(true);
+        navigation.replace('CompanyProvisioning', {
+          tenant: schemaTenant,
+          email: credential,
+          autoLogin: true,
+        });
+        return;
+      }
+
       let errorMessage = 'An error occurred. Please try again.';
       if (error.message) {
         errorMessage = error.message;
       } else if (error.response?.status === 401) {
         errorMessage =
-          'Invalid credentials. Please check your email and password.';
+          'Invalid email, phone number, or password. Please try again.';
       } else if (error.response?.status === 404) {
         errorMessage = 'Company not found. Please check your company name.';
       }
 
+      await saveLoginDraft(true);
       Toast.show({
         type: 'error',
         text1: 'Login failed',
@@ -100,190 +284,480 @@ const Login = () => {
     }
   };
 
-  const validateTenant = async (value: string) => {
-    if (value.length >= 3) {
+  const validateTenantLive = (value: string) => {
+    const v = value.trim();
+    if (tenantLookupTimerRef.current) {
+      clearTimeout(tenantLookupTimerRef.current);
+      tenantLookupTimerRef.current = null;
+    }
+    if (v.length < 3) {
+      tenantLookupGenRef.current += 1;
+      setIsCheckingTenant(false);
+      setTenantError('');
+      return;
+    }
+    const gen = ++tenantLookupGenRef.current;
+    tenantLookupTimerRef.current = setTimeout(async () => {
       setIsCheckingTenant(true);
       try {
-        // Make your API call here to verify tenant
-        const response = await authService.isCompanyExists(value);
-        if (response) {
-          setTenantError('');
-        } else {
-          setTenantError('Company not found');
+        await restaurantCompanyLookup(v);
+        if (gen !== tenantLookupGenRef.current) {
+          return;
         }
-      } catch (error) {
-        setTenantError('Error verifying company');
+        setTenantError('');
+      } catch (e: any) {
+        if (gen !== tenantLookupGenRef.current) {
+          return;
+        }
+        const st = e?.response?.status;
+        const code = e?.response?.data?.code;
+        if (st === 404) {
+          setTenantError('Company not found');
+        } else if (st === 400 && code === 'ambiguous_company_name') {
+          setTenantError('Multiple matches — use exact company name');
+        } else {
+          setTenantError('');
+        }
       } finally {
-        setIsCheckingTenant(false);
+        if (gen === tenantLookupGenRef.current) {
+          setIsCheckingTenant(false);
+        }
       }
-    }
+    }, 450);
   };
 
-  return (
-    <AuthLayout title="Welcome Back" subtitle="Sign in to continue">
-      <FormInput
-        label="Company Name"
-        value={tenant}
-        onChangeText={text => {
-          setTenant(text);
-          validateTenant(text);
-        }}
-        placeholder="Enter Company Name"
-        required
-        error={tenantError}
-        isLoading={isCheckingTenant}
-        helpText="Enter your registered company name"
-        startIcon={
-          <Image
-            source={icons.company}
-            style={{width: 20, height: 20, tintColor: COLORS.grey}}
-          />
-        }
-        autoCapitalize="none"
-      />
+  const continueToPassword = async () => {
+    const t = tenant.trim();
+    const credential = resolveLoginCredential();
 
-      <FormInput
-        label="Email Address"
-        value={email}
-        onChangeText={setEmail}
-        placeholder="Enter email"
-        required
-        helpText="We'll never share your email"
-        startIcon={
-          <Image
-            source={icons.email}
-            style={{width: 20, height: 20, tintColor: COLORS.grey}}
-          />
-        }
-        keyboardType="email-address"
-        autoCapitalize="none"
-      />
+    if (loginMethod === 'pin') {
+      if (!t) {
+        Toast.show({
+          type: 'error',
+          text1: 'Missing information',
+          text2: 'Enter your company name',
+        });
+        return;
+      }
+    } else if (!t || !credential) {
+      Toast.show({
+        type: 'error',
+        text1: 'Missing information',
+        text2:
+          loginMethod === 'phone'
+            ? 'Enter company name and phone number'
+            : 'Enter company name and email',
+      });
+      return;
+    }
 
-      <FormInput
-        label="Password"
-        value={password}
-        onChangeText={setPassword}
-        placeholder="Enter password"
-        required
-        error={passwordError}
-        helpText="Minimum 8 characters"
-        secureTextEntry={!showPassword}
-        endIcon={
-          <TouchableOpacity
-            onPress={() => setShowPassword(!showPassword)}
-            style={styles.iconButton}>
-            <Image
-              source={showPassword ? icons.eye : icons.eye_close}
-              style={{
-                width: 20,
-                height: 20,
-                tintColor: COLORS.grey,
-              }}
-            />
-          </TouchableOpacity>
-        }
-      />
+    if (t.length < 3) {
+      Toast.show({
+        type: 'error',
+        text1: 'Company name',
+        text2: 'Use at least 3 characters',
+      });
+      return;
+    }
 
-      {/* <TouchableOpacity
-        onPress={() => navigation.navigate('ForgotPassword')}
-        style={styles.forgotPassword}>
-        <Text style={styles.forgotPasswordText}>Forgot Password?</Text>
-      </TouchableOpacity> */}
+    if (loginMethod === 'email') {
+      if (!emailLooksValid(credential)) {
+        Toast.show({
+          type: 'error',
+          text1: 'Invalid email',
+          text2: 'Enter a valid email address',
+        });
+        return;
+      }
+    } else if (loginMethod === 'phone' && (!isPhoneValid || !E164_RE.test(credential))) {
+      Toast.show({
+        type: 'error',
+        text1: 'Invalid phone number',
+        text2: 'Enter a complete phone number',
+      });
+      return;
+    }
 
+    setContinuing(true);
+    tenantLookupGenRef.current += 1;
+    if (tenantLookupTimerRef.current) {
+      clearTimeout(tenantLookupTimerRef.current);
+      tenantLookupTimerRef.current = null;
+    }
+    setIsCheckingTenant(false);
+    try {
+      const result = await restaurantCompanyLookup(t);
+      const schema = result.schema_name.trim().toLowerCase();
+      await AsyncStorage.setItem('tenant', schema);
+      try {
+        await AsyncStorage.setItem(
+          LOGIN_DRAFT_COMPANY_DISPLAY,
+          result.display_name || result.name || '',
+        );
+      } catch {
+        /* ignore */
+      }
+      setTenantError('');
+      if (loginMethod === 'pin') {
+        await ensureRestaurantPinDeviceForCompany({
+          schemaName: schema,
+          companyDisplayName: result.display_name || result.name || t,
+        });
+        await saveLoginDraft(false);
+        navigation.navigate('RestaurantPinSignIn');
+        return;
+      }
+    } catch (e: any) {
+      const st = e?.response?.status;
+      const code = e?.response?.data?.code;
+      if (st === 404) {
+        setTenantError('Company not found');
+        Toast.show({
+          type: 'error',
+          text1: 'Company not found',
+          text2: 'Check the name or sign up',
+        });
+      } else if (st === 400 && code === 'ambiguous_company_name') {
+        setTenantError('Multiple matches — use exact company name');
+        Toast.show({
+          type: 'error',
+          text1: 'Company name',
+          text2: 'Use the exact name your administrator gave you.',
+        });
+      } else {
+        Toast.show({
+          type: 'error',
+          text1: 'Could not verify company',
+          text2: 'Check your connection and try again',
+        });
+      }
+      return;
+    } finally {
+      setContinuing(false);
+    }
+
+    await saveLoginDraft(false);
+    setStep(2);
+  };
+
+  const canExit = navigation.canGoBack();
+  const showBack = step === 2 || canExit;
+  const onBack =
+    step === 2
+      ? goBackToCredentials
+      : canExit
+        ? () => navigation.goBack()
+        : undefined;
+
+  const identitySubtitle = (
+    <View style={styles.identityRow}>
+      <Text
+        style={[styles.identityEmail, {color: colors.textPrimary}]}
+        numberOfLines={1}>
+        {resolveLoginCredential()}
+      </Text>
       <TouchableOpacity
-        style={[styles.loginButton, loading && styles.loginButtonDisabled]}
-        onPress={handleLogin}
-        disabled={loading}>
-        {loading ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.loginButtonText}>Sign In</Text>
-        )}
+        onPress={goBackToCredentials}
+        hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
+        <Text style={[styles.changeLink, {color: colors.textPrimary}]}>
+          Change
+        </Text>
       </TouchableOpacity>
+    </View>
+  );
 
-      {/* <View style={styles.signupContainer}>
-        <Text style={styles.signupText}>Don't have an account? </Text>
-        <TouchableOpacity
-          onPress={() => navigation.navigate('SignUp')}
-          hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
-          <Text style={styles.signupLink}>Sign Up</Text>
-        </TouchableOpacity>
-      </View> */}
+  return (
+    <AuthLayout
+      title={step === 1 ? 'Sign in' : 'Welcome back'}
+      subtitle={step === 2 ? identitySubtitle : undefined}
+      showBackButton={showBack && !!onBack}
+      onBackPress={onBack}
+      headerRight={
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            onPress={showAuthSupportAlert}
+            hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
+            accessibilityRole="button"
+            accessibilityLabel="Help and support">
+            <Text style={[styles.helpLink, {color: colors.textPrimary}]}>
+              Help
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setPreference(isDark ? 'light' : 'dark')}
+            hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
+            accessibilityRole="button"
+            accessibilityLabel={
+              isDark ? 'Switch to light mode' : 'Switch to dark mode'
+            }>
+            <Text style={[styles.helpLink, {color: colors.textPrimary}]}>
+              {isDark ? 'Light' : 'Dark mode'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      }>
+      {step === 1 ? (
+        <>
+          <LoginMethodToggle
+            value={loginMethod}
+            onChange={handleLoginMethodChange}
+          />
+
+          <FormInput
+            label="Company Name"
+            value={tenant}
+            onChangeText={text => {
+              setTenant(text);
+              validateTenantLive(text);
+            }}
+            placeholder="Enter Company Name"
+            required
+            error={tenantError}
+            isLoading={isCheckingTenant}
+            helpText="Company name or workspace id, e.g. theadraceexecutivecopy"
+            startIcon={
+              <Image
+                source={icons.company}
+                style={{width: 20, height: 20, tintColor: colors.iconMuted}}
+              />
+            }
+            autoCapitalize="none"
+          />
+
+          {loginMethod === 'email' ? (
+            <FormInput
+              label="Email Address"
+              value={email}
+              onChangeText={setEmail}
+              placeholder="Enter email"
+              required
+              helpText="We'll never share your email"
+              startIcon={
+                <Image
+                  source={icons.email}
+                  style={{width: 20, height: 20, tintColor: colors.iconMuted}}
+                />
+              }
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+          ) : loginMethod === 'phone' ? (
+            <View style={styles.phoneField}>
+              <Text style={[styles.phoneLabel, {color: colors.textPrimary}]}>
+                Phone number <Text style={styles.requiredMark}>*</Text>
+              </Text>
+              <CustomPhoneInput
+                value={phoneNumber}
+                onChangeText={setPhoneNumber}
+                onValidationChange={setIsPhoneValid}
+              />
+              {!isPhoneValid && phoneNumber.length > 0 ? (
+                <Text style={[styles.phoneError, {color: COLORS.error}]}>
+                  Enter a valid phone number
+                </Text>
+              ) : (
+                <Text
+                  style={[styles.phoneHelp, {color: colors.textSecondary}]}>
+                  e.g. {UGANDA_DIAL_CODE}750440865
+                </Text>
+              )}
+            </View>
+          ) : (
+            <Text style={[styles.phoneHelp, {color: colors.textSecondary}]}>
+              Continue to enter your sign-in PIN for this company
+            </Text>
+          )}
+
+          <TouchableOpacity
+            style={[
+              styles.continueButton,
+              continuing && styles.loginButtonDisabled,
+            ]}
+            onPress={continueToPassword}
+            disabled={continuing}
+            activeOpacity={0.88}>
+            {continuing ? (
+              <ActivityIndicator color={COLORS.white} />
+            ) : (
+              <Text style={styles.continueButtonText}>Continue</Text>
+            )}
+          </TouchableOpacity>
+
+          <View style={styles.signupContainer}>
+            <Text style={[styles.signupText, {color: colors.textSecondary}]}>
+              Don&apos;t have an account?{' '}
+            </Text>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('SignUp')}
+              hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
+              <Text style={[styles.signupLink, {color: colors.textPrimary}]}>
+                Sign Up
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      ) : (
+        <>
+          <FormInput
+            label="Password"
+            value={password}
+            onChangeText={setPassword}
+            placeholder="Enter password"
+            required
+            error={passwordError}
+            helpText="Minimum 8 characters"
+            secureTextEntry={!showPassword}
+            endIcon={
+              <TouchableOpacity
+                onPress={() => setShowPassword(!showPassword)}
+                style={styles.iconButton}>
+                <Image
+                  source={showPassword ? icons.eye : icons.eye_close}
+                  style={{
+                    width: 20,
+                    height: 20,
+                    tintColor: colors.iconMuted,
+                  }}
+                />
+              </TouchableOpacity>
+            }
+          />
+
+          <TouchableOpacity
+            onPress={() =>
+              navigation.navigate('ForgotPassword', {
+                email: loginMethod === 'email' ? email.trim() : '',
+              })
+            }
+            style={styles.forgotPassword}
+            hitSlop={{top: 8, bottom: 8, left: 4, right: 4}}>
+            <Text
+              style={[styles.forgotPasswordText, {color: colors.textPrimary}]}>
+              Forgot password?
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.loginButton, loading && styles.loginButtonDisabled]}
+            onPress={handleLogin}
+            disabled={loading}
+            activeOpacity={0.88}>
+            {loading ? (
+              <ActivityIndicator color={COLORS.white} />
+            ) : (
+              <Text style={styles.loginButtonText}>Sign in</Text>
+            )}
+          </TouchableOpacity>
+        </>
+      )}
     </AuthLayout>
   );
 };
 
 const styles = StyleSheet.create({
-  inputContainer: {
-    marginBottom: 20,
+  identityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: ao.spacing.sm,
   },
-  label: {
-    fontSize: 15,
+  identityEmail: {
+    flex: 1,
+    fontSize: ao.typo.body,
+  },
+  changeLink: {
+    fontSize: ao.typo.body,
     fontWeight: '600',
-    color: '#1a1a1a',
-    marginBottom: 8,
-  },
-  input: {
-    height: 52,
-    backgroundColor: '#f8f9fa',
-    borderWidth: 1,
-    borderColor: '#e9ecef',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    fontSize: 16,
-    color: '#1a1a1a',
+    textDecorationLine: 'underline',
   },
   forgotPassword: {
-    alignSelf: 'flex-end',
-    marginBottom: 24,
+    alignSelf: 'flex-start',
+    marginBottom: ao.spacing.md,
     paddingVertical: 4,
   },
   forgotPasswordText: {
-    color: '#007AFF',
-    fontSize: 14,
+    fontSize: ao.typo.caption,
     fontWeight: '500',
+    textDecorationLine: 'underline',
   },
-  loginButton: {
-    backgroundColor: '#007AFF',
-    height: 52,
-    borderRadius: 12,
+  continueButton: {
+    marginTop: ao.sectionSpacing.beforePrimaryAction,
+    minHeight: 56,
+    borderRadius: radii.full,
+    backgroundColor: CONTINUE_BRAND,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#007AFF',
-    shadowOffset: {
-      width: 0,
-      height: 4,
-    },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
+    paddingHorizontal: ao.spacing.lg,
+  },
+  continueButtonText: {
+    color: COLORS.white,
+    fontSize: ao.typo.body,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
+  loginButton: {
+    marginTop: ao.sectionSpacing.beforePrimaryAction,
+    minHeight: 56,
+    borderRadius: radii.full,
+    backgroundColor: CONTINUE_BRAND,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: ao.spacing.lg,
   },
   loginButtonDisabled: {
-    backgroundColor: '#80bdff',
+    opacity: 0.55,
   },
   loginButtonText: {
-    color: '#fff',
-    fontSize: 16,
+    color: COLORS.white,
+    fontSize: ao.typo.body,
     fontWeight: '600',
-    letterSpacing: 0.5,
+    letterSpacing: 0.3,
   },
   signupContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 24,
+    marginTop: ao.spacing.lg,
   },
   signupText: {
-    color: '#666',
-    fontSize: 14,
+    fontSize: ao.typo.caption,
   },
   signupLink: {
-    color: '#007AFF',
-    fontSize: 14,
+    fontSize: ao.typo.caption,
     fontWeight: '600',
+    textDecorationLine: 'underline',
   },
   iconButton: {
     padding: 8,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  helpLink: {
+    fontSize: ao.typo.caption,
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+  },
+  phoneField: {
+    marginBottom: ao.sectionSpacing.betweenFields,
+  },
+  phoneLabel: {
+    fontSize: ao.typo.caption,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  requiredMark: {
+    color: COLORS.error,
+  },
+  phoneHelp: {
+    fontSize: ao.typo.micro,
+    marginTop: 6,
+  },
+  phoneError: {
+    fontSize: ao.typo.micro,
+    marginTop: 6,
   },
 });
 

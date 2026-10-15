@@ -1,11 +1,13 @@
 const onboarding_screens = [
   {
     id: 1,
+    /** Full-bleed hero (reference: square screen style) — headline + bottom pill CTAs */
+    heroMode: true,
     backgroundImage: require('../assets/images/background_01.png'),
     bannerImage: require('../assets/images/onBoarding_First.jpg'),
-    title: 'Modern POS Solution',
+    title: 'Run your business from one place.',
     description:
-      'Streamline your daily transactions with our integrated point of sale system',
+      'Point of sale, inventory, and insights — built for how you work.',
   },
   {
     id: 2,
@@ -44,19 +46,35 @@ const onboarding_screens = [
 const screens = {
   main_layout: 'MainLayout',
   home: 'Home',
-  search: 'Search',
-  cart: 'Cart',
-  favourite: 'Favourite',
-  notification: 'Notification',
+  makeSale: 'Make Sale',
+  sales: 'Sales',
+  items: 'Items',
+  itemCategories: 'Item Categories',
+  customers: 'Customers',
+  reports: 'Reports',
+  /** Bottom tab label — still mounts the Reports screen. */
+  more: 'More',
   my_wallet: 'My Wallet',
   settings: 'Settings',
   itemJournal: 'Item Journal',
-  items: 'Items',
-  sales: 'Sales',
   inventory: 'Inventory',
-  reports: 'Reports',
   analytics: 'Analytics',
   expenses: 'Expenses',
+  expenseHistory: 'Expense History',
+  /** Stack screen label (drawer / docs); same intent as page name "Sales History". */
+  salesHistory: 'Sales History',
+  purchases: 'Purchases',
+  suppliers: 'Suppliers',
+  payments: 'Payments',
+  quickPayment: 'Quick Payment',
+  bankAccounts: 'Bank Accounts',
+  bankAccountLedger: 'Bank Account Ledger Entries',
+  loans: 'Loans',
+  loanRepayments: 'Loan Repayments',
+  prepayments: 'Prepayments',
+  financials: 'Financials',
+  userManagement: 'User Management',
+  helpSupport: 'Help & Support',
 };
 
 const bottom_tabs = [
@@ -66,39 +84,11 @@ const bottom_tabs = [
   },
   {
     id: 1,
-    label: screens.search,
+    label: screens.makeSale,
   },
   {
     id: 2,
-    label: screens.cart,
-  },
-  {
-    id: 3,
-    label: screens.favourite,
-  },
-  {
-    id: 4,
-    label: screens.notification,
-  },
-  {
-    id: 5,
-    label: screens.settings,
-  },
-  {
-    id: 6,
-    label: screens.sales,
-  },
-  {
-    id: 7,
-    label: screens.inventory,
-  },
-  {
-    id: 8,
-    label: screens.reports,
-  },
-  {
-    id: 9,
-    label: screens.analytics,
+    label: screens.more,
   },
 ];
 

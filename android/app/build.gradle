@@ -70,7 +70,7 @@ def enableProguardInReleaseBuilds = false
  * give correct results when using with locales other than en-US. Note that
  * this variant is about 6MiB larger per architecture than default.
  */
-def jscFlavor = 'org.webkit:android-jsc:+'
+def jscFlavor = 'org.webkit:android-jsc-intl:+'
 
 android {
     ndkVersion rootProject.ext.ndkVersion
@@ -82,8 +82,8 @@ android {
         applicationId "com.zentroapp"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 11
+        versionName "1.0.11"
     }
     signingConfigs {
          release {
@@ -103,15 +103,38 @@ android {
     }
     buildTypes {
         debug {
-            // signingConfig signingConfigs.debug
-            signingConfig signingConfigs.release
+            signingConfig signingConfigs.debug
+            // signingConfig signingConfigs.release
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            // Play Store requires a non-debug upload key; set MYAPP_* in android/gradle.properties.
+            if (project.hasProperty('MYAPP_UPLOAD_STORE_FILE')) {
+                signingConfig signingConfigs.release
+            } else {
+                signingConfig signingConfigs.debug
+            }
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+        }
+    }
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
+        }
+    }
+}
+
+def align16kbScript = file("${rootDir}/align_16kb_elf.py")
+tasks.configureEach { task ->
+    if (task.name == "stripReleaseDebugSymbols") {
+        task.doLast {
+            def outDir = layout.buildDirectory.dir("intermediates/stripped_native_libs/release/stripReleaseDebugSymbols/out").get().asFile
+            if (!outDir.exists()) {
+                throw new GradleException("16 KB alignment input is missing: ${outDir}")
+            }
+            exec {
+                commandLine "python", align16kbScript.absolutePath, outDir.absolutePath
+            }
         }
     }
 }
@@ -126,3 +149,5 @@ dependencies {
         implementation jscFlavor
     }
 }
+
+apply plugin: "com.google.gms.google-services"

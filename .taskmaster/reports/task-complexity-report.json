@@ -1,0 +1,93 @@
+{
+	"meta": {
+		"generatedAt": "2026-03-27T19:13:06.187Z",
+		"tasksAnalyzed": 10,
+		"totalTasks": 10,
+		"analysisCount": 10,
+		"thresholdScore": 5,
+		"projectName": "Task Master",
+		"usedResearch": true
+	},
+	"complexityAnalysis": [
+		{
+			"taskId": 11,
+			"taskTitle": "Setup project structure and validate screenshot assets",
+			"complexityScore": 3,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break down into: 1) Create directory structure and output paths, 2) Implement file validation logic for 7 screenshot files, 3) Add error handling and accessibility checks",
+			"reasoning": "Basic file system operations with straightforward validation logic. Low complexity due to standard directory creation and file existence checks, but requires proper error handling."
+		},
+		{
+			"taskId": 12,
+			"taskTitle": "Load and integrate brand palette with design system foundation",
+			"complexityScore": 4,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Split into: 1) Implement brand palette loading from external JSON, 2) Create base JSON structure with meta/brand/color sections, 3) Map brand colors without modification, 4) Initialize meta fields with timestamps and configuration",
+			"reasoning": "Moderate complexity involving JSON parsing, data mapping, and structure initialization. Requires careful preservation of brand colors and proper schema setup."
+		},
+		{
+			"taskId": 13,
+			"taskTitle": "Analyze screenshots and extract visual patterns",
+			"complexityScore": 8,
+			"recommendedSubtasks": 6,
+			"expansionPrompt": "Decompose into: 1) Implement image loading and preprocessing, 2) Extract color usage patterns and hierarchies, 3) Analyze typography patterns (sizes, weights, spacing), 4) Identify spacing and layout patterns, 5) Detect border radii and elevation patterns, 6) Filter out domain-specific content while preserving structural patterns",
+			"reasoning": "High complexity due to computer vision requirements, pattern recognition across multiple images, and the critical constraint of avoiding domain-specific content extraction. Requires sophisticated image analysis algorithms."
+		},
+		{
+			"taskId": 14,
+			"taskTitle": "Build comprehensive color system with dark-mode focus",
+			"complexityScore": 7,
+			"recommendedSubtasks": 5,
+			"expansionPrompt": "Break into: 1) Create dark/light scheme structures with semantic color roles, 2) Generate neutral color scale (50-950), 3) Define utility colors (success, warning, error, etc.), 4) Create gradient definitions with stops and values, 5) Validate hex color formats and contrast ratios",
+			"reasoning": "High complexity due to comprehensive color system requirements, contrast ratio calculations, gradient definitions, and ensuring accessibility compliance across dark/light modes."
+		},
+		{
+			"taskId": 15,
+			"taskTitle": "Define typography system with pixel-based measurements",
+			"complexityScore": 5,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Split into: 1) Establish font family definitions (primary/mono), 2) Create typography scale hierarchy (display through micro), 3) Extract and validate numeric measurements from screenshots, 4) Ensure mobile-appropriate line heights and letter spacing",
+			"reasoning": "Moderate-high complexity requiring analysis of typography hierarchy, numeric value extraction, and mobile interface considerations. Requires balancing design consistency with technical constraints."
+		},
+		{
+			"taskId": 16,
+			"taskTitle": "Establish spatial system and layout tokens",
+			"complexityScore": 5,
+			"recommendedSubtasks": 4,
+			"expansionPrompt": "Decompose into: 1) Create spacing token scale with pixel values, 2) Define border radii and width tokens, 3) Establish layout constraints and breakpoints, 4) Ensure mobile accessibility standards (44px touch targets)",
+			"reasoning": "Moderate-high complexity involving spatial analysis, mobile accessibility requirements, and creating a coherent spacing system that works across different screen sizes and interaction patterns."
+		},
+		{
+			"taskId": 17,
+			"taskTitle": "Create elevation and motion token systems",
+			"complexityScore": 4,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break into: 1) Define elevation tokens with shadow properties (offset, blur, opacity, color), 2) Create motion duration tokens with millisecond values, 3) Establish easing tokens with cubic-bezier curves",
+			"reasoning": "Moderate complexity involving shadow calculations, motion timing standards, and proper cubic-bezier syntax. Relatively straightforward with established design system patterns."
+		},
+		{
+			"taskId": 18,
+			"taskTitle": "Extract and define reusable component patterns",
+			"complexityScore": 8,
+			"recommendedSubtasks": 6,
+			"expansionPrompt": "Split into: 1) Identify recurring UI patterns across screenshots, 2) Define component anatomy (slot structures), 3) Create layout definitions with token references, 4) Define component variants and visual styles, 5) Establish component states (default, pressed, disabled, etc.), 6) Validate token references and avoid domain-specific content",
+			"reasoning": "High complexity requiring pattern recognition, component abstraction, state management, and ensuring token reference consistency. Critical task that depends on multiple previous analyses."
+		},
+		{
+			"taskId": 19,
+			"taskTitle": "Validate JSON structure and token references",
+			"complexityScore": 6,
+			"recommendedSubtasks": 5,
+			"expansionPrompt": "Decompose into: 1) Implement strict JSON syntax validation, 2) Validate all token references resolve correctly, 3) Check data type compliance (numeric vs string values), 4) Verify hex color format compliance, 5) Ensure complete schema compliance with all required fields",
+			"reasoning": "Moderate-high complexity requiring comprehensive validation logic, reference resolution, and schema compliance checking. Critical for ensuring the final output is usable by AI tools."
+		},
+		{
+			"taskId": 20,
+			"taskTitle": "Generate final design system JSON file",
+			"complexityScore": 4,
+			"recommendedSubtasks": 3,
+			"expansionPrompt": "Break into: 1) Assemble complete JSON structure from all validated components, 2) Apply final formatting and syntax validation, 3) Perform final compliance check and output generation",
+			"reasoning": "Moderate complexity involving final assembly, formatting, and validation. Relatively straightforward as it primarily combines previously validated components, but critical for final deliverable quality."
+		}
+	]
+}

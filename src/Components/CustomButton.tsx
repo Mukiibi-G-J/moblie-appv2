@@ -14,7 +14,7 @@ export const getBgVariantStyle = (variant: ButtonProps["bgVariant"]) => {
     case "null":
       return "";
     default:
-      return "bg-[#0286FF]";
+      return "bg-[#005151]";
   }
 };
 

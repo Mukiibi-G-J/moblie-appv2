@@ -1,0 +1,29 @@
+diff --git a/node_modules/iconv-lite/encodings/index.js b/node_modules/iconv-lite/encodings/index.js
+index d95c244..55e7e9e 100644
+--- a/node_modules/iconv-lite/encodings/index.js
++++ b/node_modules/iconv-lite/encodings/index.js
+@@ -3,15 +3,15 @@
+ // Update this array if you add/rename/remove files in this directory.
+ // We support Browserify by skipping automatic module discovery and requiring modules directly.
+ var modules = [
+-    require("./internal"),
+-    require("./utf32"),
+-    require("./utf16"),
+-    require("./utf7"),
+-    require("./sbcs-codec"),
+-    require("./sbcs-data"),
+-    require("./sbcs-data-generated"),
+-    require("./dbcs-codec"),
+-    require("./dbcs-data"),
++    require("./internal.js"),
++    require("./utf32.js"),
++    require("./utf16.js"),
++    require("./utf7.js"),
++    require("./sbcs-codec.js"),
++    require("./sbcs-data.js"),
++    require("./sbcs-data-generated.js"),
++    require("./dbcs-codec.js"),
++    require("./dbcs-data.js"),
+ ];
+ 
+ // Put all encoding/alias/codec definitions to single object and export it.

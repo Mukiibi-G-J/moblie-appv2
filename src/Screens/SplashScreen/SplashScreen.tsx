@@ -1,4 +1,4 @@
-import React, {useEffect, useRef} from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
   View,
   StyleSheet,
@@ -7,10 +7,10 @@ import {
   Dimensions,
   StatusBar,
 } from 'react-native';
-import LinearGradient from 'react-native-linear-gradient';
 import images from '../../constants/images';
+import {COLORS} from '../../constants';
 
-const {width, height} = Dimensions.get('window');
+const { width, height } = Dimensions.get('window');
 
 const SplashScreen = () => {
   // Animation values
@@ -54,11 +54,7 @@ const SplashScreen = () => {
   }, []);
 
   return (
-    <LinearGradient
-      colors={['#00A3FF', '#0066CC', '#0047AB']} // Zentro brand colors
-      style={styles.container}
-      start={{x: 0, y: 0}}
-      end={{x: 1, y: 1}}>
+    <View style={styles.container}>
       <StatusBar
         translucent
         backgroundColor="transparent"
@@ -70,7 +66,7 @@ const SplashScreen = () => {
           styles.logoContainer,
           {
             opacity: fadeIn,
-            transform: [{scale}],
+            transform: [{ scale }],
           },
         ]}>
         <Image
@@ -86,7 +82,7 @@ const SplashScreen = () => {
           styles.iconContainer,
           {
             opacity: iconOpacity,
-            transform: [{scale: iconScale}],
+            transform: [{ scale: iconScale }],
           },
         ]}>
         <Image
@@ -95,7 +91,7 @@ const SplashScreen = () => {
           resizeMode="contain"
         />
       </Animated.View>
-    </LinearGradient>
+    </View>
   );
 };
 
@@ -104,6 +100,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: COLORS.primary, // solid brand teal — no gradient
   },
   logoContainer: {
     alignItems: 'center',
@@ -112,7 +109,7 @@ const styles = StyleSheet.create({
   logo: {
     width: width * 0.7,
     height: height * 0.15,
-    tintColor: '#FFFFFF', // Make logo white, remove if your logo has colors
+    tintColor: '#FFFFFF',
   },
   iconContainer: {
     position: 'absolute',
@@ -121,12 +118,12 @@ const styles = StyleSheet.create({
   icon: {
     width: 60,
     height: 60,
-    tintColor: '#FFFFFF', // Make icon white, remove if your icon has colors
+    tintColor: '#FFFFFF',
   },
   logoIcon: {
     width: 40,
     height: 40,
-    tintColor: '#FFFFFF', // Make icon white, remove if your icon has colors
+    tintColor: '#FFFFFF',
   },
 });
 

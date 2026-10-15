@@ -1,14 +1,9 @@
 import React from 'react';
-import {
-  View,
-  Text,
-  TouchableOpacity,
-  Image,
-  StyleSheet,
-  ViewStyle,
-  TextStyle,
-} from 'react-native';
-import {COLORS, FONTS, SIZES, icons} from '../constants';
+import {View, Text, Image, StyleSheet, ViewStyle, TextStyle} from 'react-native';
+import {FONTS, SIZES, icons} from '../constants';
+import {useTheme} from '../context/ThemeContext';
+import {QuickIconPressable} from './QuickIconPressable';
+import {useScreenTopInset} from '../hooks/useScreenTopInset';
 
 interface HeaderProps {
   title: string;
@@ -29,16 +24,32 @@ const Header: React.FC<HeaderProps> = ({
   onBackPress,
   showBack = false,
 }) => {
+  const {colors} = useTheme();
+  const topInset = useScreenTopInset();
   return (
-    <View style={[styles.headerSection,containerStyle]}>
-      <View style={[styles.headerCard, containerStyle]}>
+    <View
+      style={[
+        styles.headerSection,
+        {backgroundColor: colors.surface, paddingTop: topInset},
+        containerStyle,
+      ]}>
+      <View style={styles.headerCard}>
         <View style={styles.headerMain}>
           {/* Left Component */}
           <View style={styles.leftComponent}>
             {showBack ? (
-              <TouchableOpacity style={styles.menuButton} onPress={onBackPress}>
-                <Image source={icons.back} style={styles.menuIcon} />
-              </TouchableOpacity>
+              <QuickIconPressable
+                style={[
+                  styles.menuButton,
+                  {backgroundColor: colors.card, borderColor: colors.border},
+                ]}
+                onPress={onBackPress}
+                accessibilityLabel="Go back">
+                <Image
+                  source={icons.back}
+                  style={[styles.menuIcon, {tintColor: colors.textPrimary}]}
+                />
+              </QuickIconPressable>
             ) : (
               leftComponent
             )}
@@ -46,7 +57,9 @@ const Header: React.FC<HeaderProps> = ({
 
           {/* Title */}
           <View style={styles.titleContainer}>
-            <Text style={[styles.title, titleStyle]}>{title}</Text>
+            <Text style={[styles.title, {color: colors.textPrimary}, titleStyle]}>
+              {title}
+            </Text>
           </View>
 
           {/* Right Component */}
@@ -61,7 +74,6 @@ const styles = StyleSheet.create({
   headerSection: {
     position: 'relative',
     zIndex: 1,
-    backgroundColor: COLORS.white,
     paddingBottom: 16,
     // borderBottomLeftRadius: 24,
     // borderBottomRightRadius: 24,
@@ -72,7 +84,6 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   headerCard: {
-    marginTop: 8,
     paddingHorizontal: SIZES.padding,
   },
   headerMain: {
@@ -91,14 +102,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: COLORS.lightGray2,
     borderRadius: 12,
-    backgroundColor: COLORS.white,
   },
   menuIcon: {
     width: 20,
     height: 20,
-    tintColor: COLORS.black,
   },
   titleContainer: {
     flex: 1,
@@ -107,7 +115,6 @@ const styles = StyleSheet.create({
   },
   title: {
     ...FONTS.h3,
-    color: COLORS.black,
   },
   rightComponent: {
     width: 40,

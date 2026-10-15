@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {axiosInstance} from '../axios/axios';
+import {USE_TEST_ENV, TEST_API_BASE_URL} from '../config/api.config';
 
 export const TENANT_STORAGE_KEY = 'current_tenant';
 
@@ -26,15 +27,24 @@ export async function setCurrentTenant(tenant: string): Promise<void> {
   }
 }
 
-export function updateAxiosBaseURL(tenant: string): void {
-  const baseURL = tenant
-    ? `https://${tenant}.zentroapp-backend.com`
+export function updateAxiosBaseURL(_tenant: string): void {
+  axiosInstance.defaults.baseURL = USE_TEST_ENV
+    ? TEST_API_BASE_URL
     : 'https://zentroapp-backend.com';
-
-  axiosInstance.defaults.baseURL = baseURL;
 }
 
 export async function validateTenantURL(tenant: string): Promise<boolean> {
+  // In test environment, skip validation or use test URL
+  if (USE_TEST_ENV) {
+    try {
+      const testURL = `${TEST_API_BASE_URL}/api/health-check`;
+      const response = await fetch(testURL);
+      return response.ok;
+    } catch (error) {
+      return false;
+    }
+  }
+  
   const testURL = `https://${tenant}.zentroapp-backend.com/api/health-check`;
   try {
     const response = await fetch(testURL);

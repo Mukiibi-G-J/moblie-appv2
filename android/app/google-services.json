@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "101471170595",
+    "project_id": "zentroapp-54cce",
+    "storage_bucket": "zentroapp-54cce.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:101471170595:android:81f641e2859743c2c04196",
+        "android_client_info": {
+          "package_name": "com.zentroapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCQCZ9MPz-iAdjtwFiWrDUHcbHpX394TFU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
