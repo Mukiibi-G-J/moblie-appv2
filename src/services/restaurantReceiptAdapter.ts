@@ -34,6 +34,7 @@ export function restaurantOrderToReceiptData(
     companyInfo?: CompanyInfo;
     /** When set (e.g. after posting), shown as receipt / invoice id on the slip. */
     receiptIdOverride?: string;
+    saleDate?: string;
   },
 ): PrintReceiptData {
   const items = (order.order_items || []).map(i => ({
@@ -50,7 +51,7 @@ export function restaurantOrderToReceiptData(
     subtotal: total,
     username: options?.username || order.waiter_name || 'Staff',
     receiptId: options?.receiptIdOverride ?? order.no,
-    saleDate: order.created_at || new Date().toISOString(),
+    saleDate: options?.saleDate || order.created_at || new Date().toISOString(),
     companyInfo: options?.companyInfo,
     // paymentMethod & change left undefined — restaurant orders
     // don't carry payment detail at this stage

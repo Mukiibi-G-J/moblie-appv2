@@ -1,4 +1,5 @@
 import type {CartItem} from '../@types/types.dto';
+import {formatDateYmdLocal} from './localDate';
 import {normalizeTransactionId} from './paymentMethodDefaults';
 
 export interface CartLineForPayload {
@@ -60,13 +61,14 @@ export function buildSalesInvoicePayload(options: {
     return sum + unitPrice * line.quantity;
   }, 0);
   const transactionId = normalizeTransactionId(options.transactionId);
+  const saleDate = options.documentDate || formatDateYmdLocal(new Date());
 
   return {
     system_id: options.systemId,
     customer: options.customerId ?? undefined,
     customer_name: options.customerName,
-    document_date:
-      options.documentDate || new Date().toISOString().slice(0, 10),
+    document_date: saleDate,
+    posting_date: saleDate,
     status: 'Open' as const,
     total_amount: totalAmount,
     amount_received: options.amountReceived,

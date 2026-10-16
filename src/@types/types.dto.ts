@@ -106,6 +106,7 @@ export interface SalesInvoiceData {
   customer: number;
   customer_name: string;
   document_date: string;
+  posting_date?: string;
   status: 'Open';
   total_amount: number;
   amount_received: number;

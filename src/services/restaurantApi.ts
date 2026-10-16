@@ -313,6 +313,7 @@ export async function checkoutAndPostOrder(
     amount_received?: number | null;
     change_amount?: number | null;
     transaction_id?: string;
+    document_date?: string;
   },
 ): Promise<RestaurantPostedInvoicePayload> {
   const client = await tenantClient();
@@ -327,6 +328,7 @@ export async function checkoutAndPostOrder(
         body.change_amount !== undefined ? body.change_amount : undefined,
       ...(body.customer_id != null ? {customer_id: body.customer_id} : {}),
       ...(body.transaction_id ? {transaction_id: body.transaction_id} : {}),
+      ...(body.document_date ? {document_date: body.document_date} : {}),
     },
   );
   return res.data;
@@ -341,6 +343,7 @@ export async function counterCheckoutOrder(
     amount_received?: number | null;
     change_amount?: number | null;
     transaction_id?: string;
+    document_date?: string;
   },
 ): Promise<RestaurantPostedInvoicePayload> {
   const client = await tenantClient();
@@ -359,17 +362,20 @@ export async function settleRestaurantOrder(
     amount_received?: number;
     change_amount?: number;
     transaction_id?: string;
+    document_date?: string;
   },
 ): Promise<RestaurantPostedInvoicePayload> {
   const total = Math.round(Number(order.total_amount || 0));
   const tendered = opts?.amount_received ?? total;
   const change = opts?.change_amount ?? Math.max(0, tendered - total);
   const transactionId = opts?.transaction_id?.trim() || undefined;
+  const documentDate = opts?.document_date?.trim() || undefined;
   const body = {
     payment_method_id: paymentMethodId,
     amount_received: tendered,
     change_amount: change,
     ...(transactionId ? {transaction_id: transactionId} : {}),
+    ...(documentDate ? {document_date: documentDate} : {}),
   };
 
   const tbl = order.table;

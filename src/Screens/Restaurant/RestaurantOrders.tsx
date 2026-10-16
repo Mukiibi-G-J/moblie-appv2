@@ -29,6 +29,7 @@ import {
   settleRestaurantOrder,
 } from '../../services/restaurantApi';
 import {buildReceiptText} from '../../utils/restaurantReceipt';
+import {localDateTimeForYmd} from '../../utils/localDate';
 import PrintService from '../../services/PrintService';
 import {
   receiptLabelFromPostedPayload,
@@ -295,11 +296,13 @@ export default function RestaurantOrders() {
     shouldPrint: boolean,
     paymentMethodId: number,
     transactionId?: string,
+    documentDate?: string,
   ) => {
     setActionBusy(true);
     try {
       const payload = await settleRestaurantOrder(order, paymentMethodId, {
         ...(transactionId ? {transaction_id: transactionId} : {}),
+        ...(documentDate ? {document_date: documentDate} : {}),
       });
       const receiptId = receiptLabelFromPostedPayload(payload, order.no);
 
@@ -310,6 +313,7 @@ export default function RestaurantOrders() {
           username: auth.username || auth.user_id || 'Staff',
           receiptIdOverride: receiptId,
           companyInfo,
+          ...(documentDate ? {saleDate: localDateTimeForYmd(documentDate)} : {}),
         });
         receiptPrinted =
           await PrintService.getInstance().printReceipt(receiptData);
@@ -633,7 +637,7 @@ export default function RestaurantOrders() {
           setSettleTarget(null);
         }
       }}
-      onConfirm={(shouldPrint, paymentMethodId, transactionId) => {
+      onConfirm={(shouldPrint, paymentMethodId, transactionId, documentDate) => {
         if (!settleTarget) {
           return;
         }
@@ -642,6 +646,7 @@ export default function RestaurantOrders() {
           shouldPrint,
           paymentMethodId,
           transactionId,
+          documentDate,
         );
       }}
     />

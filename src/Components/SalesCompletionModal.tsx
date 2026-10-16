@@ -312,7 +312,10 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
     setIsProcessing(true);
 
     const finalDocumentDate =
-      documentDate || new Date().toISOString().split('T')[0];
+      documentDate ||
+      `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
+    const now = new Date();
+    const receiptSaleDate = `${finalDocumentDate}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
 
     if (!isPosOnline) {
       try {
@@ -364,7 +367,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
                 amountReceived: parseFloat(amountReceived) || total,
                 change: calculateChange(),
                 paymentMethod: paymentMethod?.description || 'Cash',
-                saleDate: new Date().toISOString(),
+                saleDate: receiptSaleDate,
                 companyInfo,
               });
             }
@@ -415,6 +418,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
         customer: selectedCustomer?.id || 0,
         customer_name: selectedCustomer?.name || 'General Customer',
         document_date: finalDocumentDate,
+        posting_date: finalDocumentDate,
         status: 'Open',
         total_amount: total,
         amount_received:
@@ -606,7 +610,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
                 amountReceived: parseFloat(amountReceived) || total,
                 change: calculateChange(),
                 paymentMethod: paymentMethod?.description || 'Cash',
-                saleDate: new Date().toISOString(),
+                saleDate: receiptSaleDate,
                 companyInfo: companyInfo,
               };
 

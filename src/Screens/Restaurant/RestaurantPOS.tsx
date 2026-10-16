@@ -47,6 +47,7 @@ import {
 import PrintService from '../../services/PrintService';
 import {fetchCompanyInfoForReceipt} from '../../utils/companyReceiptInfo';
 import {formatCurrencyCompact} from '../../utils/currency';
+import {localDateTimeForYmd} from '../../utils/localDate';
 import {useCompanyInfo} from '../../hooks/useCompanyInfo';
 import {usePublishCustomerDisplay} from '../../hooks/usePublishCustomerDisplay';
 import {
@@ -1004,6 +1005,7 @@ export default function RestaurantPOS() {
     shouldPrint: boolean,
     paymentMethodId: number,
     transactionId?: string,
+    documentDate?: string,
   ) => {
     if (!orderToClose) {
       return;
@@ -1013,6 +1015,7 @@ export default function RestaurantPOS() {
     try {
       const payload = await settleRestaurantOrder(snap, paymentMethodId, {
         ...(transactionId ? {transaction_id: transactionId} : {}),
+        ...(documentDate ? {document_date: documentDate} : {}),
       });
       const receiptId = receiptLabelFromPostedPayload(payload, snap.no);
       publishCustomerDisplay({
@@ -1030,6 +1033,7 @@ export default function RestaurantPOS() {
           username: auth.username || auth.user_id || 'Staff',
           receiptIdOverride: receiptId,
           companyInfo,
+          ...(documentDate ? {saleDate: localDateTimeForYmd(documentDate)} : {}),
         });
         const printed =
           await PrintService.getInstance().printReceipt(receiptData);
@@ -2054,8 +2058,8 @@ export default function RestaurantPOS() {
         }
         setCloseSheetOpen(false);
       }}
-      onConfirm={(shouldPrint, paymentMethodId, transactionId) =>
-        void confirmClose(shouldPrint, paymentMethodId, transactionId)
+      onConfirm={(shouldPrint, paymentMethodId, transactionId, documentDate) =>
+        void confirmClose(shouldPrint, paymentMethodId, transactionId, documentDate)
       }
     />
     </>

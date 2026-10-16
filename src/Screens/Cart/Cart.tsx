@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
+import {formatDateYmdLocal, parseLocalISODate, todayYmdLocal} from '../../utils/localDate';
 import {pickDefaultCashPaymentMethod} from '../../utils/paymentMethodDefaults';
 import {
   View,
@@ -336,6 +337,9 @@ const Cart = ({
     preventBelowOriginal: false,
   });
   const [priceDraft, setPriceDraft] = useState('');
+  const canPostPreviousDates = userSetup?.canPostPreviousDates !== false;
+  const canChangeSellingDate =
+    (canInsertSale || canModifySale) && canPostPreviousDates;
   const canEditPrice = canEditSalesUnitPrice({
     canEditSalesPrice:
       userSetup?.canEditSalesPrice ??
@@ -354,6 +358,13 @@ const Cart = ({
   const [showSalesModal, setShowSalesModal] = useState(false);
   const [globalSellingDate, setGlobalSellingDate] = useState(new Date());
   const [showGlobalDatePicker, setShowGlobalDatePicker] = useState(false);
+  useEffect(() => {
+    if (userSetup?.canPostPreviousDates === false) {
+      setGlobalSellingDate(current =>
+        formatDateYmdLocal(current) < todayYmdLocal() ? new Date() : current,
+      );
+    }
+  }, [userSetup?.canPostPreviousDates]);
   const { state: searchModeState } = useSearchMode();
   const offlineCtx = useOfflineOptional();
   const isPosOnline =
@@ -1570,7 +1581,8 @@ const Cart = ({
       const salesInvoiceData = {
         customer: generalCustomer.id,
         customer_name: generalCustomer.name,
-        document_date: globalSellingDate.toISOString().split('T')[0],
+        document_date: formatDateYmdLocal(globalSellingDate),
+        posting_date: formatDateYmdLocal(globalSellingDate),
         status: 'Draft' as const,
         total_amount: totalAmount,
         payment_method:
@@ -1788,7 +1800,13 @@ const Cart = ({
         }
 
         if (fullInvoice.document_date) {
-          setGlobalSellingDate(new Date(fullInvoice.document_date));
+          const parsed = parseLocalISODate(fullInvoice.document_date);
+          if (parsed) {
+            const day = formatDateYmdLocal(parsed);
+            setGlobalSellingDate(
+              !canPostPreviousDates && day < todayYmdLocal() ? new Date() : parsed,
+            );
+          }
         }
 
         const customerId = Number(fullInvoice.customer);
@@ -1865,6 +1883,7 @@ const Cart = ({
     },
     [
       canMutateCart,
+      canPostPreviousDates,
       canRemoveSale,
       dispatch,
       invalidateSales,
@@ -1955,10 +1974,17 @@ const Cart = ({
         value={globalSellingDate}
         mode="date"
         display="default"
+        minimumDate={canPostPreviousDates ? undefined : new Date()}
         onChange={(_event, selectedDate) => {
-          const currentDate = selectedDate || globalSellingDate;
           setShowGlobalDatePicker(Platform.OS === 'ios');
-          setGlobalSellingDate(currentDate);
+          if (!selectedDate) return;
+          if (
+            !canPostPreviousDates &&
+            formatDateYmdLocal(selectedDate) < todayYmdLocal()
+          ) {
+            return;
+          }
+          setGlobalSellingDate(selectedDate);
         }}
         themeVariant={resolvedScheme === 'dark' ? 'dark' : 'light'}
       />
@@ -2270,7 +2296,7 @@ const Cart = ({
 
           <TouchableOpacity
             style={[styles.saleDateRow, ct.saleDateRow]}
-            disabled={!canModifySale}
+            disabled={!canChangeSellingDate}
             onPress={() => setShowGlobalDatePicker(true)}
             activeOpacity={0.78}>
             <Image source={icons.calender} style={styles.saleDateRowIcon} />
@@ -3078,7 +3104,7 @@ const Cart = ({
 
         <TouchableOpacity
           style={[styles.draftsHubDateRow, ct.saleDateRow]}
-          disabled={!canModifySale}
+          disabled={!canChangeSellingDate}
           onPress={() => setShowGlobalDatePicker(true)}
           activeOpacity={0.78}>
           <Image source={icons.calender} style={styles.saleDateRowIcon} />
@@ -3400,7 +3426,7 @@ const Cart = ({
             )}
             username={auth?.username || 'Unknown'}
             userId={Number(auth?.user_id) || 0}
-            documentDate={globalSellingDate.toISOString().split('T')[0]}
+            documentDate={formatDateYmdLocal(globalSellingDate)}
             initialSelectedCustomer={selectedSaleCustomer}
           />
   
