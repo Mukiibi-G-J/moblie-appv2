@@ -40,7 +40,10 @@ import {
   fetchItemUnitsOfMeasure,
   ItemUnitOfMeasure,
 } from '../../services/app.services';
-import {searchItems as catalogSearchItems} from '../../services/itemCatalogService';
+import {
+  searchItems as catalogSearchItems,
+  findItemByScanCode,
+} from '../../services/itemCatalogService';
 import {useOfflineOptional} from '../../context/OfflineContext';
 import {PosConnectivityBadge} from '../../Components/PosConnectivityBadge';
 import {PosSaleCartPanel} from '../../Components/PosSaleCartPanel';
@@ -178,7 +181,7 @@ const Cart = ({
 }) => {
   const [myCartList, setMyCartList] = React.useState(dummyData.myCart);
   const [searchQuery, setSearchQuery] = useState('');
-  const [modalItems, setModalItems] = useState < CartItem[] > ([]);
+  const [modalItems] = useState < CartItem[] > ([]);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [printReceipt, setPrintReceipt] = useState(false);
@@ -757,14 +760,10 @@ const Cart = ({
         });
         return;
       }
-      const results = await catalogSearchItems(itemCode);
+      const item = await findItemByScanCode(itemCode);
 
-      if (results.length === 1) {
-        addToCart(results[0]);
-      } else if (results.length > 1) {
-        setModalItems(results);
-        toggleModal();
-        setSearchQuery('');
+      if (item) {
+        addToCart(item as CartItem);
       } else {
         Toast.show({
           type: 'info',

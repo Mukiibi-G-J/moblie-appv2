@@ -2,6 +2,7 @@ import {fetchItems, searchItems as apiSearchItems} from './app.services';
 import {getItemCount, saveItemsBatch, type LocalItem} from '../db/sqlite';
 import {localItemById, localItems} from './localData';
 import {triggerEmptyCatalogSyncInBackground} from './sync/backgroundCatalogSync';
+import {pickItemByScanCode} from '../utils/barcodeScan';
 import {getPosConnectivityMode} from '../utils/posConnectivity';
 
 export type ItemListParams = {
@@ -72,6 +73,18 @@ export async function listItems(
     });
     return {results: local.results, count: local.count, next: null};
   }
+}
+
+/** Resolve a camera or wedge scan to one item, including a code after |. */
+export async function findItemByScanCode(
+  code: string,
+): Promise<LocalItem | null> {
+  const trimmed = code.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const results = await searchItems(trimmed);
+  return pickItemByScanCode(results, trimmed);
 }
 
 export async function searchItems(query: string): Promise<LocalItem[]> {
