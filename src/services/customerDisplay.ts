@@ -154,6 +154,7 @@ export async function getCustomerDisplayStatus(): Promise<CustomerDisplayStatus>
 
 export async function showCustomerDisplay(): Promise<CustomerDisplayStatus> {
   if (!native) {
+    console.warn('Customer display native module is missing');
     return getCustomerDisplayStatus();
   }
   try {

@@ -53,6 +53,10 @@ import {
   showUserError,
   showUserSuccess,
 } from '../../utils/userFeedback';
+import {
+  fiscalFromInvoice,
+  receiptFieldsFromFiscal,
+} from '../../services/postedReceiptFiscal';
 import {requestLoadUnpostedIntoPos} from '../../utils/posInvoiceLoad';
 import PrintService, {
   CompanyInfo,
@@ -161,6 +165,12 @@ type SalesInvoice = SalesHistoryListItemData & {
   created_at?: string;
   amount_received?: number | string;
   change_amount?: number | string;
+  total_vat_amount?: number | string;
+  efris?: {
+    fdn?: string;
+    verification_code?: string;
+    qr_code?: string;
+  };
 };
 
 function isPostedSale(status?: string) {
@@ -236,6 +246,7 @@ function mapSalesInvoiceToReceiptData(
     saleDate,
     companyInfo,
     compactReceipt: true,
+    ...receiptFieldsFromFiscal(fiscalFromInvoice(invoice), total),
   };
 }
 
@@ -650,9 +661,6 @@ const SalesHistory = () => {
 
   const prepareInvoiceForPrint = useCallback(async (base: SalesInvoice) => {
     if (base.id == null) {
-      return base;
-    }
-    if (base.lines && base.lines.length > 0) {
       return base;
     }
     try {

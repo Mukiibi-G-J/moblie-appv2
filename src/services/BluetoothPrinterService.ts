@@ -1721,11 +1721,28 @@ class BluetoothPrinterService {
     document: ReceiptDocument,
     skipInit = false,
   ): Promise<boolean> {
-    const rawBytes = compileDocumentToEscPosBytes(document, true, skipInit);
-    const printResult = await this.printRawEscpos(rawBytes);
-    if (!printResult.success) {
-      throw new Error(printResult.error || "Print failed");
+    let skip = skipInit;
+    let pending: ReceiptDocument['nodes'] = [];
+    const flush = async (keepAlive: boolean) => {
+      if (!pending.length) return;
+      const rawBytes = compileDocumentToEscPosBytes(
+        {paperProfile: document.paperProfile, nodes: pending},
+        true,
+        skip,
+      );
+      pending = [];
+      skip = true;
+      if (!rawBytes.length) return;
+      const printResult = await this.printRawEscpos(rawBytes, keepAlive);
+      if (!printResult.success) {
+        throw new Error(printResult.error || 'Print failed');
+      }
+    };
+
+    for (const node of document.nodes) {
+      pending.push(node);
     }
+    await flush(false);
     return true;
   }
 

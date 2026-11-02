@@ -430,7 +430,7 @@ const PrinterConfig: React.FC = () => {
   const showHelpInfo = () => {
     Alert.alert(
       'Printer setup',
-      '1. Choose Auto detect, Bluetooth, or USB.\n2. Bluetooth: pair your printer in Android Bluetooth settings, then tap "Scan for printers".\n3. USB (Xprinter XP-58IIT): plug the printer USB-B cable into the POS, turn the printer on, tap "Scan for USB printers", select it, and tap Allow when Android asks.\n4. Tap Quick test or Sales receipt to print.',
+      '1. Choose Auto detect, Bluetooth, or USB.\n2. Auto detect uses Sunmi, then a paired Bluetooth printer, then a built-in USB printer such as the Aocom POS58. Tap Allow if Android asks for USB access.\n3. Bluetooth: pair your printer in Android Bluetooth settings, then tap "Scan for printers".\n4. USB (Xprinter XP-58IIT): plug the printer USB-B cable into the POS, turn the printer on, tap "Scan for USB printers", select it, and tap Allow when Android asks.\n5. Tap Quick test or Sales receipt to print.',
       [{text: 'OK'}],
     );
   };
@@ -545,7 +545,7 @@ const PrinterConfig: React.FC = () => {
               {renderTypeOption(
                 'auto',
                 'Auto detect',
-                'Sunmi when available; otherwise Bluetooth (including built-in POS printers paired in Android)',
+                'Sunmi, then a paired Bluetooth printer, then a built-in USB printer (Aocom and similar POS tablets)',
               )}
               {renderTypeOption(
                 'sunmi',

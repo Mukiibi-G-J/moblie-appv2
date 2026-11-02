@@ -1,4 +1,5 @@
 import {buildReceiptDocument} from '../buildDocument';
+import {encodeEfrisQrPngBase64} from '../efrisQrPng';
 import {compileDocumentToEscPosBytes} from '../compileToEscPos';
 import {compileDocumentToUsbText} from '../compileToUsb';
 import {getFallbackTemplate} from '../fallbackTemplates';
@@ -51,8 +52,12 @@ describe('compact thermal receipts save paper', () => {
       false,
     );
     expect(text).not.toContain('Tendered:');
-    expect(text).toContain('TOTAL:');
+    expect(text).toContain('TOTAL');
+    expect(text).toContain('Receipt');
+    expect(text).toContain('Till');
     expect(text).toContain('Cash');
+    expect(text).toContain('Change');
+    expect(text).toContain('Thank you for your purchase!');
     expect(text).not.toContain('TIN:');
     expect(text).not.toContain('Invoice: SIN-000035');
     expect(text).toContain('SIN-000035');
@@ -60,17 +65,20 @@ describe('compact thermal receipts save paper', () => {
     expect(doc.nodes.find(n => n.text === 'demo')?.style?.forceBold).toBeFalsy();
   });
 
-  it('prints TOTAL, amounts, and THANK YOU at normal size', () => {
+  it('prints the saved layout labels at normal size', () => {
     const template = getFallbackTemplate('sale', 'compact');
     const doc = buildReceiptDocument(swimmingSale(), template, branding);
-    expect(doc.nodes.find(n => n.left === 'TOTAL:')?.style?.bold).toBeFalsy();
-    expect(doc.nodes.find(n => n.text === 'THANK YOU')?.style?.bold).toBeFalsy();
+    expect(doc.nodes.find(n => n.left === 'TOTAL')?.style?.forceBold).toBeFalsy();
+    expect(
+      doc.nodes.find(n => n.text === 'Thank you for your purchase!')?.style
+        ?.forceBold,
+    ).toBeFalsy();
     const usb = compileDocumentToUsbText(doc);
     expect(usb).not.toContain('<B>');
     expect(usb).toContain('<C>demo</C>');
-    expect(usb).toContain('TOTAL:');
-    expect(usb).toContain('THANK YOU');
-    expect(usb).toContain('50,000');
+    expect(usb).toContain('TOTAL');
+    expect(usb).toContain('Thank you for your purchase!');
+    expect(usb).toContain('UGX 50,000');
   });
 
   it('prints the company display name instead of the legal name', () => {
@@ -111,15 +119,16 @@ describe('compact thermal receipts save paper', () => {
     const text = doc.nodes
       .map(n => [n.text, n.left, n.right].filter(Boolean).join(' '))
       .join('\n');
-    expect(text).toContain('Tendered:');
-    expect(text).toContain('Change:');
+    expect(text).toContain('Cash');
+    expect(text).toContain('Change');
+    expect(text).toContain('UGX 10,000');
   });
 
   it('does not add a trailing cut feed on USB tear-bar printers', () => {
     const template = getFallbackTemplate('sale', 'compact');
     const doc = buildReceiptDocument(swimmingSale(), template, branding);
     const usb = compileDocumentToUsbText(doc);
-    expect(usb.endsWith('\n\n')).toBe(false);
+    expect(usb.endsWith('\n\n\n\n\n')).toBe(true);
     expect(usb).not.toContain('<B>');
     expect(usb).not.toContain('<C>--------------------------------</C>');
 
@@ -128,5 +137,61 @@ describe('compact thermal receipts save paper', () => {
       (b, i) => b === 0x1d && escpos[i + 1] === 0x56 && escpos[i + 2] === 0x00,
     );
     expect(hasCut).toBe(false);
+  });
+
+  it('prints the EFRIS QR, FDN, and verification code', () => {
+    const template = getFallbackTemplate('sale', 'compact');
+    const doc = buildReceiptDocument(
+      swimmingSale({
+        efrisFdn: '1234567890',
+        efrisVerificationCode: 'ABCD',
+        efrisQrCode: 'https://ura.example/1234567890',
+      }),
+      template,
+      branding,
+    );
+    const text = doc.nodes
+      .map(n => [n.text, n.left, n.right].filter(Boolean).join(' '))
+      .join('\n');
+    expect(text).toContain('FDN: 1234567890');
+    expect(text).toContain('Verification: ABCD');
+    const qrAt = doc.nodes.findIndex(n => n.type === 'qr');
+    const thanksAt = doc.nodes.findIndex(n =>
+      (n.text || '').startsWith('Thank you'),
+    );
+    expect(qrAt).toBeGreaterThan(-1);
+    expect(thanksAt).toBeGreaterThan(qrAt);
+    const escpos = compileDocumentToEscPosBytes(doc);
+    const rasterAt = escpos.findIndex(
+      (byte, index) =>
+        byte === 0x1b &&
+        escpos[index + 1] === 0x2a &&
+        escpos[index + 2] === 33,
+    );
+    expect(rasterAt).toBeGreaterThan(-1);
+    expect(
+      escpos.some(
+        (byte, index) =>
+          byte === 0x1d &&
+          escpos[index + 1] === 0x76 &&
+          escpos[index + 2] === 0x30,
+      ),
+    ).toBe(false);
+    const printable = String.fromCharCode(
+      ...escpos.filter(b => b >= 32 && b < 127),
+    );
+    expect(printable).toContain('FDN: 1234567890');
+    expect(printable).not.toContain('ura.example');
+    const usb = compileDocumentToUsbText(doc);
+    expect(usb).toContain('FDN: 1234567890');
+    expect(usb).toContain('Verification: ABCD');
+    expect(usb).not.toContain('ura.example');
+    const png = Buffer.from(
+      encodeEfrisQrPngBase64('https://ura.example/1234567890'),
+      'base64',
+    );
+    expect(png.subarray(0, 8)).toEqual(
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    );
   });
 });

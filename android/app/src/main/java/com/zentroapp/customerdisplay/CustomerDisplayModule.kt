@@ -186,6 +186,7 @@ class CustomerDisplayModule(private val reactContext: ReactApplicationContext) :
         mainHandler.postDelayed({ showPresentation() }, 400)
       }
       return false
+
     }
   }
 

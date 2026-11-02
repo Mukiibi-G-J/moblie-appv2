@@ -102,12 +102,22 @@ export default function CustomerDisplayHost() {
       }
     });
     let cancelled = false;
-    void (async () => {
+    let attempts = 0;
+    const tryShow = async () => {
       const next = await showCustomerDisplay();
-      if (!cancelled) {
-        setStatus(next);
+      if (cancelled) {
+        return;
       }
-    })();
+      setStatus(next);
+      console.log('Customer display status', next);
+      if (!next.attached && attempts < 8) {
+        attempts += 1;
+        setTimeout(() => {
+          void tryShow();
+        }, 1500);
+      }
+    };
+    void tryShow();
     return () => {
       cancelled = true;
       unsubPayload();

@@ -35,6 +35,12 @@ export function restaurantOrderToReceiptData(
     /** When set (e.g. after posting), shown as receipt / invoice id on the slip. */
     receiptIdOverride?: string;
     saleDate?: string;
+    efrisFdn?: string;
+    efrisVerificationCode?: string;
+    efrisQrCode?: string;
+    vatEnabled?: boolean;
+    vatAmount?: number;
+    totalExclVat?: number;
   },
 ): PrintReceiptData {
   const items = (order.order_items || []).map(i => ({
@@ -53,7 +59,11 @@ export function restaurantOrderToReceiptData(
     receiptId: options?.receiptIdOverride ?? order.no,
     saleDate: options?.saleDate || order.created_at || new Date().toISOString(),
     companyInfo: options?.companyInfo,
-    // paymentMethod & change left undefined — restaurant orders
-    // don't carry payment detail at this stage
+    efrisFdn: options?.efrisFdn,
+    efrisVerificationCode: options?.efrisVerificationCode,
+    efrisQrCode: options?.efrisQrCode,
+    vatEnabled: options?.vatEnabled,
+    vatAmount: options?.vatAmount,
+    totalExclVat: options?.totalExclVat,
   };
 }

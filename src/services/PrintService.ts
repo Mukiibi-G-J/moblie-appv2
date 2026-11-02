@@ -46,6 +46,7 @@ export interface CompanyInfo {
   tin: string;
   /** Not returned by GET /api/sales/company-info/; optional for receipts until backend adds it. */
   vatNo?: string;
+  branchCode?: string;
 }
 
 export interface PrintReceiptData {
@@ -63,6 +64,14 @@ export interface PrintReceiptData {
   change?: number;
   customerName?: string;
   companyInfo?: CompanyInfo;
+  /** Merchant payee numbers already resolved for this slip. */
+  payeeLines?: Array<{ label: string; number: string }>;
+  vatEnabled?: boolean;
+  vatAmount?: number;
+  totalExclVat?: number;
+  efrisFdn?: string;
+  efrisVerificationCode?: string;
+  efrisQrCode?: string;
   /**
    * Short layout aligned with web thermal receipts (Sales history reprint).
    * Tighter header/footer, one line per item + amount, no QR / marketing block.
@@ -177,6 +186,52 @@ class PrintService {
     }
   }
 
+  /** Shown when Auto finds a built-in USB printer but Android USB access was refused. */
+  private autoUsbNote: string | null = null;
+
+  /**
+   * Auto only, after Sunmi and Bluetooth miss. Aocom and similar Rockchip POS
+   * tablets expose the internal 58mm printer as USB (POS58), not Sunmi or Bluetooth.
+   * Explicit Sunmi, Bluetooth, and USB selections do not call this.
+   */
+  private async useBuiltinUsbIfAuto(savedType: PrinterType): Promise<boolean> {
+    this.autoUsbNote = null;
+    if (savedType !== 'auto' || Platform.OS !== 'android') {
+      return false;
+    }
+    if (this.usbService.isConnected()) {
+      this.markUsbReady();
+      return true;
+    }
+    const result = await this.usbService.tryAutoConnectBuiltin();
+    if (result === 'connected') {
+      this.markUsbReady();
+      return true;
+    }
+    if (result === 'denied') {
+      this.autoUsbNote =
+        'Tap Allow for the built-in printer, then print again.';
+    }
+    return false;
+  }
+
+  private markUsbReady(): void {
+    this.printerType = 'usb';
+    this.isConnected = true;
+    this.isInitialized = true;
+  }
+
+  private noteBuiltinUsbDenied(): void {
+    if (!this.autoUsbNote) {
+      return;
+    }
+    Toast.show({
+      type: 'info',
+      text1: 'Built-in printer',
+      text2: this.autoUsbNote,
+    });
+  }
+
   /**
    * Initialize the printer connection
    */
@@ -221,7 +276,7 @@ class PrintService {
         this.isConnected = true;
         return true;
       }
-      return false;
+      return await this.useBuiltinUsbIfAuto(savedType);
     } catch (error) {
       console.error('Failed to initialize printer:', error);
       this.isConnected = false;
@@ -301,6 +356,9 @@ class PrintService {
             this.printerType = 'bluetooth';
             await this.ensureBluetoothSession(savedType);
             this.isConnected = this.bluetoothService.isPrinterConnected();
+            if (!this.isConnected) {
+              return await this.useBuiltinUsbIfAuto(savedType);
+            }
           }
           return this.isConnected;
         } catch {
@@ -308,6 +366,9 @@ class PrintService {
             this.printerType = 'bluetooth';
             await this.ensureBluetoothSession(savedType);
             this.isConnected = this.bluetoothService.isPrinterConnected();
+            if (!this.isConnected) {
+              return await this.useBuiltinUsbIfAuto(savedType);
+            }
             return this.isConnected;
           }
           this.isConnected = false;
@@ -318,6 +379,9 @@ class PrintService {
       this.printerType = 'bluetooth';
       await this.ensureBluetoothSession(savedType);
       this.isConnected = this.bluetoothService.isPrinterConnected();
+      if (!this.isConnected && savedType === 'auto') {
+        return await this.useBuiltinUsbIfAuto(savedType);
+      }
       return this.isConnected;
     } catch (error) {
       console.error('Failed to check printer connection:', error);
@@ -374,14 +438,28 @@ class PrintService {
         }
         this.printerType = 'bluetooth';
         await this.ensureBluetoothSession(savedType);
-        if (!this.bluetoothService.isPrinterConnected()) {
+        if (
+          !this.bluetoothService.isPrinterConnected() &&
+          savedType === 'auto'
+        ) {
+          if (await this.useBuiltinUsbIfAuto(savedType)) {
+            return await this.printReceiptUsb(data);
+          }
+          this.noteBuiltinUsbDenied();
           return false;
         }
         return await this.printReceiptBluetooth(data);
       }
 
       await this.ensureBluetoothSession(savedType);
-      if (!this.bluetoothService.isPrinterConnected()) {
+      if (
+        !this.bluetoothService.isPrinterConnected() &&
+        savedType === 'auto'
+      ) {
+        if (await this.useBuiltinUsbIfAuto(savedType)) {
+          return await this.printReceiptUsb(data);
+        }
+        this.noteBuiltinUsbDenied();
         return false;
       }
       return await this.printReceiptBluetooth(data);
@@ -418,6 +496,18 @@ class PrintService {
       }
 
       await this.ensureBluetoothSession(savedType);
+      if (
+        !this.bluetoothService.isPrinterConnected() &&
+        savedType === 'auto'
+      ) {
+        if (await this.useBuiltinUsbIfAuto(savedType)) {
+          return await this.usbService.printKot(data);
+        }
+        this.noteBuiltinUsbDenied();
+        if (this.autoUsbNote) {
+          return false;
+        }
+      }
       if (!this.bluetoothService.isPrinterConnected()) {
         Toast.show({
           type: 'info',
@@ -1148,7 +1238,16 @@ class PrintService {
         if (!isConnected && savedType === 'auto') {
           this.printerType = 'bluetooth';
           await this.ensureBluetoothSession(savedType);
-          if (!this.bluetoothService.isPrinterConnected()) {
+          if (
+            !this.bluetoothService.isPrinterConnected() &&
+            savedType === 'auto'
+          ) {
+            if (await this.useBuiltinUsbIfAuto(savedType)) {
+              return await this.finishUsbShortTest();
+            }
+            if (this.autoUsbNote) {
+              throw new Error(this.autoUsbNote);
+            }
             return false;
           }
           return await this.bluetoothService.testPrinter();
@@ -1176,7 +1275,16 @@ class PrintService {
       }
 
       await this.ensureBluetoothSession(savedType);
-      if (!this.bluetoothService.isPrinterConnected()) {
+      if (
+        !this.bluetoothService.isPrinterConnected() &&
+        savedType === 'auto'
+      ) {
+        if (await this.useBuiltinUsbIfAuto(savedType)) {
+          return await this.finishUsbShortTest();
+        }
+        if (this.autoUsbNote) {
+          throw new Error(this.autoUsbNote);
+        }
         return false;
       }
       return await this.bluetoothService.testPrinter();
@@ -1189,6 +1297,18 @@ class PrintService {
       });
       return false;
     }
+  }
+
+  private async finishUsbShortTest(): Promise<boolean> {
+    const ok = await this.usbService.testShortPrint();
+    if (ok) {
+      Toast.show({
+        type: 'success',
+        text1: 'Quick test',
+        text2: 'Printer responded successfully',
+      });
+    }
+    return ok;
   }
 
   /**

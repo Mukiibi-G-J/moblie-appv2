@@ -8,7 +8,14 @@ export function formatReceiptAmount(
   if (!Number.isFinite(n)) {
     return "0";
   }
-  return Math.round(n).toLocaleString("en-US");
+  return `UGX ${Math.round(n).toLocaleString("en-US")}`;
+}
+
+export function formatKotQty(quantity: number | string | null | undefined): string {
+  const n = typeof quantity === "string" ? parseFloat(quantity) : Number(quantity);
+  if (!Number.isFinite(n)) return String(quantity ?? "");
+  if (Number.isInteger(n)) return String(n);
+  return String(n);
 }
 
 export function formatReceiptDate(

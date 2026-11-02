@@ -1,3 +1,4 @@
+import { appendEfrisQrRaster } from "./efrisQrPng";
 import { effectiveReceiptCols, padReceiptColumns } from "./formatters";
 import type { ReceiptDocument, ReceiptDocumentNode } from "./types";
 
@@ -57,6 +58,9 @@ function appendNode(
     case "text":
       appendEscPosText(bytes, node.text || "", printStyle);
       break;
+    case "qr":
+      appendEfrisQrRaster(bytes, node.text || "");
+      break;
     case "row": {
       const line = padReceiptColumns(node.left || "", node.right || "", cols);
       appendEscPosText(bytes, line, {
@@ -73,9 +77,13 @@ function appendNode(
       }
       break;
     case "cut":
-      // 58mm tear-bar printers feed several blank lines on GS V.
       if (!skipCut) {
         bytes.push(0x1d, 0x56, 0x00);
+        break;
+      }
+      // Tear-bar head sits above the edge. Feed the website and contact out.
+      for (let i = 0; i < 5; i++) {
+        bytes.push(0x0a);
       }
       break;
     default:

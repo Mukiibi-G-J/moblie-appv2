@@ -59,6 +59,11 @@ import {
   receiptLabelFromPostedPayload,
   restaurantOrderToReceiptData,
 } from '../../services/restaurantReceiptAdapter';
+import {
+  invoiceIdFromPostedPayload,
+  loadPostedReceiptFiscal,
+  receiptFieldsFromFiscal,
+} from '../../services/postedReceiptFiscal';
 import type {KotData} from '../../services/UsbPrinterService';
 import {
   groupTablesByFloorAndSection,
@@ -1029,11 +1034,16 @@ export default function RestaurantPOS() {
 
       if (shouldPrint) {
         const companyInfo = await fetchCompanyInfoForReceipt();
+        const fiscal = await loadPostedReceiptFiscal(
+          invoiceIdFromPostedPayload(payload.invoice),
+          receiptId,
+        );
         const receiptData = restaurantOrderToReceiptData(snap, {
           username: auth.username || auth.user_id || 'Staff',
           receiptIdOverride: receiptId,
           companyInfo,
           ...(documentDate ? {saleDate: localDateTimeForYmd(documentDate)} : {}),
+          ...receiptFieldsFromFiscal(fiscal, Number(snap.total_amount) || 0),
         });
         const printed =
           await PrintService.getInstance().printReceipt(receiptData);
