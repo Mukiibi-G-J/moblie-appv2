@@ -3232,23 +3232,42 @@ const Cart = ({
                   onPress={() => navigation.navigate('SyncQueue' as never)}
                 />
               ) : null}
-              <View style={styles.posToolbarMain}>
-                {showTodayMySales ? (
-                  <TodayMySalesBar
-                    compact
-                    userId={Number(auth?.user_id) || null}
-                    refreshKey={todayMySalesRefreshKey}
-                    onOpenHistory={
-                      canOpenSalesHistory
-                        ? () => navigation.navigate('SalesHistory' as never)
-                        : undefined
-                    }
-                  />
-                ) : null}
-              </View>
+              {isPosUi ? (
+                <View style={styles.posToolbarMain}>
+                  {showTodayMySales ? (
+                    <TodayMySalesBar
+                      compact
+                      userId={Number(auth?.user_id) || null}
+                      refreshKey={todayMySalesRefreshKey}
+                      onOpenHistory={
+                        canOpenSalesHistory
+                          ? () => navigation.navigate('SalesHistory' as never)
+                          : undefined
+                      }
+                    />
+                  ) : null}
+                </View>
+              ) : (
+                <View style={styles.posToolbarMain} />
+              )}
               <SalesUiSwitch mode={salesUiMode} onChange={setSalesUiMode} />
               {isTabMode && canUseDrafts ? renderDraftsAccessButton() : null}
             </View>
+            {!isPosUi && showTodayMySales ? (
+              <View style={styles.phoneSalesBarRow}>
+                <TodayMySalesBar
+                  compact
+                  align="start"
+                  userId={Number(auth?.user_id) || null}
+                  refreshKey={todayMySalesRefreshKey}
+                  onOpenHistory={
+                    canOpenSalesHistory
+                      ? () => navigation.navigate('SalesHistory' as never)
+                      : undefined
+                  }
+                />
+              </View>
+            ) : null}
   
           {Platform.OS === 'android' && searchModeState.barcodeScannerEnabled && (
             <View style={styles.embeddedScannerSection}>
@@ -3818,6 +3837,11 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     alignItems: 'flex-end',
+  },
+  phoneSalesBarRow: {
+    paddingHorizontal: SIZES.padding,
+    paddingBottom: 8,
+    alignItems: 'flex-start',
   },
   headerActionsRow: {
     flexDirection: 'row',

@@ -479,60 +479,69 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
                 style={[
                   styles.input,
                   catTheme.input,
-                  errors.code && styles.inputError,
-                  isEditMode && [styles.inputDisabled, catTheme.inputDisabled],
+                  (isEditMode ? errors.description : errors.code) &&
+                    styles.inputError,
                 ]}
                 placeholder="Category name"
                 placeholderTextColor={colors.placeholder}
-                value={formData.code}
+                value={isEditMode ? formData.description : formData.code}
                 onChangeText={text =>
-                  setFormData({...formData, code: text.toUpperCase()})
+                  isEditMode
+                    ? setFormData({...formData, description: text.toUpperCase()})
+                    : setFormData({...formData, code: text.toUpperCase()})
                 }
                 onBlur={() =>
-                  autoSaveField('code', formDataRef.current.code)
+                  isEditMode
+                    ? autoSaveField(
+                        'description',
+                        formDataRef.current.description || '',
+                      )
+                    : autoSaveField('code', formDataRef.current.code)
                 }
-                editable={!isEditMode && canWrite}
+                editable={canWrite}
                 autoCapitalize="characters"
                 maxLength={255}
               />
-              {errors.code ? (
+              {isEditMode && errors.description ? (
+                <Text style={styles.errorText}>{errors.description}</Text>
+              ) : null}
+              {!isEditMode && errors.code ? (
                 <Text style={styles.errorText}>{errors.code}</Text>
               ) : null}
-              {isEditMode ? (
-                <Text style={[styles.helpText, catTheme.helpText]}>
-                  Category name cannot be changed after creation.
-                </Text>
-              ) : null}
 
-              <TextInput
-                style={[
-                  styles.input,
-                  catTheme.input,
-                  styles.inputSpaced,
-                  errors.description && styles.inputError,
-                ]}
-                placeholder="Description (optional)"
-                placeholderTextColor={colors.placeholder}
-                value={formData.description}
-                onChangeText={text =>
-                  setFormData({...formData, description: text})
-                }
-                onBlur={() =>
-                  autoSaveField(
-                    'description',
-                    formDataRef.current.description || '',
-                  )
-                }
-                editable={canWrite}
-                autoCapitalize="sentences"
-                maxLength={255}
-              />
-              {errors.description ? (
-                <Text style={styles.errorText}>{errors.description}</Text>
-              ) : (
-                <Text style={[styles.helpText, catTheme.helpText]}>
-                  Add a clearer label for reporting and search.
-                </Text>
+              {isEditMode ? null : (
+                <>
+                  <TextInput
+                    style={[
+                      styles.input,
+                      catTheme.input,
+                      styles.inputSpaced,
+                      errors.description && styles.inputError,
+                    ]}
+                    placeholder="Description (optional)"
+                    placeholderTextColor={colors.placeholder}
+                    value={formData.description}
+                    onChangeText={text =>
+                      setFormData({...formData, description: text})
+                    }
+                    onBlur={() =>
+                      autoSaveField(
+                        'description',
+                        formDataRef.current.description || '',
+                      )
+                    }
+                    editable={canWrite}
+                    autoCapitalize="sentences"
+                    maxLength={255}
+                  />
+                  {errors.description ? (
+                    <Text style={styles.errorText}>{errors.description}</Text>
+                  ) : (
+                    <Text style={[styles.helpText, catTheme.helpText]}>
+                      Add a clearer label for reporting and search.
+                    </Text>
+                  )}
+                </>
               )}
             </View>
 

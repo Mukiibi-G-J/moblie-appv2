@@ -117,7 +117,13 @@ const SalesHistoryListItem: React.FC<Props> = ({
   const canEditInPos = !!onEditInPosPress && isOpenish;
   const canPost = !!onPostPress && isOpenish;
   const canPrint =
-    !!onPrintPress && statusLower === 'posted' && !item.reversed;
+    !!onPrintPress &&
+    !item.reversed &&
+    (statusLower === 'posted' ||
+      statusLower === 'open' ||
+      statusLower === 'draft');
+  const printLabel =
+    statusLower === 'posted' ? 'Print invoice' : 'Print pro forma';
   const canOpenActions = canEditInPos || canPost || canPrint;
 
   const actionItems = useMemo(() => {
@@ -145,12 +151,12 @@ const SalesHistoryListItem: React.FC<Props> = ({
     if (canPrint && onPrintPress) {
       items.push({
         key: 'print',
-        label: 'Print receipt',
+        label: printLabel,
         onPress: onPrintPress,
       });
     }
     return items;
-  }, [canEditInPos, canPost, canPrint, onEditInPosPress, onPostPress, onPrintPress, onPress]);
+  }, [canEditInPos, canPost, canPrint, onEditInPosPress, onPostPress, onPrintPress, onPress, printLabel]);
 
   return (
     <View>
@@ -210,7 +216,7 @@ const SalesHistoryListItem: React.FC<Props> = ({
             <ActivityIndicator color={COLORS.primary} size="small" />
           ) : (
             <Image
-              source={icons.menu}
+              source={icons.menu1}
               style={[styles.actionIcon, {tintColor: colors.textPrimary}]}
               resizeMode="contain"
             />

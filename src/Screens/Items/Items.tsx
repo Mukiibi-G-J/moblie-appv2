@@ -35,6 +35,7 @@ import {
   deleteItemImage,
   fetchItemUnitsOfMeasure,
   fetchItemCardDetail,
+  deleteItemCategory,
   type ItemCategory,
 } from '../../services/app.services';
 import ItemUnitOfMeasureModal from './ItemUnitOfMeasureModal';
@@ -146,8 +147,13 @@ const EditItemModal = ({
   const [categoryPickerVisible, setCategoryPickerVisible] = useState(false);
   const [pickerSelectedCode, setPickerSelectedCode] = useState<string | null>(null);
   const [categoryFormVisible, setCategoryFormVisible] = useState(false);
-  const {canCreate: canCreateCategory, canEdit: canEditCategory} =
-    usePermissions();
+  const [categoryBeingEdited, setCategoryBeingEdited] =
+    useState<ItemCategory | null>(null);
+  const {
+    canCreate: canCreateCategory,
+    canEdit: canEditCategory,
+    canDelete: canDeleteCategory,
+  } = usePermissions();
   const CATEGORY_PAGE_NAME = PAGE_NAMES.ITEM_CATEGORIES;
 
   const editedItemRef = useRef<Item | null>(null);
@@ -238,9 +244,9 @@ const EditItemModal = ({
 
   const formatAmountWithCommas = (value: number | string | undefined | null) => {
     const numericValue =
-      typeof value === 'number' ? value : parseFloat(String(value || 0));
-    if (!Number.isFinite(numericValue)) {
-      return '0';
+      typeof value === 'number' ? value : parseFloat(String(value ?? ''));
+    if (!Number.isFinite(numericValue) || numericValue === 0) {
+      return '';
     }
     return numericValue.toLocaleString('en-US');
   };
@@ -284,6 +290,7 @@ const EditItemModal = ({
       setCategoryPickerVisible(false);
       setPickerSelectedCode(null);
       setCategoryFormVisible(false);
+      setCategoryBeingEdited(null);
       lastSavedRef.current = {};
       if (savedTimerRef.current) {
         clearTimeout(savedTimerRef.current);
@@ -724,6 +731,66 @@ const EditItemModal = ({
       })),
     [categories],
   );
+
+  const handleDeleteCategory = (cat: Category) => {
+    const code = String(cat.code || '').trim();
+    if (!code) {
+      return;
+    }
+    const name =
+      (cat.description && String(cat.description).trim()) ||
+      cat.name ||
+      code;
+    Alert.alert(
+      'Delete category',
+      `Delete "${name}"? Items using it will have no category.`,
+      [
+        {text: 'Cancel', style: 'cancel'},
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              try {
+                await deleteItemCategory(code);
+                setCategories(prev =>
+                  prev.filter(row => String(row.code || '') !== code),
+                );
+                setPickerSelectedCode(prev => (prev === code ? null : prev));
+                setEditedItem(prev => {
+                  if (!prev) {
+                    return prev;
+                  }
+                  const current = String(prev.category_id ?? '');
+                  const matches =
+                    current === code ||
+                    current === String(cat.id ?? '');
+                  if (!matches) {
+                    return prev;
+                  }
+                  void autoSaveField('category_id', null);
+                  return {...prev, category_id: null};
+                });
+                Toast.show({
+                  type: 'success',
+                  text1: 'Category deleted',
+                  text2: name,
+                });
+              } catch (error) {
+                Toast.show({
+                  type: 'error',
+                  text1: 'Could not delete category',
+                  text2: getApiErrorMessage(error, {
+                    fallback: 'Failed to delete category',
+                  }),
+                });
+              }
+            })();
+          },
+        },
+      ],
+    );
+  };
 
   const applyPickedCategory = (code: string | null) => {
     setCategoryPickerVisible(false);
@@ -1279,7 +1346,10 @@ const EditItemModal = ({
                       canCreateCategory(CATEGORY_PAGE_NAME) ? (
                         <TouchableOpacity
                           style={styles.editItemPickerCreateRow}
-                          onPress={() => setCategoryFormVisible(true)}
+                          onPress={() => {
+                            setCategoryBeingEdited(null);
+                            setCategoryFormVisible(true);
+                          }}
                           activeOpacity={0.65}>
                           <Image
                             source={icons.plus as any}
@@ -1317,32 +1387,59 @@ const EditItemModal = ({
                         code ||
                         'Category';
                       return (
-                        <TouchableOpacity
-                          style={styles.editItemPickerRow}
-                          onPress={() =>
-                            setPickerSelectedCode(prev =>
-                              prev === code ? null : code,
-                            )
-                          }
-                          activeOpacity={0.7}>
-                          <Image
-                            source={
-                              checked
-                                ? (icons.check_on as any)
-                                : (icons.check_off as any)
+                        <View style={styles.editItemPickerRow}>
+                          <TouchableOpacity
+                            style={styles.editItemPickerRowMain}
+                            onPress={() =>
+                              setPickerSelectedCode(prev =>
+                                prev === code ? null : code,
+                              )
                             }
-                            style={styles.editItemPickerCheck}
-                            resizeMode="contain"
-                          />
-                          <Text
-                            style={[
-                              styles.editItemPickerRowTitle,
-                              editTheme.catTitle,
-                            ]}
-                            numberOfLines={1}>
-                            {name}
-                          </Text>
-                        </TouchableOpacity>
+                            activeOpacity={0.7}>
+                            <Image
+                              source={
+                                checked
+                                  ? (icons.check_on as any)
+                                  : (icons.check_off as any)
+                              }
+                              style={styles.editItemPickerCheck}
+                              resizeMode="contain"
+                            />
+                            <Text
+                              style={[
+                                styles.editItemPickerRowTitle,
+                                editTheme.catTitle,
+                              ]}
+                              numberOfLines={1}>
+                              {name}
+                            </Text>
+                          </TouchableOpacity>
+                          {canEditCategory(CATEGORY_PAGE_NAME) ? (
+                            <TouchableOpacity
+                              onPress={() => {
+                                setCategoryBeingEdited({
+                                  code: String(cat.code || ''),
+                                  description: String(
+                                    cat.description || cat.name || cat.code || '',
+                                  ),
+                                  parent_id: null,
+                                });
+                                setCategoryFormVisible(true);
+                              }}
+                              hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
+                              activeOpacity={0.7}>
+                              <Text style={styles.editItemPickerEdit}>Edit</Text>
+                            </TouchableOpacity>
+                          ) : null}
+                          {canDeleteCategory(CATEGORY_PAGE_NAME) ? (
+                            <TouchableOpacity
+                              onPress={() => handleDeleteCategory(cat)}
+                              hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
+                              activeOpacity={0.7}>
+                              <Text style={styles.editItemPickerDelete}>Delete</Text>
+                            </TouchableOpacity>
+                          ) : null}
+                        </View>
                       );
                     }}
                   />
@@ -1679,7 +1776,7 @@ const EditItemModal = ({
                         }
                         editable={canWrite}
                         keyboardType="numeric"
-                        placeholder="0"
+                        placeholder="Enter price"
                         placeholderTextColor={colors.placeholder}
                       />
                     </View>
@@ -1716,7 +1813,7 @@ const EditItemModal = ({
                             }
                             editable={canWrite}
                             keyboardType="numeric"
-                            placeholder="0"
+                            placeholder="Enter price"
                             placeholderTextColor={colors.placeholder}
                           />
                         </View>
@@ -2027,8 +2124,11 @@ const EditItemModal = ({
       />
       <ItemCategoryFormModal
         visible={categoryFormVisible && visible}
-        onClose={() => setCategoryFormVisible(false)}
-        category={null}
+        onClose={() => {
+          setCategoryFormVisible(false);
+          setCategoryBeingEdited(null);
+        }}
+        category={categoryBeingEdited}
         onSave={() => {
           void loadCategories();
         }}
@@ -3241,10 +3341,33 @@ const styles = StyleSheet.create({
   editItemPickerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 14,
-    paddingHorizontal: 4,
+    paddingVertical: 8,
+    paddingRight: 4,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.lightGray1,
+  },
+  editItemPickerRowMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 6,
+    minWidth: 0,
+  },
+  editItemPickerEdit: {
+    ...FONTS.body4,
+    fontWeight: '600',
+    color: COLORS.primary2,
+    fontSize: 14,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+  },
+  editItemPickerDelete: {
+    ...FONTS.body4,
+    fontWeight: '600',
+    color: COLORS.error,
+    fontSize: 14,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
   },
   editItemPickerCheck: {
     width: 22,

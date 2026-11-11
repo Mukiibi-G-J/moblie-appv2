@@ -25,6 +25,7 @@ import Settings from './src/Screens/Settings/Settings';
 import LocalDatabase from './src/Screens/Settings/LocalDatabase';
 import ProfileScreen from './src/Screens/Profile/ProfileScreen';
 import SyncQueue from './src/Screens/Sync/SyncQueue';
+import NfcTest from './src/Screens/NfcTest/NfcTest';
 import BusinessDetails from './src/Screens/BusinessDetails/BusinessDetails';
 import AvailableModulesScreen from './src/Screens/Help/AvailableModulesScreen';
 import Expenses from './src/Screens/Expenses/Expenses';
@@ -486,6 +487,11 @@ const AppNavigator = () => {
             <Stack.Screen
               name="SyncQueue"
               component={SyncQueue}
+              options={{ headerShown: false }}
+            />
+            <Stack.Screen
+              name="NfcTest"
+              component={NfcTest}
               options={{ headerShown: false }}
             />
             <Stack.Screen

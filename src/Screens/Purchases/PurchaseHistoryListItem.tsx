@@ -113,7 +113,7 @@ const PurchaseHistoryListItem: React.FC<Props> = ({item, onPress}) => {
         accessibilityRole="button"
         accessibilityLabel="Choose an action">
         <Image
-          source={icons.menu}
+          source={icons.menu1}
           style={[styles.actionIcon, {tintColor: colors.textPrimary}]}
           resizeMode="contain"
         />

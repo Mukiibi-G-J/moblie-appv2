@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Alert,
   Linking,
+  TextInput,
 } from 'react-native';
 import Toast from 'react-native-toast-message';
 import { useFocusEffect } from '@react-navigation/native';
@@ -41,6 +42,12 @@ import {
   fetchUserProfile,
 } from '../../services/profile.service';
 import { resolveProfileAvatarSrc } from '../../utils/profileAvatar';
+import {
+  filterScreens,
+  keywordsForScreen,
+  SCREEN_FINDER_SKIP_KEYS,
+} from '../../utils/screenFinder';
+import { RESTAURANT_HUB_TILES } from '../Restaurant/RestaurantHub';
 
 type MenuRow = {
   key: string;
@@ -72,8 +79,13 @@ const MoreMenu: React.FC = () => {
   const app = useAppContext() as AppContextType;
   const { logout, patchAuth } = app;
   const { setSelectedTab } = useTabContext();
-  const { isModuleVisible, hasAnyPageAccess, canAccessMobileNav, canManageCompany } =
-    usePermissions();
+  const {
+    isModuleVisible,
+    hasAnyPageAccess,
+    canAccessMobileNav,
+    canAccessMobileScreen,
+    canManageCompany,
+  } = usePermissions();
   const { storeLabel } = useCompanyInfo();
   const [profileBranchCode, setProfileBranchCode] = useState <
     string | null | undefined
@@ -90,6 +102,7 @@ const MoreMenu: React.FC = () => {
   const [switchSelectedId, setSwitchSelectedId] = useState<number | null>(null);
   const [switchConfirming, setSwitchConfirming] = useState(false);
   const [openSectionKey, setOpenSectionKey] = useState<string | null>(null);
+  const [screenQuery, setScreenQuery] = useState('');
   const loadBranchContext = useCallback(async () => {
     if (!auth.user_id) {
       setProfileBranchCode(null);
@@ -619,6 +632,13 @@ const MoreMenu: React.FC = () => {
             onPress: () => navigate('Settings', undefined),
           },
           {
+            key: 'nfcTest',
+            label: 'NFC test',
+            icon: icons.setting,
+            visible: true,
+            onPress: () => navigate('NfcTest', undefined),
+          },
+          {
             key: 'appearance',
             label: `Appearance · ${appearanceLabel}`,
             icon: icons.eye,
@@ -667,6 +687,59 @@ const MoreMenu: React.FC = () => {
     [menuSections, openSectionKey],
   );
 
+  const screenFinderItems = useMemo(() => {
+    const fromMenu = menuSections.flatMap(section =>
+      section.rows
+        .filter(row => !SCREEN_FINDER_SKIP_KEYS.has(row.key))
+        .map(row => ({
+          key: row.key,
+          label: row.label,
+          section: section.title,
+          icon: row.icon,
+          keywords: keywordsForScreen(row.key),
+          onPress: row.onPress,
+        })),
+    );
+
+    if (!isModuleVisible('restaurant')) {
+      return fromMenu;
+    }
+
+    const restaurantScreens = RESTAURANT_HUB_TILES.filter(
+      tile =>
+        canAccessMobileScreen(tile.enginePages) &&
+        tile.pageNames.some(pageName => hasAnyPageAccess(pageName)),
+    ).map(tile => ({
+      key: `restaurant-${tile.key}`,
+      label: tile.label,
+      section: 'Restaurant',
+      icon: icons.tray,
+      keywords: keywordsForScreen(`restaurant-${tile.key}`),
+      onPress: () => navigate(tile.route, undefined),
+    }));
+
+    return [...fromMenu, ...restaurantScreens];
+  }, [
+    menuSections,
+    isModuleVisible,
+    canAccessMobileScreen,
+    hasAnyPageAccess,
+  ]);
+
+  const isFindingScreens = screenQuery.trim().length > 0;
+  const screenMatches = useMemo(
+    () => (isFindingScreens ? filterScreens(screenFinderItems, screenQuery) : []),
+    [isFindingScreens, screenFinderItems, screenQuery],
+  );
+
+  const openScreenMatch = useCallback(
+    (onPress: () => void) => {
+      setScreenQuery('');
+      onPress();
+    },
+    [],
+  );
+
   const handleCategoryPress = useCallback((section: MenuSection) => {
     if (section.rows.length === 1) {
       section.rows[0]?.onPress();
@@ -713,6 +786,7 @@ const MoreMenu: React.FC = () => {
         paddingBottom: SIZES.padding * 2,
         paddingTop: Math.max(insets.top, 12),
       }}
+      keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}>
       <View style={styles.topBar}>
         <Pressable
@@ -1163,7 +1237,117 @@ const MoreMenu: React.FC = () => {
       </Modal>
 
       <View style={styles.menuSections}>
-        {openSection ? (
+        <View
+          style={[
+            styles.screenFinder,
+            {
+              backgroundColor: colors.card,
+              borderColor: colors.border,
+            },
+          ]}>
+          <Image
+            source={icons.search as any}
+            style={[styles.screenFinderIcon, {tintColor: colors.textSecondary}]}
+          />
+          <TextInput
+            value={screenQuery}
+            onChangeText={setScreenQuery}
+            placeholder="Find a screen"
+            placeholderTextColor={colors.textTertiary}
+            style={[styles.screenFinderInput, {color: colors.textPrimary}]}
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+            accessibilityLabel="Find a screen"
+          />
+          {isFindingScreens ? (
+            <Pressable
+              {...quickPressProps}
+              onPress={() => setScreenQuery('')}
+              hitSlop={ICON_BUTTON_HIT_SLOP}
+              accessibilityRole="button"
+              accessibilityLabel="Clear screen search">
+              <Text style={[styles.screenFinderClear, {color: colors.textSecondary}]}>
+                ✕
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+        {isFindingScreens ? (
+          <View style={styles.sectionBlock}>
+            <Text style={[styles.sectionTitle, {color: colors.textSecondary}]}>
+              Screens
+            </Text>
+            <View
+              style={[
+                styles.sectionCard,
+                {
+                  backgroundColor: colors.card,
+                  borderColor: colors.border,
+                },
+              ]}>
+              {screenMatches.length === 0 ? (
+                <Text style={[styles.screenFinderEmpty, {color: colors.textSecondary}]}>
+                  {`No screens match “${screenQuery.trim()}”`}
+                </Text>
+              ) : (
+                screenMatches.map((match, index) => (
+                  <View key={match.key}>
+                    <Pressable
+                      {...quickPressProps}
+                      style={({pressed}) => [
+                        styles.row,
+                        pressed && styles.rowPressed,
+                      ]}
+                      onPress={() => openScreenMatch(match.onPress)}
+                      android_ripple={
+                        Platform.OS === 'android'
+                          ? {color: 'rgba(0,0,0,0.1)'}
+                          : undefined
+                      }>
+                      <Image
+                        source={match.icon as any}
+                        style={[styles.rowIcon, {tintColor: colors.textSecondary}]}
+                      />
+                      <View style={styles.categoryTextCol}>
+                        <Text
+                          style={[styles.rowLabel, {color: colors.textPrimary}]}>
+                          {match.label}
+                        </Text>
+                        <Text
+                          numberOfLines={1}
+                          style={[
+                            styles.categorySubtitle,
+                            {color: colors.textSecondary},
+                          ]}>
+                          {match.section}
+                        </Text>
+                      </View>
+                      <Image
+                        source={icons.down_arrow as any}
+                        style={[
+                          styles.rowChevron,
+                          {
+                            tintColor: colors.textTertiary,
+                            transform: [{rotate: '-90deg'}],
+                          },
+                        ]}
+                      />
+                    </Pressable>
+                    {index < screenMatches.length - 1 ? (
+                      <View
+                        style={[
+                          styles.divider,
+                          {backgroundColor: colors.border},
+                        ]}
+                      />
+                    ) : null}
+                  </View>
+                ))
+              )}
+            </View>
+          </View>
+        ) : openSection ? (
           <View style={styles.sectionBlock}>
             <Pressable
               {...quickPressProps}
@@ -1434,6 +1618,36 @@ const styles = StyleSheet.create({
   menuSections: {
     paddingHorizontal: SIZES.padding,
     gap: 20,
+  },
+  screenFinder: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: 14,
+    minHeight: 48,
+  },
+  screenFinderIcon: {
+    width: 18,
+    height: 18,
+    resizeMode: 'contain',
+    marginRight: 10,
+  },
+  screenFinderInput: {
+    ...FONTS.body3,
+    flex: 1,
+    paddingVertical: 12,
+  },
+  screenFinderClear: {
+    ...FONTS.h3,
+    fontSize: 16,
+    paddingLeft: 8,
+  },
+  screenFinderEmpty: {
+    ...FONTS.body4,
+    fontSize: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 14,
   },
   sectionBlock: {
     gap: 8,

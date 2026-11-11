@@ -42,7 +42,7 @@ import {
   ICON_BUTTON_HIT_SLOP,
 } from '../../constants';
 import {
-  getCompanyInfo,
+  downloadSalesInvoicePdf,
   getSalesApiErrorMessage,
   getSalesInvoice,
   isAlreadyPostedSalesError,
@@ -53,16 +53,8 @@ import {
   showUserError,
   showUserSuccess,
 } from '../../utils/userFeedback';
-import {
-  fiscalFromInvoice,
-  receiptFieldsFromFiscal,
-} from '../../services/postedReceiptFiscal';
 import {requestLoadUnpostedIntoPos} from '../../utils/posInvoiceLoad';
-import PrintService, {
-  CompanyInfo,
-  PrintReceiptData,
-} from '../../services/PrintService';
-import {tenantCompanyToReceiptInfo} from '../../utils/companyReceiptInfo';
+import {savePdfBufferAndShare} from '../../utils/reportPdfDownload';
 import {useAuth, useTabContext} from '../../context/Store';
 import {usePermissions} from '../../hooks/usePermissions';
 import {usePaymentMethodsQuery} from '../../hooks/useCustomersQuery';
@@ -182,72 +174,12 @@ function isUnpostedSale(status?: string) {
   return s === 'open' || s === 'draft';
 }
 
-function mapSalesInvoiceToReceiptData(
-  invoice: SalesInvoice,
-  companyInfo: CompanyInfo | undefined,
-  username: string,
-): PrintReceiptData {
-  const lines = invoice.lines || [];
-  let cartItems = lines.map(line => {
-    const quantity = Number.parseFloat(String(line.quantity)) || 0;
-    const unit_price = Number.parseFloat(String(line.unit_price)) || 0;
-    const ta = Number.parseFloat(String(line.total_amount));
-    return {
-      item_name: line.item_name || 'Item',
-      quantity,
-      unit_price,
-      line_total: Number.isFinite(ta) ? ta : undefined,
-    };
-  });
-  const subFromLines = cartItems.reduce(
-    (s, i) => s + i.quantity * i.unit_price,
-    0,
-  );
-  const totalRaw = Number(invoice.total_amount);
-  const total = Number.isFinite(totalRaw) ? totalRaw : subFromLines;
-  if (cartItems.length === 0 && total > 0) {
-    cartItems = [
-      {
-        item_name: 'Invoice total',
-        quantity: 1,
-        unit_price: total,
-        line_total: total,
-      },
-    ];
+function canPrintSalesInvoice(invoice: {status?: string; reversed?: boolean}) {
+  if (invoice.reversed) {
+    return false;
   }
-  const rawDate =
-    invoice.document_date ||
-    invoice.created_at ||
-    new Date().toISOString();
-  const saleDate =
-    typeof rawDate === 'string'
-      ? rawDate
-      : new Date(rawDate).toISOString();
-
-  const cn = invoice.customer_name?.trim();
-  const customerName =
-    cn && cn.toLowerCase() !== 'general' ? cn : undefined;
-
-  const ar = Number(invoice.amount_received);
-  const ch = Number(invoice.change_amount);
-
-  return {
-    receiptId: invoice.invoice_no || String(invoice.id ?? ''),
-    username,
-    customerName,
-    cartItems,
-    subtotal: total,
-    total,
-    tax: 0,
-    discount: 0,
-    paymentMethod: invoice.payment_method_name || '—',
-    amountReceived: Number.isFinite(ar) && ar > 0 ? ar : undefined,
-    change: Number.isFinite(ch) && ch > 0 ? ch : undefined,
-    saleDate,
-    companyInfo,
-    compactReceipt: true,
-    ...receiptFieldsFromFiscal(fiscalFromInvoice(invoice), total),
-  };
+  const status = String(invoice.status || '').toLowerCase();
+  return status === 'posted' || status === 'open' || status === 'draft';
 }
 
 const SalesHistory = () => {
@@ -659,99 +591,62 @@ const SalesHistory = () => {
     setDetailLoading(false);
   };
 
-  const prepareInvoiceForPrint = useCallback(async (base: SalesInvoice) => {
-    if (base.id == null) {
-      return base;
-    }
-    try {
-      const full = await getSalesInvoice(base.id, {
-        invoiceNo: base.invoice_no,
-      });
-      return {
-        ...base,
-        ...full,
-        lines: full?.lines ?? base.lines,
-      } as SalesInvoice;
-    } catch {
-      return base;
-    }
-  }, []);
-
   const handlePrintReceipt = useCallback(
     async (invoice: SalesInvoice) => {
-      if (!isPostedSale(invoice.status)) {
+      const status = String(invoice.status || '').toLowerCase();
+      if (invoice.reversed || status === 'cancelled') {
         Toast.show({
           type: 'info',
           text1: 'Not available',
-          text2: 'Only posted sales can be printed.',
+          text2: 'This sales invoice cannot be printed.',
         });
         return;
       }
-      if (Platform.OS !== 'android') {
+      if (!canPrintSalesInvoice(invoice)) {
         Toast.show({
           type: 'info',
-          text1: 'Printing',
-          text2: 'Receipt printing is available on Android.',
+          text1: 'Not available',
+          text2: 'This sales invoice cannot be printed.',
+        });
+        return;
+      }
+      if (invoice.id == null) {
+        Toast.show({
+          type: 'info',
+          text1: 'Not available',
+          text2: 'Save this sale before printing.',
         });
         return;
       }
       setPrintingReceipt(true);
       try {
-        const prepared = await prepareInvoiceForPrint(invoice);
-        let companyInfo: CompanyInfo | undefined;
-        try {
-          const companyResponse = await getCompanyInfo();
-          const c = companyResponse.data?.company;
-          if (c) {
-            companyInfo = tenantCompanyToReceiptInfo(c);
-          }
-        } catch {
-          /* optional */
-        }
-        const printService = PrintService.getInstance();
-        const connected = await printService.checkConnection();
-        if (!connected) {
-          Toast.show({
-            type: 'info',
-            text1: 'No printer',
-            text2: 'Connect a printer in Settings to print receipts.',
-          });
-          return;
-        }
-        const cashier =
-          auth.username?.trim() ||
-          auth.full_name?.trim() ||
-          'Cashier';
-        const receiptData = mapSalesInvoiceToReceiptData(
-          prepared,
-          companyInfo,
-          cashier,
-        );
-        const result = await printService.printReceipt(receiptData);
-        if (result) {
-          Toast.show({
-            type: 'success',
-            text1: 'Receipt printed',
-            text2: 'Sent to printer',
-          });
-        } else {
-          Toast.show({
-            type: 'error',
-            text1: 'Print failed',
-            text2: 'Could not print. Check the printer connection.',
-          });
-        }
-      } catch {
+        const bytes = await downloadSalesInvoicePdf(invoice.id);
+        const prefix = isPostedSale(invoice.status) ? 'invoice' : 'proforma';
+        const number = invoice.invoice_no || String(invoice.id);
+        const saved = await savePdfBufferAndShare(bytes, `${prefix}-${number}`);
+        Toast.show({
+          type: 'success',
+          text1: isPostedSale(invoice.status) ? 'Invoice ready' : 'Pro forma ready',
+          text2: saved.openedViewer
+            ? 'Opened the PDF'
+            : saved.sharedOnIos
+              ? 'Choose where to save or print the PDF'
+              : `Saved to ${saved.displayPath}`,
+        });
+      } catch (error) {
         Toast.show({
           type: 'error',
-          text1: 'Print error',
-          text2: 'Something went wrong.',
+          text1: 'Print failed',
+          text2:
+            error instanceof Error
+              ? error.message
+              : 'Could not create the invoice PDF.',
         });
       } finally {
         setPrintingReceipt(false);
       }
     },
-    [auth.full_name, auth.username, prepareInvoiceForPrint],
+    [],
   );
 
   const runReverseSales = useCallback(
@@ -1518,6 +1413,29 @@ const SalesHistory = () => {
                 ) : null}
                 <TouchableOpacity
                   style={[
+                    styles.reverseInvoiceBtn,
+                    (printingReceipt || postingId != null) &&
+                      styles.detailActionBtnDisabled,
+                  ]}
+                  onPress={() => handlePrintReceipt(displayItem)}
+                  disabled={printingReceipt || postingId != null}
+                  activeOpacity={0.85}>
+                  {printingReceipt ? (
+                    <ActivityIndicator color={COLORS.white} size="small" />
+                  ) : (
+                    <>
+                      <Image
+                        source={icons.printer as any}
+                        style={styles.reverseInvoiceBtnIcon}
+                      />
+                      <Text style={styles.reverseInvoiceBtnText}>
+                        Print pro forma
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
                     styles.printReceiptBtn,
                     styles.printReceiptBtnFlex,
                     postingId != null && styles.detailActionBtnDisabled,
@@ -1590,7 +1508,7 @@ const SalesHistory = () => {
                           style={styles.printReceiptBtnIcon}
                         />
                         <Text style={styles.printReceiptBtnText}>
-                          Print receipt
+                          Print invoice
                         </Text>
                       </>
                     )}
@@ -1678,7 +1596,7 @@ const SalesHistory = () => {
               item={item}
               onPress={() => openSaleDetail(item)}
               onPrintPress={
-                isPostedSale(item.status) && !item.reversed
+                canPrintSalesInvoice(item)
                   ? () => handlePrintReceipt(item)
                   : undefined
               }

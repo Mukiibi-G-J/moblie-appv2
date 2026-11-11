@@ -23,6 +23,8 @@ type TodayMySalesBarProps = {
    * Parent owns horizontal spacing.
    */
   compact?: boolean;
+  /** Phone layout keeps both chips on one left-aligned row. */
+  align?: 'start' | 'end';
   onOpenHistory?: () => void;
   refreshKey?: number;
 };
@@ -31,6 +33,7 @@ const TodayMySalesBar: React.FC<TodayMySalesBarProps> = ({
   userId,
   variant = 'inline',
   compact = false,
+  align = 'end',
   onOpenHistory,
   refreshKey = 0,
 }) => {
@@ -132,7 +135,12 @@ const TodayMySalesBar: React.FC<TodayMySalesBarProps> = ({
   }
 
   return (
-    <View style={[styles.inlineRoot, compact && styles.inlineRootCompact]}>
+    <View
+      style={[
+        styles.inlineRoot,
+        compact && styles.inlineRootCompact,
+        align === 'start' && styles.inlineRootStart,
+      ]}>
       <TouchableOpacity
         style={[
           styles.toggleButton,
@@ -183,6 +191,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 0,
     paddingBottom: 0,
     flexShrink: 1,
+  },
+  inlineRootStart: {
+    justifyContent: 'flex-start',
+    alignSelf: 'stretch',
+    flexWrap: 'nowrap',
   },
   cardRoot: {
     borderRadius: 12,

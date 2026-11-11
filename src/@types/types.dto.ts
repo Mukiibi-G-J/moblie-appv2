@@ -171,6 +171,8 @@ export interface ItemJournalUpsertPayload {
   item_unit_of_measure?: number | null;
   item_specification?: number | null;
   adjustment_type?: ItemJournalAdjustmentType;
+  efris_stock_in_type?: string;
+  efris_adjust_type?: string;
   deleted?: boolean;
 }
 
