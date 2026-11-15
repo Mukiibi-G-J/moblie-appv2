@@ -1349,6 +1349,56 @@ export const getSalesInvoice = async (
   }
 };
 
+function pdfErrorFromBuffer(data: ArrayBuffer): string | null {
+  try {
+    const text = new TextDecoder('utf-8', {fatal: false})
+      .decode(data.slice(0, 4000))
+      .trim();
+    if (!text.startsWith('{')) {
+      return null;
+    }
+    const body = JSON.parse(text) as {detail?: unknown; error?: unknown};
+    if (typeof body.detail === 'string' && body.detail.trim()) {
+      return body.detail;
+    }
+    if (typeof body.error === 'string' && body.error.trim()) {
+      return body.error;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+/** A4 pro forma or posted sales invoice PDF. Does not post the invoice. */
+export const downloadSalesInvoicePdf = async (
+  invoiceId: number | string,
+): Promise<ArrayBuffer> => {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant) || undefined;
+  try {
+    const response = await axiosInstance.get(`/api/sales/${invoiceId}/print/`, {
+      responseType: 'arraybuffer',
+      headers: {Accept: 'application/json, application/pdf, */*'},
+    });
+    const bytes = response.data as ArrayBuffer;
+    const message = pdfErrorFromBuffer(bytes);
+    if (message) {
+      throw new Error(message);
+    }
+    return bytes;
+  } catch (error: any) {
+    const data = error?.response?.data;
+    if (data instanceof ArrayBuffer) {
+      const message = pdfErrorFromBuffer(data);
+      if (message) {
+        throw new Error(message);
+      }
+    }
+    throw error;
+  }
+};
+
 export type ReverseSalesInvoiceResult = {
   message: string;
   sales_invoice_no: string;
@@ -1622,7 +1672,9 @@ export const deleteItemCategory = async (code: string): Promise<void> => {
   try {
     const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
     const axiosInstance = createAxiosInstance(tenant) || undefined;
-    await axiosInstance.delete(`/api/categories/${code}/`);
+    await axiosInstance.delete(
+      `/api/categories/${encodeURIComponent(code)}/`,
+    );
   } catch (error) {
     console.error('Error deleting item category:', error);
     throw error;

@@ -106,7 +106,7 @@ const CustomerListItem: React.FC<CustomerListItemProps> = ({
             hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
             accessibilityRole="button"
             accessibilityLabel="Choose an action">
-            <Image source={icons.menu} style={styles.actionIcon} resizeMode="contain" />
+            <Image source={icons.menu1} style={styles.actionIcon} resizeMode="contain" />
           </TouchableOpacity>
         )}
       </TouchableOpacity>

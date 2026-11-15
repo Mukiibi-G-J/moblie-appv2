@@ -13,7 +13,7 @@ export const SIMULATE_OFFLINE_POS = false;
 export const TEST_API_PORT = 8000;
 
 /** Your PC WiFi IPv4 — run `ipconfig` on Windows and pick the WiFi adapter address. */
-export const TEST_API_LAN_HOST = '10.62.84.225';
+export const TEST_API_LAN_HOST = '192.168.1.3';
 
 /**
  * How the Android device reaches your local Django server:

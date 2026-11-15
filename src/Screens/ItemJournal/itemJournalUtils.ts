@@ -81,5 +81,11 @@ export function normalizeLine(raw: Record<string, unknown>): ItemJournalLine | n
     status: String(raw.status ?? ''),
     item_unit_of_measure,
     unit_of_measure_code,
+    efris_stock_in_type: String(raw.efris_stock_in_type ?? '')
+      .split('|')[0]
+      .trim(),
+    efris_adjust_type: String(raw.efris_adjust_type ?? '')
+      .split('|')[0]
+      .trim(),
   };
 }

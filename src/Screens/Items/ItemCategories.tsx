@@ -195,6 +195,7 @@ const ItemCategories = () => {
                 type: 'error',
                 text1: 'Error',
                 text2:
+                  error?.response?.data?.error ||
                   error?.response?.data?.detail ||
                   error?.response?.data?.code?.[0] ||
                   'Failed to delete category',
@@ -339,7 +340,7 @@ const ItemCategories = () => {
             </View>
           </TouchableOpacity>
 
-          {!pickerMode ? (
+          {canEdit(PAGE_NAME) || canDelete(PAGE_NAME) ? (
             <View style={styles.rowActions}>
               {canEdit(PAGE_NAME) ? (
                 <TouchableOpacity
@@ -354,11 +355,7 @@ const ItemCategories = () => {
                   onPress={() => handleDelete(item)}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   activeOpacity={0.7}>
-                  <Image
-                    source={icons.delete_icon}
-                    style={[styles.deleteIcon, listTheme.deleteIcon]}
-                    resizeMode="contain"
-                  />
+                  <Text style={styles.deleteLink}>Delete</Text>
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -651,6 +648,12 @@ const styles = StyleSheet.create({
     ...FONTS.body4,
     fontWeight: '600',
     color: COLORS.primary2,
+    fontSize: 14,
+  },
+  deleteLink: {
+    ...FONTS.body4,
+    fontWeight: '600',
+    color: COLORS.error,
     fontSize: 14,
   },
   deleteIcon: {

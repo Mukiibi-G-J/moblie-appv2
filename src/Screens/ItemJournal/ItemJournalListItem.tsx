@@ -20,6 +20,8 @@ export type ItemJournalLine = {
   status: string;
   item_unit_of_measure?: number | null;
   unit_of_measure_code?: string;
+  efris_stock_in_type?: string;
+  efris_adjust_type?: string;
 };
 
 const ENTRY_LABELS: Record<string, string> = {
@@ -145,7 +147,7 @@ const ItemJournalListItem: React.FC<Props> = ({
           accessibilityRole="button"
           accessibilityLabel="Choose an action">
           <Image
-            source={icons.menu}
+            source={icons.menu1}
             style={[styles.actionIcon, {tintColor: colors.textPrimary}]}
             resizeMode="contain"
           />

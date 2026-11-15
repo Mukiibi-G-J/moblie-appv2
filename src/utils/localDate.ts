@@ -15,6 +15,15 @@ export function todayYmdLocal(): string {
   return formatDateYmdLocal(new Date());
 }
 
+/** Local clock on a chosen calendar day, without a UTC shift. */
+export function localDateTimeForYmd(ymd: string): string {
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  const ss = String(now.getSeconds()).padStart(2, '0');
+  return `${ymd}T${hh}:${mm}:${ss}`;
+}
+
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})/;
 
 /** Parse YYYY-MM-DD as a local calendar day (midnight local, not UTC). */

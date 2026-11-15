@@ -58,6 +58,8 @@
     <!-- <uses-feature android:name="android.hardware.camera" android:required="false" /> -->
 
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
+    <uses-permission android:name="android.permission.NFC" />
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
 
     <!-- Allow opening saved PDFs in external viewer apps (Android 11+). -->
     <queries>

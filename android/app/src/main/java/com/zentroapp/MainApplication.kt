@@ -12,6 +12,7 @@ import com.facebook.react.defaults.DefaultReactNativeHost
 import com.facebook.react.soloader.OpenSourceMergedSoMapping
 import com.facebook.soloader.SoLoader
 import com.zentroapp.customerdisplay.CustomerDisplayPackage
+import com.zentroapp.nfc.NfcProbePackage
 import com.zentroapp.pdf.PdfDownloadPackage
 
 class MainApplication : Application(), ReactApplication {
@@ -22,6 +23,7 @@ class MainApplication : Application(), ReactApplication {
             PackageList(this).packages.apply {
               add(PdfDownloadPackage())
               add(CustomerDisplayPackage())
+              add(NfcProbePackage())
             }
 
         override fun getJSMainModuleName(): String = "index"

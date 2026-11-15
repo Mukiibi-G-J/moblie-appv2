@@ -551,7 +551,7 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
                       ) || 0;
                       setFormData({...formData, unit_price: numericValue});
                     }}
-                    placeholder="0"
+                    placeholder="Enter price"
                     placeholderTextColor={colors.placeholder}
                     keyboardType="numeric"
                   />

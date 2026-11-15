@@ -25,7 +25,7 @@ type Tile = {
   enginePages: string[];
 };
 
-const TILES: Tile[] = [
+export const RESTAURANT_HUB_TILES: Tile[] = [
   {
     key: 'pos',
     label: 'Restaurant POS',
@@ -111,7 +111,7 @@ const RestaurantHub = () => {
     if (!isModuleVisible('restaurant')) {
       return [];
     }
-    return TILES.filter(
+    return RESTAURANT_HUB_TILES.filter(
       t =>
         canAccessMobileScreen(t.enginePages) &&
         t.pageNames.some(p => hasAnyPageAccess(p)),

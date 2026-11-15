@@ -36,13 +36,19 @@ export function hasCustomerThanksBlock(nodes: ReceiptDocumentNode[]): boolean {
 export function appendMandatorySystemFooter(
   nodes: ReceiptDocumentNode[],
   payload: ReceiptBuildPayload,
+  sections?: { id: string; enabled?: boolean }[],
 ): void {
+  const turnedOff = new Set(
+    (sections || [])
+      .filter((section) => section.enabled === false)
+      .map((section) => section.id),
+  );
   const customerFacing =
     payload.receiptType === "sale" ||
     payload.receiptType === "prepayment" ||
     payload.receiptType === "payment_journal";
 
-  if (customerFacing && !hasCustomerThanksBlock(nodes)) {
+  if (customerFacing && !turnedOff.has("footer_thanks") && !hasCustomerThanksBlock(nodes)) {
     nodes.push({
       type: "text",
       text: "THANK YOU",
@@ -50,7 +56,7 @@ export function appendMandatorySystemFooter(
     });
   }
 
-  if (!hasSystemMarketingBlock(nodes)) {
+  if (!turnedOff.has("footer_marketing") && !hasSystemMarketingBlock(nodes)) {
     nodes.push({
       type: "text",
       text: "Powered by Zentroapp",

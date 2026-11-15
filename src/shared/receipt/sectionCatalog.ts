@@ -20,6 +20,7 @@ const SALE_SECTIONS: SectionCatalogEntry[] = [
   { id: "vat_breakdown", label: "VAT breakdown" },
   { id: "tender_change", label: "Tender & change" },
   { id: "payment_method", label: "Payment method" },
+  { id: "how_to_pay", label: "How to pay" },
   { id: "footer_thanks", label: "Thank you footer" },
   {
     id: "footer_marketing",
@@ -45,6 +46,7 @@ const PREPAYMENT_SECTIONS: SectionCatalogEntry[] = [
   { id: "line_items_compact", label: "Line items" },
   { id: "totals", label: "Totals", defaultConfig: { variant: "prepayment" } },
   { id: "payment_method", label: "Payment method", defaultConfig: { variant: "prepayment" } },
+  { id: "how_to_pay", label: "How to pay" },
   { id: "footer_thanks", label: "Thank you footer" },
 ];
 
@@ -69,6 +71,8 @@ const PAYMENT_JOURNAL_SECTIONS: SectionCatalogEntry[] = [
   { id: "receipt_meta", label: "Document meta" },
   { id: "line_items", label: "Line items" },
   { id: "totals", label: "Totals" },
+  { id: "payment_method", label: "Payment method" },
+  { id: "how_to_pay", label: "How to pay" },
   { id: "footer_thanks", label: "Thank you footer" },
 ];
 

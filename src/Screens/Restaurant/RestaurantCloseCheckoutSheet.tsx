@@ -1,5 +1,12 @@
 import React, {useEffect, useState} from 'react';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import {formatCurrencyCompact, formatCurrencyLabel, getLocalCurrencyCode} from '../../utils/currency';
+import {
+  formatDateOnlyDisplay,
+  formatDateYmdLocal,
+  todayYmdLocal,
+} from '../../utils/localDate';
+import {useUserSetupQuery} from '../../hooks/useSalesQuery';
 import {
   View,
   Text,
@@ -44,6 +51,7 @@ type Props = {
     shouldPrint: boolean,
     paymentMethodId: number,
     transactionId?: string,
+    documentDate?: string,
   ) => void | Promise<void>;
 };
 
@@ -65,6 +73,10 @@ export default function RestaurantCloseCheckoutSheet(props: Props) {
   const [methods, setMethods] = useState<PaymentMethod[]>([]);
   const [pmId, setPmId] = useState<number | null>(null);
   const [transactionId, setTransactionId] = useState('');
+  const [saleDate, setSaleDate] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const {data: userSetup} = useUserSetupQuery(visible);
+  const canPostPreviousDates = userSetup?.canPostPreviousDates !== false;
 
   useEffect(() => {
     if (!visible) {
@@ -82,6 +94,8 @@ export default function RestaurantCloseCheckoutSheet(props: Props) {
           );
           setPmId(cash?.id != null ? Number(cash.id) : null);
           setTransactionId('');
+          setSaleDate(new Date());
+          setShowDatePicker(false);
           if (!list?.length) {
             Toast.show({
               type: 'error',
@@ -120,10 +134,16 @@ export default function RestaurantCloseCheckoutSheet(props: Props) {
       });
       return;
     }
+    const postedDate = formatDateYmdLocal(saleDate);
+    const documentDate =
+      !canPostPreviousDates && postedDate < todayYmdLocal()
+        ? todayYmdLocal()
+        : postedDate;
     void onConfirm(
       shouldPrint,
       pmId,
       requiresTransactionId ? transactionId.trim() : undefined,
+      documentDate,
     );
   };
 
@@ -167,6 +187,44 @@ export default function RestaurantCloseCheckoutSheet(props: Props) {
                 {totalAmount.toLocaleString(undefined, {maximumFractionDigits: 0})}
               </Text>
             </View>
+
+            <Text style={[styles.sectionLabel, {color: chrome.text}]}>Sale date</Text>
+            <Pressable
+              disabled={submitting || !canPostPreviousDates}
+              onPress={() => setShowDatePicker(true)}
+              style={[
+                styles.dateRow,
+                {borderColor: chrome.border, opacity: canPostPreviousDates ? 1 : 0.6},
+              ]}>
+              <Text style={[styles.pmChipTxt, {color: chrome.text}]}>
+                {formatDateOnlyDisplay(formatDateYmdLocal(saleDate))}
+              </Text>
+            </Pressable>
+            {!canPostPreviousDates ? (
+              <Text style={[styles.summaryMeta, {color: chrome.muted}]}>
+                You cannot post sales for previous dates
+              </Text>
+            ) : null}
+            {showDatePicker ? (
+              <DateTimePicker
+                value={saleDate}
+                mode="date"
+                display="default"
+                onChange={(_event, selected) => {
+                  setShowDatePicker(Platform.OS === 'ios');
+                  if (!selected) {
+                    return;
+                  }
+                  if (
+                    !canPostPreviousDates &&
+                    formatDateYmdLocal(selected) < todayYmdLocal()
+                  ) {
+                    return;
+                  }
+                  setSaleDate(selected);
+                }}
+              />
+            ) : null}
 
             <Text style={[styles.sectionLabel, {color: chrome.text}]}>Payment method</Text>
             {loadingPm ? (
@@ -306,6 +364,13 @@ const styles = StyleSheet.create({
   summaryMeta: {...FONTS.body5, marginTop: 4},
   summaryTotal: {...FONTS.body3, fontWeight: '800', marginTop: 10},
   sectionLabel: {...FONTS.body4, fontWeight: '700', marginTop: 8},
+  dateRow: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
   pmList: {flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 8},
   pmChip: {
     paddingVertical: 10,

@@ -1,4 +1,5 @@
 import PrinterSunmi from "react-native-printer-sunmi";
+import { writeEfrisQrPng } from "../../services/efrisQrFile";
 import {
   prepareCompanyLogoForPrint,
   fitReceiptLogoSize,
@@ -63,6 +64,37 @@ export async function printSunmiDocument(document: ReceiptDocument): Promise<voi
           }
         }
         break;
+      case "qr": {
+        const data = String(node.text || "").trim();
+        if (data) {
+          let printed = false;
+          try {
+            const path = await writeEfrisQrPng(data);
+            if (path) {
+              const filePath = path.startsWith("file://") ? path : `file://${path}`;
+              PrinterSunmi.initLine({ align: "CENTER" });
+              PrinterSunmi.printBitmap(filePath, {
+                width: 240,
+                height: 240,
+                align: "CENTER",
+              });
+              PrinterSunmi.printDividingLine("EMPTY", 1);
+              printed = true;
+            }
+          } catch (error) {
+            console.warn("EFRIS QR bitmap skipped", error);
+          }
+          if (!printed) {
+            PrinterSunmi.printQrCode(data, {
+              align: "CENTER",
+              dot: data.length > 80 ? 4 : 6,
+              errorLevel: "M",
+            });
+            PrinterSunmi.printDividingLine("EMPTY", 1);
+          }
+        }
+        break;
+      }
       case "text":
         printTextNode(node, textSize);
         break;

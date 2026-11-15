@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
+  Alert,
   Image,
   Platform,
   FlatList,
@@ -19,7 +20,9 @@ import {COLORS, FONTS, icons} from '../../constants';
 import {useTheme} from '../../context/ThemeContext';
 import {QuickIconPressable, SearchableSelectModal} from '../../Components';
 import {useScreenTopInset} from '../../hooks/useScreenTopInset';
-import {fetchItemCardDetail, fetchItemJournalDetail, fetchItemUnitsOfMeasure, upsertItemJournal} from '../../services/app.services';
+import {useSafeAreaInsets} from 'react-native-safe-area-context';
+import {useAuth} from '../../context/Store';
+import {fetchItemCardDetail, fetchItemJournalDetail, fetchItemUnitsOfMeasure, postItemJournalLines, upsertItemJournal} from '../../services/app.services';
 import {
   listItems,
 } from '../../services/itemCatalogService';
@@ -35,6 +38,25 @@ const ENTRY_OPTIONS: {value: ItemJournalEntryType; label: string}[] = [
   {value: 'PositiveAdjustment', label: 'Increase'},
   {value: 'NegativeAdjustment', label: 'Decrease'},
 ];
+
+const STOCK_INCREASE_REASONS = [
+  {id: '101', label: 'Imported'},
+  {id: '102', label: 'Bought locally'},
+  {id: '103', label: 'Manufactured'},
+  {id: '104', label: 'Opening stock'},
+];
+
+const STOCK_DECREASE_REASONS = [
+  {id: '101', label: 'Expired'},
+  {id: '102', label: 'Damaged'},
+  {id: '103', label: 'Personal use'},
+  {id: '104', label: 'Other'},
+  {id: '105', label: 'Used as raw material'},
+];
+
+function efrisReasonCode(value: string | undefined): string {
+  return String(value ?? '').split('|')[0].trim();
+}
 
 type ItemUomOption = {
   id: number;
@@ -198,7 +220,10 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
   editFormTitle = 'Edit adjustment',
 }) => {
   const {colors} = useTheme();
+  const {auth} = useAuth();
+  const efrisEnabled = (auth?.enabled_modules || []).includes('efris');
   const topInset = useScreenTopInset();
+  const bottomInset = useSafeAreaInsets().bottom;
 
   const themed = useMemo(
     () => ({
@@ -264,6 +289,7 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
 
   const [isSaving, setIsSaving] = useState(false);
   const [showSaved, setShowSaved] = useState(false);
+  const [isPosting, setIsPosting] = useState(false);
   const [persistedId, setPersistedId] = useState<number | null>(null);
   const [documentNo, setDocumentNo] = useState('');
   const [itemSearch, setItemSearch] = useState('');
@@ -279,6 +305,9 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
   const [selectedItemUomId, setSelectedItemUomId] = useState<number | null>(null);
   const [uomLabelFallback, setUomLabelFallback] = useState('');
   const [entryType, setEntryType] = useState<ItemJournalEntryType>('PositiveAdjustment');
+  const [efrisStockInType, setEfrisStockInType] = useState('');
+  const [efrisAdjustType, setEfrisAdjustType] = useState('');
+  const [efrisReasonPickerVisible, setEfrisReasonPickerVisible] = useState(false);
   const [quantityStr, setQuantityStr] = useState('1');
   const [unitCostStr, setUnitCostStr] = useState('');
   const [description, setDescription] = useState('');
@@ -298,6 +327,8 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
     selectedItemNo: '',
     selectedItemUomId: null as number | null,
     entryType: 'PositiveAdjustment' as ItemJournalEntryType,
+    efrisStockInType: '',
+    efrisAdjustType: '',
     quantityStr: '1',
     unitCostStr: '',
     description: '',
@@ -309,6 +340,8 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
     selectedItemNo,
     selectedItemUomId,
     entryType,
+    efrisStockInType,
+    efrisAdjustType,
     quantityStr,
     unitCostStr,
     description,
@@ -335,6 +368,9 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
     setSelectedItemUomId(null);
     setUomLabelFallback('');
     setEntryType('PositiveAdjustment');
+    setEfrisStockInType(lockedAdjustmentType === 'opening_balance' ? '104' : '');
+    setEfrisAdjustType('');
+    setEfrisReasonPickerVisible(false);
     setQuantityStr('1');
     setUnitCostStr('');
     setDescription('');
@@ -342,7 +378,7 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
     setShowDatePicker(false);
     setUomPickerVisible(false);
     setEntryTypePickerVisible(false);
-  }, []);
+  }, [lockedAdjustmentType]);
 
   const flashSaved = useCallback(() => {
     setShowSaved(true);
@@ -391,6 +427,8 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
         description: string;
         date: string;
         item_unit_of_measure: number | null;
+        efris_stock_in_type: string;
+        efris_adjust_type: string;
       }> = {},
     ) => {
       if (!visible || savingRef.current || !userId) {
@@ -419,6 +457,14 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
         overrides.date !== undefined
           ? overrides.date
           : current.dateStr.trim() || todayISODate();
+      const nextStockIn =
+        overrides.efris_stock_in_type !== undefined
+          ? overrides.efris_stock_in_type
+          : current.efrisStockInType;
+      const nextAdjust =
+        overrides.efris_adjust_type !== undefined
+          ? overrides.efris_adjust_type
+          : current.efrisAdjustType;
 
       const existingId = persistedIdRef.current;
       if (existingId != null ? !canEdit : !canCreate) {
@@ -445,6 +491,8 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
         description: nextDescription,
         date: nextDate,
         item_unit_of_measure: uomId,
+        efris_stock_in_type: efrisEnabled ? nextStockIn : '',
+        efris_adjust_type: efrisEnabled ? nextAdjust : '',
       });
       if (snapshot === lastSavedRef.current) {
         return;
@@ -459,6 +507,14 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
         date: nextDate,
         user: userId,
         adjustment_type: lockedAdjustmentType,
+        ...(efrisEnabled
+          ? {
+              efris_stock_in_type:
+                nextEntryType === 'PositiveAdjustment' ? nextStockIn : '',
+              efris_adjust_type:
+                nextEntryType === 'NegativeAdjustment' ? nextAdjust : '',
+            }
+          : {}),
       };
       if (itemNo) {
         payload.item = itemNo;
@@ -501,8 +557,98 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
         setIsSaving(false);
       }
     },
-    [visible, userId, canCreate, canEdit, lockedAdjustmentType, onSaved, flashSaved],
+    [visible, userId, canCreate, canEdit, lockedAdjustmentType, efrisEnabled, onSaved, flashSaved],
   );
+
+  const handlePost = useCallback(() => {
+    if (!canEdit || isPosting || savingRef.current) {
+      return;
+    }
+    const current = formRef.current;
+    const qty = parseInt(current.quantityStr.replace(/,/g, ''), 10);
+    if (!current.selectedItemNo.trim() || !Number.isFinite(qty) || qty <= 0) {
+      Toast.show({
+        type: 'error',
+        text1: 'Cannot post',
+        text2: 'Choose an item and enter a quantity first.',
+      });
+      return;
+    }
+    if (efrisEnabled && current.entryType === 'PositiveAdjustment' && !current.efrisStockInType) {
+      Toast.show({
+        type: 'error',
+        text1: 'Stock increase reason',
+        text2: 'Choose how this quantity entered stock.',
+      });
+      return;
+    }
+    if (efrisEnabled && current.entryType === 'NegativeAdjustment' && !current.efrisAdjustType) {
+      Toast.show({
+        type: 'error',
+        text1: 'Stock decrease reason',
+        text2: 'Choose why this quantity is leaving stock.',
+      });
+      return;
+    }
+    const label = documentNo || 'this line';
+    Alert.alert(
+      'Post to inventory',
+      `Post ${label} to inventory? This cannot be undone from the app.`,
+      [
+        {text: 'Cancel', style: 'cancel'},
+        {
+          text: 'Post',
+          onPress: () => {
+            void (async () => {
+              setIsPosting(true);
+              try {
+                await persistLine();
+                const id = persistedIdRef.current;
+                if (id == null) {
+                  Toast.show({
+                    type: 'error',
+                    text1: 'Cannot post',
+                    text2: 'Save the line before posting.',
+                  });
+                  return;
+                }
+                const result = await postItemJournalLines([id]);
+                if (result?.error) {
+                  throw result;
+                }
+                const invalid = result?.invalid_journals?.[0];
+                if (invalid) {
+                  const detail = (invalid.errors || []).filter(Boolean).join('\n');
+                  throw new Error(detail || 'This line could not be posted.');
+                }
+                Toast.show({type: 'success', text1: 'Posted'});
+                onClose();
+              } catch (e: unknown) {
+                const ax = e as {
+                  response?: {data?: {error?: string; detail?: unknown}};
+                  message?: string;
+                };
+                const data = ax?.response?.data;
+                const invalid = (data as {invalid_journals?: Array<{errors?: string[]}>} | undefined)
+                  ?.invalid_journals?.[0];
+                const fromInvalid = (invalid?.errors || []).filter(Boolean).join('\n');
+                const msg =
+                  fromInvalid ||
+                  (typeof data?.error === 'string' ? data.error : '') ||
+                  (typeof data?.detail === 'string' ? data.detail : '') ||
+                  (e instanceof Error ? e.message : '') ||
+                  ax?.message ||
+                  'Could not post this line.';
+                Toast.show({type: 'error', text1: 'Could not post', text2: msg});
+              } finally {
+                setIsPosting(false);
+              }
+            })();
+          },
+        },
+      ],
+    );
+  }, [canEdit, documentNo, efrisEnabled, isPosting, onClose, persistLine]);
 
   useEffect(() => {
     if (!visible) {
@@ -517,6 +663,12 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
       setSelectedItemNo(line.item);
       setSelectedItemName(line.item_name);
       setEntryType((line.entry_type as ItemJournalEntryType) || 'PositiveAdjustment');
+      const stockIn =
+        efrisReasonCode(line.efris_stock_in_type) ||
+        (lockedAdjustmentType === 'opening_balance' ? '104' : '');
+      const adjust = efrisReasonCode(line.efris_adjust_type);
+      setEfrisStockInType(stockIn);
+      setEfrisAdjustType(adjust);
       setQuantityStr(String(line.quantity ?? ''));
       setUnitCostStr(formatUnitCostForInput(Number(line.unit_cost)));
       setDescription(line.description || '');
@@ -534,6 +686,8 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
         description: (line.description || '').trim(),
         date: line.date || todayISODate(),
         item_unit_of_measure: preferredUom,
+        efris_stock_in_type: efrisEnabled ? stockIn : '',
+        efris_adjust_type: efrisEnabled ? adjust : '',
       });
       const hydrateId = ++hydrateRequestIdRef.current;
       void loadUomsForItemNo(line.item, preferredUom).then(uomId => {
@@ -575,6 +729,12 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
             if (pendingUnitCostRef.current == null && detail.unit_cost != null) {
               setUnitCostStr(formatUnitCostForInput(Number(detail.unit_cost)));
             }
+            const detailStockIn =
+              efrisReasonCode(detail.efris_stock_in_type) || stockIn;
+            const detailAdjust =
+              efrisReasonCode(detail.efris_adjust_type) || adjust;
+            setEfrisStockInType(detailStockIn);
+            setEfrisAdjustType(detailAdjust);
             lastSavedRef.current = JSON.stringify({
               item: detail.item,
               entry_type:
@@ -585,6 +745,8 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
               description: (detail.description || line.description || '').trim(),
               date: detail.date || line.date || todayISODate(),
               item_unit_of_measure: nextUom,
+              efris_stock_in_type: efrisEnabled ? detailStockIn : '',
+              efris_adjust_type: efrisEnabled ? detailAdjust : '',
             });
             const uomId = await loadUomsForItemNo(detail.item, nextUom);
             if (hydrateId !== hydrateRequestIdRef.current) {
@@ -603,7 +765,7 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
     } else {
       resetForm();
     }
-  }, [line, visible, loadUomsForItemNo, resetForm]);
+  }, [line, visible, efrisEnabled, loadUomsForItemNo, resetForm]);
 
   const fetchSearchPage = useCallback(
     async (page: number, q: string, append: boolean) => {
@@ -768,6 +930,15 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
     id: opt.value,
     label: opt.label,
   }));
+  const efrisReasonOptions =
+    entryType === 'NegativeAdjustment'
+      ? STOCK_DECREASE_REASONS
+      : STOCK_INCREASE_REASONS;
+  const efrisReasonValue =
+    entryType === 'NegativeAdjustment' ? efrisAdjustType : efrisStockInType;
+  const efrisReasonLabel =
+    efrisReasonOptions.find(option => option.id === efrisReasonValue)?.label ||
+    '';
 
   return (
     <Modal
@@ -1107,6 +1278,46 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
               </TouchableOpacity>
             </View>
 
+            {efrisEnabled &&
+            (entryType === 'PositiveAdjustment' ||
+              entryType === 'NegativeAdjustment') ? (
+              <View style={styles.fieldGroup}>
+                <Text style={[styles.label, themed.label]}>
+                  {entryType === 'NegativeAdjustment'
+                    ? 'Stock decrease reason'
+                    : 'Stock increase reason'}
+                </Text>
+                <TouchableOpacity
+                  style={[
+                    styles.selectRow,
+                    themed.selectRow,
+                    !canWrite && themed.selectRowDisabled,
+                  ]}
+                  onPress={() => {
+                    if (!canWrite) {
+                      return;
+                    }
+                    Keyboard.dismiss();
+                    setEfrisReasonPickerVisible(true);
+                  }}
+                  activeOpacity={0.7}
+                  disabled={!canWrite}>
+                  <Text
+                    style={[
+                      styles.selectRowText,
+                      themed.selectRowText,
+                      !efrisReasonLabel && {color: colors.placeholder},
+                    ]}
+                    numberOfLines={1}>
+                    {efrisReasonLabel || 'Select reason'}
+                  </Text>
+                  <Text style={[styles.selectRowChevron, themed.selectRowChevron]}>
+                    ›
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
             <View style={styles.fieldGroup}>
               <Text style={[styles.label, themed.label]}>Quantity</Text>
               <TextInput
@@ -1210,6 +1421,30 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
           </View>
         </ScrollView>
         )}
+        {!isSearchPanelVisible && canEdit && isPersisted ? (
+          <View
+            style={[
+              styles.postBar,
+              {
+                paddingBottom: Math.max(bottomInset, 12),
+                borderTopColor: colors.border,
+              },
+            ]}>
+            <TouchableOpacity
+              style={[styles.postButton, isPosting && styles.postButtonDisabled]}
+              onPress={handlePost}
+              disabled={isPosting || isSaving}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Post to inventory">
+              {isPosting ? (
+                <ActivityIndicator size="small" color={COLORS.white} />
+              ) : (
+                <Text style={styles.postButtonText}>Post</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        ) : null}
       </View>
       <SearchableSelectModal
         visible={uomPickerVisible}
@@ -1241,6 +1476,29 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
           setEntryType(next);
           setEntryTypePickerVisible(false);
           void persistLine({entry_type: next});
+        }}
+      />
+      <SearchableSelectModal
+        visible={efrisReasonPickerVisible}
+        title={
+          entryType === 'NegativeAdjustment'
+            ? 'Stock decrease reason'
+            : 'Stock increase reason'
+        }
+        options={efrisReasonOptions}
+        selectedId={efrisReasonValue || null}
+        searchPlaceholder="Search reasons…"
+        onClose={() => setEfrisReasonPickerVisible(false)}
+        onSelect={id => {
+          const next = String(id);
+          setEfrisReasonPickerVisible(false);
+          if (entryType === 'NegativeAdjustment') {
+            setEfrisAdjustType(next);
+            void persistLine({efris_adjust_type: next});
+            return;
+          }
+          setEfrisStockInType(next);
+          void persistLine({efris_stock_in_type: next});
         }}
       />
     </Modal>
@@ -1290,7 +1548,27 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 20,
-    paddingBottom: Platform.OS === 'ios' ? 40 : 28,
+    paddingBottom: 24,
+  },
+  postBar: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  postButton: {
+    height: 52,
+    borderRadius: 16,
+    backgroundColor: COLORS.primary2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  postButtonDisabled: {
+    opacity: 0.7,
+  },
+  postButtonText: {
+    ...FONTS.h3,
+    color: COLORS.white,
+    fontWeight: '700',
   },
   pageTitle: {
     fontSize: 24,

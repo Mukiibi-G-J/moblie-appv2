@@ -89,6 +89,11 @@ export interface ReceiptLineItem {
   seat_no?: number | null;
 }
 
+export interface PayeeLine {
+  label: string;
+  number: string;
+}
+
 export interface SaleReceiptPayload {
   receiptType: "sale" | "prepayment";
   invoiceNo: string;
@@ -110,6 +115,11 @@ export interface SaleReceiptPayload {
   sellerName?: string;
   prepaymentDocumentNo?: string;
   remainingBalance?: number;
+  efrisFdn?: string;
+  efrisVerificationCode?: string;
+  efrisQrCode?: string;
+  /** Merchant payee numbers (MoMo, Airtel, …). Not this sale's transaction ID. */
+  payeeLines?: PayeeLine[];
 }
 
 export interface KotBarPayload {
@@ -130,6 +140,7 @@ export interface PaymentJournalPayload {
   lines: ReceiptLineItem[];
   totalAmount: number;
   paymentMethod?: string;
+  payeeLines?: PayeeLine[];
 }
 
 export type ReceiptBuildPayload =
@@ -139,6 +150,7 @@ export type ReceiptBuildPayload =
 
 export type ReceiptNodeType =
   | "image"
+  | "qr"
   | "text"
   | "row"
   | "rule"
@@ -160,6 +172,8 @@ export interface ReceiptDocumentNode {
   left?: string;
   right?: string;
   src?: string;
+  maxWidthMm?: number;
+  maxHeightMm?: number;
   style?: ReceiptTextStyle;
   lines?: number;
 }

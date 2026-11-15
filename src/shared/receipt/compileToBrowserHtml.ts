@@ -18,6 +18,10 @@ function nodeToHtml(node: ReceiptDocumentNode): string {
       return node.src
         ? `<div style="text-align:center;margin:2px 0;"><img src="${escapeHtml(node.src)}" style="max-width:32mm;max-height:16mm;width:auto;height:auto;object-fit:contain;" alt="" /></div>`
         : "";
+    case "qr":
+      return node.text
+        ? `<div style="text-align:center;${bold}">${escapeHtml(node.text)}</div>`
+        : "";
     case "text":
       return `<div style="text-align:${align};${bold}${dbl}">${escapeHtml(node.text || "")}</div>`;
     case "row":

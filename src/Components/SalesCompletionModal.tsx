@@ -47,6 +47,10 @@ import {
   PaymentMethod,
 } from '../services/app.services';
 import {completeOfflineSale} from '../services/offline/OfflineSaleService';
+import {
+  loadPostedReceiptFiscal,
+  receiptFieldsFromFiscal,
+} from '../services/postedReceiptFiscal';
 import {loadReceiptBusinessInfo} from '../services/companyInfoCache';
 import {tenantCompanyToReceiptInfo} from '../utils/companyReceiptInfo';
 import {useOfflineOptional} from '../context/OfflineContext';
@@ -312,7 +316,10 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
     setIsProcessing(true);
 
     const finalDocumentDate =
-      documentDate || new Date().toISOString().split('T')[0];
+      documentDate ||
+      `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
+    const now = new Date();
+    const receiptSaleDate = `${finalDocumentDate}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
 
     if (!isPosOnline) {
       try {
@@ -364,7 +371,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
                 amountReceived: parseFloat(amountReceived) || total,
                 change: calculateChange(),
                 paymentMethod: paymentMethod?.description || 'Cash',
-                saleDate: new Date().toISOString(),
+                saleDate: receiptSaleDate,
                 companyInfo,
               });
             }
@@ -397,7 +404,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
           syncStatus: offlineResult.syncStatus,
           syncError: offlineResult.syncError,
         });
-        handleClose();
+        finishSale();
       } catch (error: unknown) {
         const msg =
           error instanceof Error ? error.message : 'Offline sale failed';
@@ -415,6 +422,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
         customer: selectedCustomer?.id || 0,
         customer_name: selectedCustomer?.name || 'General Customer',
         document_date: finalDocumentDate,
+        posting_date: finalDocumentDate,
         status: 'Open',
         total_amount: total,
         amount_received:
@@ -593,6 +601,10 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
                 console.error('❌ Error fetching company info:', companyError);
               }
 
+              const fiscal = await loadPostedReceiptFiscal(
+                invoiceId,
+                String(invoiceNo),
+              );
               const receiptData = {
                 receiptId:
                   response.data.invoice_no || response.data.id.toString(),
@@ -606,8 +618,9 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
                 amountReceived: parseFloat(amountReceived) || total,
                 change: calculateChange(),
                 paymentMethod: paymentMethod?.description || 'Cash',
-                saleDate: new Date().toISOString(),
+                saleDate: receiptSaleDate,
                 companyInfo: companyInfo,
+                ...receiptFieldsFromFiscal(fiscal, total),
               };
 
               console.log('🖨️ Receipt data for printing:', receiptData);
@@ -647,7 +660,7 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
         );
 
         onSuccess(response.data);
-        handleClose();
+        finishSale();
       } else {
         setErrorMessage('Failed to complete sale. No invoice ID received.');
         showUserError(
@@ -673,17 +686,22 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
     }
   };
 
+  const finishSale = () => {
+    setIsProcessing(false);
+    setSelectedCustomer(initialSelectedCustomer || fallbackGeneralCustomer);
+    setPaymentMethod(null);
+    setAmountReceived('');
+    setAmountReceivedDisplay('');
+    setTransactionId('');
+    setPaymentDropdownOpen(false);
+    setPrintReceipt(true);
+    setErrorMessage(null);
+    onClose();
+  };
+
   const handleClose = () => {
     if (!isProcessing) {
-      setSelectedCustomer(initialSelectedCustomer || fallbackGeneralCustomer);
-      setPaymentMethod(null);
-      setAmountReceived('');
-      setAmountReceivedDisplay('');
-      setTransactionId('');
-      setPaymentDropdownOpen(false);
-      setPrintReceipt(true);
-      setErrorMessage(null);
-      onClose();
+      finishSale();
     }
   };
 

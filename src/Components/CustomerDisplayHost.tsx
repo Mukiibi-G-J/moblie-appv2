@@ -1,14 +1,6 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
-import {
-  Modal,
-  Pressable,
-  StyleSheet,
-  Text,
-  useWindowDimensions,
-  View,
-} from 'react-native';
+import {Pressable, StyleSheet, Text, View} from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import CustomerDisplayView from './CustomerDisplayView';
 import {
   getCustomerDisplayStatus,
   getLatestCustomerDisplayPayload,
@@ -16,7 +8,6 @@ import {
   showCustomerDisplay,
   subscribeCustomerDisplay,
   subscribeCustomerDisplayStatus,
-  type CustomerDisplayPayload,
   type CustomerDisplayStatus,
 } from '../services/customerDisplay';
 import {getCompanyInfo} from '../services/app.services';
@@ -27,18 +18,12 @@ import {
 
 export default function CustomerDisplayHost() {
   const insets = useSafeAreaInsets();
-  const {width, height} = useWindowDimensions();
-  const [payload, setPayload] = useState<CustomerDisplayPayload>(
-    getLatestCustomerDisplayPayload,
-  );
   const [status, setStatus] = useState<CustomerDisplayStatus>({
     hasSecondaryDisplay: false,
     attached: false,
     displayId: -1,
     displayName: '',
   });
-  const [previewHidden, setPreviewHidden] = useState(false);
-  const [expanded, setExpanded] = useState(false);
   const companyLogoRef = useRef<string | undefined>();
   const companyNameRef = useRef<string | undefined>();
 
@@ -93,33 +78,33 @@ export default function CustomerDisplayHost() {
         });
         return;
       }
-      setPayload(next);
     });
     const unsubStatus = subscribeCustomerDisplayStatus(next => {
       setStatus(next);
-      if (next.hasSecondaryDisplay) {
-        setPreviewHidden(false);
-      }
     });
     let cancelled = false;
-    void (async () => {
+    let attempts = 0;
+    const tryShow = async () => {
       const next = await showCustomerDisplay();
-      if (!cancelled) {
-        setStatus(next);
+      if (cancelled) {
+        return;
       }
-    })();
+      setStatus(next);
+      console.log('Customer display status', next);
+      if (!next.attached && attempts < 8) {
+        attempts += 1;
+        setTimeout(() => {
+          void tryShow();
+        }, 1500);
+      }
+    };
+    void tryShow();
     return () => {
       cancelled = true;
       unsubPayload();
       unsubStatus();
     };
   }, []);
-
-  useEffect(() => {
-    if (payload.mode === 'idle') {
-      setPreviewHidden(false);
-    }
-  }, [payload.mode]);
 
   const refreshStatus = useCallback(async () => {
     const next = await getCustomerDisplayStatus();
@@ -129,13 +114,6 @@ export default function CustomerDisplayHost() {
       setStatus(shown);
     }
   }, []);
-
-  const showPreview =
-    !status.hasSecondaryDisplay &&
-    payload.mode !== 'idle' &&
-    !previewHidden;
-  const pipW = Math.min(280, Math.round(width * 0.42));
-  const pipH = Math.min(210, Math.round(height * 0.28));
 
   return (
     <>
@@ -148,47 +126,6 @@ export default function CustomerDisplayHost() {
           </Pressable>
         </View>
       ) : null}
-
-      {showPreview ? (
-        <View
-          pointerEvents="box-none"
-          style={[
-            styles.pipWrap,
-            {bottom: insets.bottom + 72, right: 10, width: pipW, height: pipH},
-          ]}>
-          <Pressable
-            onPress={() => setExpanded(true)}
-            style={styles.pipCard}
-            accessibilityLabel="Open customer screen preview">
-            <View style={styles.pipHeader}>
-              <Text style={styles.pipTitle}>Customer screen</Text>
-              <Pressable
-                onPress={() => setPreviewHidden(true)}
-                hitSlop={8}
-                accessibilityLabel="Hide customer preview">
-                <Text style={styles.pipClose}>Hide</Text>
-              </Pressable>
-            </View>
-            <View style={styles.pipBody} pointerEvents="none">
-              <CustomerDisplayView payload={payload} />
-            </View>
-          </Pressable>
-        </View>
-      ) : null}
-
-      <Modal
-        visible={expanded}
-        animationType="fade"
-        onRequestClose={() => setExpanded(false)}>
-        <View style={styles.modalRoot}>
-          <CustomerDisplayView payload={payload} />
-          <Pressable
-            onPress={() => setExpanded(false)}
-            style={[styles.modalClose, {top: insets.top + 10}]}>
-            <Text style={styles.modalCloseText}>Close preview</Text>
-          </Pressable>
-        </View>
-      </Modal>
     </>
   );
 }
@@ -207,61 +144,6 @@ const styles = StyleSheet.create({
   chipText: {
     color: '#5EEAD4',
     fontSize: 11,
-    fontWeight: '700',
-  },
-  pipWrap: {
-    position: 'absolute',
-    zIndex: 50,
-  },
-  pipCard: {
-    flex: 1,
-    borderRadius: 14,
-    overflow: 'hidden',
-    borderWidth: 2,
-    borderColor: '#5EEAD4',
-    backgroundColor: '#0B3D3A',
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOpacity: 0.28,
-    shadowRadius: 10,
-    shadowOffset: {width: 0, height: 4},
-  },
-  pipHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: '#0F4A46',
-  },
-  pipTitle: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  pipClose: {
-    color: '#5EEAD4',
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  pipBody: {
-    flex: 1,
-  },
-  modalRoot: {
-    flex: 1,
-    backgroundColor: '#0B3D3A',
-  },
-  modalClose: {
-    position: 'absolute',
-    right: 14,
-    backgroundColor: 'rgba(255,255,255,0.14)',
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-  },
-  modalCloseText: {
-    color: '#FFFFFF',
-    fontSize: 13,
     fontWeight: '700',
   },
 });

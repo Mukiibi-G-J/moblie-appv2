@@ -106,6 +106,7 @@ export interface SalesInvoiceData {
   customer: number;
   customer_name: string;
   document_date: string;
+  posting_date?: string;
   status: 'Open';
   total_amount: number;
   amount_received: number;
@@ -170,6 +171,8 @@ export interface ItemJournalUpsertPayload {
   item_unit_of_measure?: number | null;
   item_specification?: number | null;
   adjustment_type?: ItemJournalAdjustmentType;
+  efris_stock_in_type?: string;
+  efris_adjust_type?: string;
   deleted?: boolean;
 }
 

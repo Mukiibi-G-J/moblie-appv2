@@ -1,7 +1,9 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { isPlaceholderCompanyLogo } from "../utils/companyLogoUrl";
 import type { KotData } from "./UsbPrinterService";
 import type { CompanyInfo, PrintReceiptData, PrinterType } from "./PrintService";
 import { resolveReceiptTemplate } from "./ReceiptTemplateService";
+import { parsePayeeLines } from "../shared/receipt/blockOptions";
 import {
   buildReceiptDocumentFromTemplate,
   kotTicketDataToPayload,
@@ -10,10 +12,12 @@ import {
   resolveTemplateFromConfig,
 } from "../shared/receipt/receiptRuntime";
 import type {
+  PayeeLine,
   ReceiptDocument,
   ReceiptProcess,
   PrinterType as ApiPrinterType,
   ResolvedReceiptTemplate,
+  SaleReceiptPayload,
 } from "../shared/receipt/types";
 
 function mapPrinterType(printer: PrinterType): ApiPrinterType {
@@ -22,7 +26,7 @@ function mapPrinterType(printer: PrinterType): ApiPrinterType {
   return "bluetooth";
 }
 
-/** 58mm mobile printers fit ~32 chars; DB templates may use 42 from web. */
+/** Fit the saved layout onto 58mm paper without changing which blocks print. */
 function clampMobilePaperProfile(
   template: ResolvedReceiptTemplate,
   printerType: PrinterType,
@@ -30,43 +34,111 @@ function clampMobilePaperProfile(
   if (printerType !== "bluetooth" && printerType !== "usb" && printerType !== "sunmi") {
     return template;
   }
-  const widthMm = template.paperProfile?.widthMm ?? 58;
+  const widthMm = Math.min(template.paperProfile?.widthMm ?? 58, 80);
   const maxCols = widthMm <= 58 ? 32 : 42;
   const chars = template.paperProfile?.charsPerLine ?? maxCols;
-  const sections = (template.sections || []).map((s) => {
-    if (s.id === "footer_receipt_id" || s.id === "qr_code") {
-      return { ...s, enabled: false };
-    }
-    if (s.id === "footer_thanks") {
-      return { ...s, config: { ...(s.config || {}), compact: true } };
-    }
-    if (s.id === "footer_marketing") {
-      return {
-        ...s,
-        config: { ...(s.config || {}), lines: ["Powered by Zentroapp"] },
-      };
-    }
-    return s;
-  });
   return {
     ...template,
-    layoutPreset: "compact",
-    sections,
     paperProfile: {
       ...template.paperProfile,
       widthMm,
       charsPerLine: Math.min(chars, maxCols),
-      logoWidthPx: Math.min(template.paperProfile?.logoWidthPx ?? 96, 96),
+      logoWidthPx: Math.min(template.paperProfile?.logoWidthPx ?? 128, widthMm <= 58 ? 128 : 160),
     },
   };
 }
 
-function brandingFromCompany(company?: CompanyInfo) {
+function inclusiveVatShare(amount: number, vatPercent = 18): number {
+  if (!(amount > 0) || !(vatPercent > 0)) return 0;
+  const base = Math.round((amount / (1 + vatPercent / 100)) * 100) / 100;
+  return Math.round((amount - base) * 100) / 100;
+}
+
+async function salesVatEnabled(): Promise<boolean> {
+  try {
+    const { getCachedSalesSetup } = await import("../db/sqlite");
+    const cached = await getCachedSalesSetup();
+    return cached?.vat_enabled === true;
+  } catch {
+    return false;
+  }
+}
+
+async function loadBranchCode(): Promise<string> {
+  try {
+    const raw = await AsyncStorage.getItem("branch.active_branch");
+    if (!raw) return "";
+    const branch = JSON.parse(raw) as { code?: string };
+    return String(branch.code || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function payeeLinesFromMethods(rows: Array<Record<string, unknown>>): PayeeLine[] {
+  return parsePayeeLines(
+    rows
+      .filter(row => row.blocked !== true && row.show_on_receipt === true)
+      .map(row => ({
+        label: row.receipt_label || row.description || row.code || "Pay",
+        number: row.payee_number,
+      })),
+  );
+}
+
+/** Payee numbers saved on Payment Methods. Each company keeps its own. */
+async function loadPayeeLines(): Promise<PayeeLine[]> {
+  try {
+    const { getAllPaymentMethods } = await import("../db/sqlite");
+    const local = payeeLinesFromMethods(
+      (await getAllPaymentMethods()) as unknown as Array<Record<string, unknown>>,
+    );
+    if (local.length) return local;
+  } catch {
+    /* try the API */
+  }
+  try {
+    const { fetchPaymentMethods } = await import("./app.services");
+    const remote = await fetchPaymentMethods();
+    return payeeLinesFromMethods(remote as unknown as Array<Record<string, unknown>>);
+  } catch {
+    return [];
+  }
+}
+
+async function applyCompanyReceiptFields(
+  payload: SaleReceiptPayload,
+  data: PrintReceiptData,
+): Promise<SaleReceiptPayload> {
+  const next = { ...payload };
+  if (!next.payeeLines?.length) {
+    const loaded = data.payeeLines?.length ? data.payeeLines : await loadPayeeLines();
+    if (loaded.length) next.payeeLines = loaded;
+  }
+  if (next.vatEnabled === false) {
+    next.vatAmount = undefined;
+    next.totalExclVat = undefined;
+  } else if (next.vatAmount == null || Number(next.vatAmount) <= 0) {
+    const vatOn = next.vatEnabled === true || (await salesVatEnabled());
+    if (vatOn) {
+      const vat = inclusiveVatShare(next.totalAmount);
+      if (vat > 0) {
+        next.vatEnabled = true;
+        next.vatAmount = vat;
+        next.totalExclVat = next.totalAmount - vat;
+      }
+    }
+  }
+  return next;
+}
+
+function brandingFromCompany(company?: CompanyInfo, branchCode?: string) {
   const logo = company?.logo;
   const name = company?.name || "";
   return {
     name,
     displayName: company?.displayName || name,
+    branchCode: branchCode || company?.branchCode || "",
     logo: isPlaceholderCompanyLogo(logo) ? null : logo || null,
     address: company?.address || "",
     phone: company?.phone || "",
@@ -78,21 +150,36 @@ function brandingFromCompany(company?: CompanyInfo) {
 
 export async function buildSaleReceiptDocument(
   data: PrintReceiptData,
-  process: ReceiptProcess,
+  _process: ReceiptProcess,
   printerType: PrinterType,
 ): Promise<ReceiptDocument> {
-  const resolved = await resolveReceiptTemplate({
-    receiptType: "sale",
-    deviceType: "mobile",
-    printerType: mapPrinterType(printerType),
-    process,
-  });
-  const layout = "compact";
+  // Sale — Standard is the layout each company saves (Adrace and others).
+  // Reprints use that same configuration, not a separate compact slip.
+  const resolved =
+    (await resolveReceiptTemplate({
+      receiptType: "sale",
+      deviceType: "desktop",
+      printerType: "desktop_silent",
+      process: "pos_sale",
+    })) ||
+    (await resolveReceiptTemplate({
+      receiptType: "sale",
+      deviceType: "mobile",
+      printerType: mapPrinterType(printerType),
+      process: "pos_sale",
+    }));
   const { template: resolvedTemplate, branding: apiBranding } =
-    resolveTemplateFromConfig(resolved, "sale", layout);
+    resolveTemplateFromConfig(resolved, "sale", "standard");
   const template = clampMobilePaperProfile(resolvedTemplate, printerType);
-  const branding = mergeBranding(brandingFromCompany(data.companyInfo), apiBranding);
-  const payload = mobilePrintDataToSalePayload(data);
+  const branchCode = await loadBranchCode();
+  const branding = mergeBranding(
+    brandingFromCompany(data.companyInfo, branchCode),
+    apiBranding,
+  );
+  const payload = await applyCompanyReceiptFields(
+    mobilePrintDataToSalePayload(data),
+    data,
+  );
   return buildReceiptDocumentFromTemplate(payload, template, branding);
 }
 
