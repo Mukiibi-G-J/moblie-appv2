@@ -2,9 +2,8 @@
 # No local Mac needed. Setup (once, in the Codemagic web UI):
 #   1. Team settings → Integrations → Developer Portal → connect an App Store Connect
 #      API key (App Manager role) and name the integration "ZentroApp ASC Key".
-#   2. App settings → Environment variables → create group "zentro_ios" with:
-#        GOOGLE_SERVICE_INFO_PLIST = base64 of ios/zentroapp/GoogleService-Info.plist
-#      (skip if you commit that file to the repo instead).
+#   2. codemagic.yaml settings → Code signing identities: generate an iOS Distribution
+#      certificate and fetch the App Store profile for com.zentroapp (uses the key above).
 #   3. App Store Connect app already exists (bundle ID com.zentroapp, Apple ID 6838609903).
 
 workflows:
@@ -15,8 +14,8 @@ workflows:
     integrations:
       app_store_connect: ZentroApp ASC Key
     environment:
-      groups:
-        - zentro_ios
+      # GoogleService-Info.plist is committed, so no variable group is needed.
+      # If you stop committing it, add a group with GOOGLE_SERVICE_INFO_PLIST here.
       ios_signing:
         distribution_type: app_store
         bundle_identifier: com.zentroapp
