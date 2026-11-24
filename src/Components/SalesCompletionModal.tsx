@@ -600,7 +600,9 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
               console.log('ℹ️ No printer available');
               showUserInfo(
                 'No printer found',
-                'Pair the printer in Android Bluetooth settings, open Printer configuration, then try again.',
+                Platform.OS === 'ios'
+                  ? 'Connect a Bluetooth printer in Printer configuration, then try again. The sale was completed.'
+                  : 'Pair the printer in Android Bluetooth settings, open Printer configuration, then try again.',
               );
             } else {
               console.log('🖨️ Printer available, starting receipt printing...');

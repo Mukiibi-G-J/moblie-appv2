@@ -183,6 +183,13 @@ class PrintService {
    */
   private async ensureBluetoothSession(savedType: PrinterType): Promise<void> {
     await this.bluetoothService.ensureConnectedFromStorage();
+    // The auto scan targets Android POS tablets whose built-in printer is a paired
+    // Bluetooth device. iPhones have no such printer, and starting a native
+    // CoreBluetooth scan in the middle of completing a sale crashed the iOS app.
+    // On iOS, only a printer the user connected in Printer configuration is used.
+    if (Platform.OS !== 'android') {
+      return;
+    }
     if (!this.bluetoothService.isPrinterConnected() && savedType === 'auto') {
       await this.bluetoothService.tryAutoConnectPosBuiltin();
     }
