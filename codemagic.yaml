@@ -5,8 +5,7 @@
 #   2. App settings → Environment variables → create group "zentro_ios" with:
 #        GOOGLE_SERVICE_INFO_PLIST = base64 of ios/zentroapp/GoogleService-Info.plist
 #      (skip if you commit that file to the repo instead).
-#   3. Create the app in App Store Connect with bundle ID com.zentroapp, then put its
-#      numeric Apple ID in APP_STORE_APPLE_ID below.
+#   3. App Store Connect app already exists (bundle ID com.zentroapp, Apple ID 6838609903).
 
 workflows:
   ios-testflight:
@@ -25,7 +24,7 @@ workflows:
         XCODE_WORKSPACE: "ios/zentroapp.xcworkspace"
         XCODE_SCHEME: "zentroapp"
         BUNDLE_ID: "com.zentroapp"
-        APP_STORE_APPLE_ID: 0000000000 # TODO: replace with the app's Apple ID from App Store Connect → App Information
+        APP_STORE_APPLE_ID: 6838609903 # "ZentroApp: Business Management" in App Store Connect
       node: 20
       xcode: latest
       cocoapods: 1.16.2
