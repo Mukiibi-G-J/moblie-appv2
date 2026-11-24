@@ -1,6 +1,7 @@
-import React, {useCallback} from 'react';
+import React, {useCallback, useRef} from 'react';
 import {
   Modal,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -34,15 +35,40 @@ const ChooseActionSheet: React.FC<ChooseActionSheetProps> = ({
 }) => {
   const {colors} = useTheme();
 
+  /**
+   * iOS cannot present another modal (edit form, alert, picker) while this one is
+   * still fading out; doing so leaves an invisible layer that blocks all touches.
+   * On iOS the chosen action is parked here and run from Modal.onDismiss, with a
+   * timeout fallback in case the parent unmounts the sheet instead of hiding it.
+   */
+  const pendingActionRef = useRef<(() => void) | null>(null);
+  const fallbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const runPendingAction = useCallback(() => {
+    if (fallbackTimerRef.current) {
+      clearTimeout(fallbackTimerRef.current);
+      fallbackTimerRef.current = null;
+    }
+    const pending = pendingActionRef.current;
+    pendingActionRef.current = null;
+    pending?.();
+  }, []);
+
   const handleActionPress = useCallback(
     (action: ChooseActionItem) => {
+      if (Platform.OS === 'ios') {
+        pendingActionRef.current = action.onPress;
+        fallbackTimerRef.current = setTimeout(runPendingAction, 600);
+        onClose();
+        return;
+      }
       onClose();
       // Defer so the modal can dismiss before the action opens another UI.
       requestAnimationFrame(() => {
         action.onPress();
       });
     },
-    [onClose],
+    [onClose, runPendingAction],
   );
 
   return (
@@ -50,6 +76,7 @@ const ChooseActionSheet: React.FC<ChooseActionSheetProps> = ({
       visible={visible}
       transparent
       animationType="fade"
+      onDismiss={runPendingAction}
       onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose}>
         <Pressable

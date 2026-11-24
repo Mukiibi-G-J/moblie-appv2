@@ -1306,7 +1306,10 @@ const EditItemModal = ({
             onPress: async () => {
               try {
                 console.log('User chose gallery...');
-                // Sunmi module disabled, gallery should work now
+                // iOS refuses to present the picker while the alert is still dismissing.
+                if (Platform.OS === 'ios') {
+                  await new Promise(resolve => setTimeout(resolve, 350));
+                }
                 await openNativeGallery();
               } catch (libraryError) {
                 console.error('Gallery error:', libraryError);

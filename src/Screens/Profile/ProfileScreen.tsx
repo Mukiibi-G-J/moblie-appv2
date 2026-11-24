@@ -299,9 +299,13 @@ const ProfileScreen = () => {
     if (uploading) {
       return;
     }
+    // iOS refuses to present the picker while the alert is still dismissing.
+    const afterAlert = (fn: () => Promise<void>) => () => {
+      setTimeout(() => void fn(), Platform.OS === 'ios' ? 350 : 0);
+    };
     Alert.alert('Profile picture', 'Choose a source', [
-      {text: 'Photo library', onPress: () => void pickFromLibrary()},
-      {text: 'Take photo', onPress: () => void pickFromCamera()},
+      {text: 'Photo library', onPress: afterAlert(pickFromLibrary)},
+      {text: 'Take photo', onPress: afterAlert(pickFromCamera)},
       {text: 'Cancel', style: 'cancel'},
     ]);
   };
