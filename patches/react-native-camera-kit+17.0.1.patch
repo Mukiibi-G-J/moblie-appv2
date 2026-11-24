@@ -7,11 +7,11 @@ index 135a383..8f5c2fd 100644
  
      private func applyDeferredStartConfiguration() {
 -        guard #available(iOS 26.0, *) else { return }
-+        // isDeferredStartSupported / isDeferredStartEnabled require the iOS 18+ SDK
-+        // (Xcode 16+). Building with Xcode 15 / iOS 17 SDK cannot reference those
-+        // members even inside `#available`, so this is a no-op on older toolchains.
-+        #if compiler(>=6.0)
-+        guard #available(iOS 18.0, *) else { return }
++        // isDeferredStartSupported / isDeferredStartEnabled are iOS 26 APIs (iOS 26 SDK,
++        // Xcode 26 / Swift 6.2+). Older toolchains cannot reference those members even
++        // inside `#available`, so this is a no-op when built with Xcode 16 or earlier.
++        #if compiler(>=6.2)
++        guard #available(iOS 26.0, *) else { return }
  
          let enableDeferredStart = deferredStartEnabled
  
