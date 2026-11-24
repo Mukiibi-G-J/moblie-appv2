@@ -36,7 +36,13 @@ workflows:
       - name: Install JS dependencies (runs patch-package)
         # @finan-me/react-native-thermal-printer declares peer react-native >=0.76.9 while the
         # app is on 0.76.1; the lockfile was created with legacy peer deps, so install the same way.
-        script: npm ci --legacy-peer-deps
+        # --ignore-scripts: postinstall-postinstall re-runs "postinstall" with Yarn whenever Yarn
+        # exists (it does on Codemagic Macs) and Yarn fails in this npm project. The only other
+        # install scripts are fsevents and protobufjs, which the build doesn't need. Apply our
+        # patches explicitly instead.
+        script: |
+          npm ci --legacy-peer-deps --ignore-scripts
+          npx patch-package
 
       - name: Add GoogleService-Info.plist
         script: |
