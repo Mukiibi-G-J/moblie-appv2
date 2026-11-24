@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>Zentroapp</string>
+	<string>ZentroApp</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -17,11 +17,13 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.0</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSAppTransportSecurity</key>
@@ -42,6 +44,12 @@
 	<string>Zentro needs Bluetooth to find and connect to nearby receipt printers.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>Zentro needs Bluetooth to find and connect to nearby receipt printers.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Zentro uses the camera to scan product barcodes and take photos of your items.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Zentro lets you choose photos from your library for products, your business logo and your profile.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Zentro saves receipts and reports you export to your photo library.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>Zentro uses your contacts so you can quickly add customers from your address book.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
@@ -72,6 +80,10 @@
 		<string>Poppins-SemiBoldItalic.ttf</string>
 		<string>Poppins-Thin.ttf</string>
 		<string>Poppins-ThinItalic.ttf</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
 	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>

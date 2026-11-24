@@ -1,0 +1,81 @@
+# Codemagic CI — builds the iOS app on a cloud Mac and uploads it to TestFlight.
+# No local Mac needed. Setup (once, in the Codemagic web UI):
+#   1. Team settings → Integrations → Developer Portal → connect an App Store Connect
+#      API key (App Manager role) and name the integration "ZentroApp ASC Key".
+#   2. App settings → Environment variables → create group "zentro_ios" with:
+#        GOOGLE_SERVICE_INFO_PLIST = base64 of ios/zentroapp/GoogleService-Info.plist
+#      (skip if you commit that file to the repo instead).
+#   3. Create the app in App Store Connect with bundle ID com.zentroapp, then put its
+#      numeric Apple ID in APP_STORE_APPLE_ID below.
+
+workflows:
+  ios-testflight:
+    name: iOS → TestFlight
+    instance_type: mac_mini_m2
+    max_build_duration: 90
+    integrations:
+      app_store_connect: ZentroApp ASC Key
+    environment:
+      groups:
+        - zentro_ios
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.zentroapp
+      vars:
+        XCODE_WORKSPACE: "ios/zentroapp.xcworkspace"
+        XCODE_SCHEME: "zentroapp"
+        BUNDLE_ID: "com.zentroapp"
+        APP_STORE_APPLE_ID: 0000000000 # TODO: replace with the app's Apple ID from App Store Connect → App Information
+      node: 20
+      xcode: latest
+      cocoapods: 1.16.2
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: "ios-v*"
+    scripts:
+      - name: Install JS dependencies (runs patch-package)
+        script: npm ci
+
+      - name: Add GoogleService-Info.plist
+        script: |
+          PLIST="ios/zentroapp/GoogleService-Info.plist"
+          if [ -f "$PLIST" ]; then
+            echo "Using committed $PLIST"
+          elif [ -n "$GOOGLE_SERVICE_INFO_PLIST" ]; then
+            echo "$GOOGLE_SERVICE_INFO_PLIST" | base64 --decode > "$PLIST"
+            echo "Wrote $PLIST from environment variable"
+          else
+            echo "ERROR: $PLIST is missing. Commit it or set GOOGLE_SERVICE_INFO_PLIST (base64) in the zentro_ios group."
+            exit 1
+          fi
+
+      - name: Install CocoaPods
+        script: cd ios && pod install --repo-update
+
+      - name: Set up code signing
+        script: xcode-project use-profiles
+
+      - name: Set build number (latest TestFlight build + 1)
+        script: |
+          LATEST=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID" || echo 0)
+          NEXT=$((LATEST + 1))
+          echo "Build number: $NEXT"
+          cd ios && agvtool new-version -all "$NEXT"
+
+      - name: Build signed .ipa
+        script: |
+          xcode-project build-ipa \
+            --workspace "$XCODE_WORKSPACE" \
+            --scheme "$XCODE_SCHEME"
+
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.dSYM
+
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
