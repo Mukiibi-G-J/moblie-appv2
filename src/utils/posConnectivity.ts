@@ -40,14 +40,47 @@ export function setNetInfoConnected(connected: boolean) {
 }
 
 export function setServerReachable(reachable: boolean) {
+  if (serverReachable === reachable) {
+    return;
+  }
   serverReachable = reachable;
+  notifyConnectivityListeners();
 }
 
+/**
+ * Online only when the device has a link and the last sync ping reached the API.
+ * Simulated offline stays offline even if both are true.
+ */
 export function getEffectiveIsOnline(): boolean {
   if (getSimulateOfflinePos()) {
     return false;
   }
-  return netInfoConnected;
+  return netInfoConnected && serverReachable;
+}
+
+/** True when checkout should queue locally instead of showing a hard failure. */
+export function isCheckoutNetworkFailure(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+  const err = error as {
+    code?: unknown;
+    message?: unknown;
+    response?: unknown;
+    isAxiosError?: boolean;
+  };
+  const code = String(err.code ?? '');
+  if (code === 'SIMULATED_OFFLINE') {
+    return true;
+  }
+  if (/ERR_NETWORK|ECONNABORTED|ETIMEDOUT|ENOTFOUND|ECONNREFUSED/i.test(code)) {
+    return true;
+  }
+  const message = typeof err.message === 'string' ? err.message : '';
+  if (/network error|timeout|failed to fetch|cannot reach/i.test(message)) {
+    return true;
+  }
+  return Boolean(err.isAxiosError && err.response == null);
 }
 
 export function getServerReachable(): boolean {

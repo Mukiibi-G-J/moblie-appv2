@@ -595,6 +595,16 @@ const MoreMenu: React.FC = () => {
             onPress: () => navigate('BusinessDetails', undefined),
           },
           {
+            key: 'generalSetup',
+            label: 'General setup',
+            icon: icons.setting,
+            visible:
+              canManageCompany ||
+              hasAnyPageAccess('GeneralLedgerSetupCard') ||
+              canAccessMobileScreen(['GeneralLedgerSetupCard']),
+            onPress: () => navigate('GeneralLedgerSetup', undefined),
+          },
+          {
             key: 'userManagement',
             label: constants.screens.userManagement,
             icon: icons.profile,
@@ -630,6 +640,20 @@ const MoreMenu: React.FC = () => {
             icon: icons.setting,
             visible: true,
             onPress: () => navigate('Settings', undefined),
+          },
+          {
+            key: 'printerConfig',
+            label: 'Printer configuration',
+            icon: icons.printer,
+            visible: true,
+            onPress: () => navigate('PrinterConfig', undefined),
+          },
+          {
+            key: 'receiptLayout',
+            label: 'Receipt layout',
+            icon: icons.printer,
+            visible: true,
+            onPress: () => navigate('ReceiptLayout', undefined),
           },
           {
             key: 'nfcTest',
@@ -680,7 +704,7 @@ const MoreMenu: React.FC = () => {
         rows: section.rows.filter(row => row.visible),
       }))
       .filter(section => section.rows.length > 0);
-  }, [isModuleVisible, hasAnyPageAccess, canAccessMobileNav, canManageCompany, logout, handleSupportPress, handleAppearancePress, appearanceLabel]);
+  }, [isModuleVisible, hasAnyPageAccess, canAccessMobileNav, canAccessMobileScreen, canManageCompany, logout, handleSupportPress, handleAppearancePress, appearanceLabel]);
 
   const openSection = useMemo(
     () => menuSections.find(section => section.key === openSectionKey) ?? null,

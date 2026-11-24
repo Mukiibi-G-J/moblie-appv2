@@ -11,9 +11,8 @@ import {COLORS, FONTS} from '../constants';
 function ErrorCard({text1, text2}: ToastConfigParams<any>) {
   return (
     <View style={styles.errorCard} accessibilityRole="alert">
-      <Text style={styles.errorEyebrow}>Error</Text>
       {text1 ? (
-        <Text style={styles.errorTitle} numberOfLines={2}>
+        <Text style={styles.errorTitle} numberOfLines={4}>
           {text1}
         </Text>
       ) : null}
@@ -106,15 +105,6 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 8,
     elevation: 6,
-  },
-  errorEyebrow: {
-    ...FONTS.body5,
-    fontSize: 11,
-    fontWeight: '800',
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-    color: 'rgba(255,255,255,0.85)',
-    marginBottom: 4,
   },
   errorTitle: {
     ...FONTS.body3,

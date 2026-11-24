@@ -81,8 +81,8 @@ function appendNode(
         bytes.push(0x1d, 0x56, 0x00);
         break;
       }
-      // Tear-bar head sits above the edge. Feed the website and contact out.
-      for (let i = 0; i < 5; i++) {
+      // Two lines clear the tear bar without a blank tail after the footer.
+      for (let i = 0; i < 2; i++) {
         bytes.push(0x0a);
       }
       break;

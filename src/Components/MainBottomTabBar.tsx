@@ -2,13 +2,13 @@ import React from 'react';
 import {
   View,
   Text,
-  TouchableOpacity,
+  Pressable,
   Image,
   StyleSheet,
   useWindowDimensions,
 } from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import {COLORS, FONTS, icons, constants} from '../constants';
+import {COLORS, FONTS, icons, constants, ICON_BUTTON_QUICK_PRESS} from '../constants';
 import {
   constrainedWidthStyle,
   TAB_BAR_CONTENT_MAX_WIDTH,
@@ -34,10 +34,10 @@ const TabButton: React.FC<TabButtonProps> = ({
   const activeBg = isDark ? 'rgba(255,255,255,0.08)' : '#E8EAED';
   const accent = COLORS.primary;
   return (
-    <TouchableOpacity
-      activeOpacity={0.65}
+    <Pressable
+      {...ICON_BUTTON_QUICK_PRESS}
       onPress={onPress}
-      style={styles.tabTouchable}
+      style={({pressed}) => [styles.tabTouchable, pressed && {opacity: 0.65}]}
       accessibilityRole="tab"
       accessibilityState={{selected: isFocused}}
       accessibilityLabel={label}>
@@ -67,7 +67,7 @@ const TabButton: React.FC<TabButtonProps> = ({
           {label}
         </Text>
       </View>
-    </TouchableOpacity>
+      </Pressable>
   );
 };
 

@@ -347,10 +347,8 @@ const ItemFormModal: React.FC<ItemFormModalProps> = ({
       if (response && response.data) {
         Toast.show({
           type: 'success',
-          text1: 'Success',
-          text2: isEditMode
-            ? 'Item updated successfully'
-            : 'Item created successfully',
+          text1: isEditMode ? 'Item updated' : 'Item created',
+          visibilityTime: 2000,
         });
         onSave(response.data);
         onClose();

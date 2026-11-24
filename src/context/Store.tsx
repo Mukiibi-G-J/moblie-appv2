@@ -15,15 +15,24 @@ import {
   readCachedRoleCentreSession,
   writeCachedRoleCentreSession,
   clearCachedRoleCentreSession,
+  impersonateUser,
+  exitImpersonationAudit,
   type CachedRoleCentreSession,
 } from '../services/auth.services';
 import {jwtDecode} from 'jwt-decode';
 import Toast from 'react-native-toast-message';
 import {
+  AuthImpersonation,
   AuthState,
   DecodedToken,
   defaultUserJwtPermissions,
 } from '../types/auth';
+import {
+  clearImpersonationStash,
+  readImpersonationMeta,
+  restoreAdminSession,
+  stashAdminSession,
+} from '../utils/impersonation';
 import {AUTH_FORCE_LOGOUT_EVENT} from '../utils/authEvents';
 import {
   RESTAURANT_PIN_SETUP_PENDING_KEY,
@@ -60,6 +69,11 @@ export interface AppContextType {
     tenant?: string;
   }) => Promise<any>;
   loginWithTokens: (access: string, refresh?: string) => Promise<void>;
+  /** debug_admin only. Pauses the admin session and opens the app as `userId`. */
+  startImpersonation: (userId: number) => Promise<AuthImpersonation>;
+  /** Restore the stashed debug_admin session. */
+  stopImpersonation: () => Promise<void>;
+  impersonation: AuthImpersonation | null;
   logout: () => Promise<void>;
   clearAuthState: () => void;
   setActiveBranch: (branch: BranchValue | null) => Promise<void>;
@@ -197,6 +211,9 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
   const [cartItems, setCartItems] = useState([]);
   const [selectedTab, setSelectedTab] = useState('Home');
   const [sessionHydrated, setSessionHydrated] = useState(false);
+  const [impersonation, setImpersonation] = useState<AuthImpersonation | null>(
+    null,
+  );
 
   const updateLocalCurrencyCode = useCallback((code: string) => {
     const normalized =
@@ -481,7 +498,11 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
   }, []);
 
   const hydrateSessionFromTokens = useCallback(
-    async (access: string, refresh?: string) => {
+    async (
+      access: string,
+      refresh?: string,
+      options?: {freshIdentity?: boolean; skipDeviceSideEffects?: boolean},
+    ) => {
       const decodedToken = jwtDecode(access) as DecodedToken;
       const user = mapTokenToAuthState(decodedToken);
       syncLocalCurrencyCode(user.localCurrencyCode);
@@ -516,7 +537,10 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
       }));
 
       // Overlay cached Role Centre nav so the full catalog never flashes.
-      const cached = await readCachedRoleCentreSession();
+      // A login-as switch must not reuse the previous user's cached nav.
+      const cached = options?.freshIdentity
+        ? null
+        : await readCachedRoleCentreSession();
       const withRoleCentre = applyCachedRoleCentre(user, cached);
 
       // Authenticate immediately so navigation can leave the sign-in stack.
@@ -533,7 +557,9 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
         return;
       }
 
-      await autoRegisterRestaurantDeviceIfEligible(withRoleCentre);
+      if (!options?.skipDeviceSideEffects) {
+        await autoRegisterRestaurantDeviceIfEligible(withRoleCentre);
+      }
 
       const enableMultiple = await syncBranchFlagsFromSetup(enableMultipleJwt);
       await applyGlobalDimensionFromJwt(decodedToken);
@@ -543,12 +569,16 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
         requireSelectionAfterTokenIssue: true,
       });
 
-      const cachedAvatar = await readCachedAvatarUrl();
+      const cachedAvatar = options?.freshIdentity
+        ? null
+        : await readCachedAvatarUrl();
       if (cachedAvatar) {
         setAuth((prev) => ({...prev, avatar_url: cachedAvatar}));
       }
 
-      void syncDevicePushTokenWithBackend();
+      if (!options?.skipDeviceSideEffects) {
+        void syncDevicePushTokenWithBackend();
+      }
       void refreshRoleCentreSession();
     },
     [
@@ -573,8 +603,13 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
             console.log('Token is expired, clearing auth state');
             clearAuthState();
             await AsyncStorage.removeItem('accessToken');
+            await clearImpersonationStash();
+            setImpersonation(null);
             return;
           }
+
+          const meta = await readImpersonationMeta();
+          setImpersonation(meta);
 
           // Map the decoded token to our expected structure
           const user = mapTokenToAuthState(decodedToken as DecodedToken);
@@ -632,9 +667,13 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
           console.log('Error decoding token, clearing auth state:', error);
           clearAuthState();
           await AsyncStorage.removeItem('accessToken');
+          await clearImpersonationStash();
+          setImpersonation(null);
         }
       } else {
         console.log('No existing token found');
+        await clearImpersonationStash();
+        setImpersonation(null);
         await hydrateBranchSession();
       }
     };
@@ -700,6 +739,76 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
     [hydrateSessionFromTokens],
   );
 
+  const prepareIdentitySwitch = useCallback(async () => {
+    await clearCachedRoleCentreSession();
+    await AsyncStorage.removeItem(USER_AVATAR_STORAGE_KEY);
+    await AsyncStorage.multiRemove([
+      BRANCH_SESSION_KEYS.activeBranch,
+      BRANCH_SESSION_KEYS.activeBranchId,
+      'cartItems',
+    ]);
+    setBranchSessionState(prev => ({
+      ...prev,
+      active_branch: null,
+      active_branch_id: null,
+    }));
+    setCartItems([]);
+    DeviceEventEmitter.emit('auth-identity-switch');
+    clearQueryCache();
+    setSelectedTab('Home');
+  }, []);
+
+  const startImpersonation = useCallback(
+    async (userId: number) => {
+      const data = await impersonateUser(userId);
+      const adminAccess = await AsyncStorage.getItem('accessToken');
+      const adminRefresh = await AsyncStorage.getItem('refreshToken');
+      await stashAdminSession(data.impersonation, adminAccess, adminRefresh);
+      setImpersonation(data.impersonation);
+      try {
+        await prepareIdentitySwitch();
+        await hydrateSessionFromTokens(data.access, data.refresh, {
+          freshIdentity: true,
+          skipDeviceSideEffects: true,
+        });
+      } catch (error) {
+        const restored = await restoreAdminSession();
+        setImpersonation(null);
+        if (restored) {
+          const access = await AsyncStorage.getItem('accessToken');
+          const refresh =
+            (await AsyncStorage.getItem('refreshToken')) || undefined;
+          if (access) {
+            await hydrateSessionFromTokens(access, refresh, {freshIdentity: true});
+          }
+        }
+        throw error;
+      }
+      return data.impersonation;
+    },
+    [hydrateSessionFromTokens, prepareIdentitySwitch],
+  );
+
+  const stopImpersonation = useCallback(async () => {
+    await exitImpersonationAudit();
+    const restored = await restoreAdminSession();
+    setImpersonation(null);
+    if (!restored) {
+      await AsyncStorage.removeItem('accessToken');
+      await AsyncStorage.removeItem('refreshToken');
+      clearAuthState();
+      return;
+    }
+    const access = await AsyncStorage.getItem('accessToken');
+    const refresh = (await AsyncStorage.getItem('refreshToken')) || undefined;
+    if (!access) {
+      clearAuthState();
+      return;
+    }
+    await prepareIdentitySwitch();
+    await hydrateSessionFromTokens(access, refresh, {freshIdentity: true});
+  }, [clearAuthState, hydrateSessionFromTokens, prepareIdentitySwitch]);
+
   const logout = useCallback(async () => {
     // Clear auth state
     setAuth(getEmptyAuthState());
@@ -710,6 +819,8 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
     await AsyncStorage.removeItem('accessToken');
     await AsyncStorage.removeItem('refreshToken');
     await AsyncStorage.removeItem('userData');
+    await clearImpersonationStash();
+    setImpersonation(null);
     setCartItems([]);
     await AsyncStorage.removeItem('cartItems');
     await Promise.all([
@@ -752,6 +863,9 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
       sessionHydrated,
       login,
       loginWithTokens,
+      startImpersonation,
+      stopImpersonation,
+      impersonation,
       logout,
       clearAuthState,
       setActiveBranch,
@@ -771,6 +885,9 @@ export const AppProvider = ({children}: {children: React.ReactNode}) => {
       refreshRoleCentreSession,
       login,
       loginWithTokens,
+      startImpersonation,
+      stopImpersonation,
+      impersonation,
       logout,
       setActiveBranch,
       setBranchSelectionPending,

@@ -29,10 +29,15 @@ const ROW_KEYWORDS: Record<string, string> = {
   prepayments: 'deposits prepayment advance',
   restaurant: 'dining food service',
   companyBilling: 'billing business company details subscription',
+  generalSetup:
+    'general ledger setup gl setup g/l setup vat currency branches',
   userManagement: 'users staff roles',
   myProfile: 'profile account photo',
   syncQueue: 'sync offline queue outbox',
-  settings: 'settings preferences',
+  settings: 'settings preferences printer print',
+  printerConfig: 'printer print receipt bluetooth usb sunmi thermal',
+  receiptLayout:
+    'receipt layout template look design format slip how the receipt looks',
   nfcTest: 'nfc tap card',
   availableModules: 'modules plan subscription',
   'restaurant-pos': 'sale register order tables checks',

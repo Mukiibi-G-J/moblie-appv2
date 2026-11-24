@@ -33,6 +33,7 @@ import type {
 } from '../../@types/types.dto';
 import type {ItemJournalLine} from './ItemJournalListItem';
 import {normalizeLine} from './itemJournalUtils';
+import {parseSaleQuantity} from '../../utils/saleQuantity';
 
 const ENTRY_OPTIONS: {value: ItemJournalEntryType; label: string}[] = [
   {value: 'PositiveAdjustment', label: 'Increase'},
@@ -194,6 +195,8 @@ function mapCatalogHit(it: Record<string, unknown>): ItemSearchHit {
   };
 }
 
+type PersistLineResult = 'saved' | 'skipped' | 'failed';
+
 interface ItemJournalFormModalProps {
   visible: boolean;
   onClose: () => void;
@@ -317,6 +320,8 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
   const [entryTypePickerVisible, setEntryTypePickerVisible] = useState(false);
 
   const savingRef = useRef(false);
+  const persistInFlightRef = useRef<Promise<PersistLineResult> | null>(null);
+  const closeInFlightRef = useRef(false);
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedRef = useRef<string>('');
   const persistedIdRef = useRef<number | null>(null);
@@ -336,17 +341,21 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
   });
 
   persistedIdRef.current = persistedId;
-  formRef.current = {
-    selectedItemNo,
-    selectedItemUomId,
-    entryType,
-    efrisStockInType,
-    efrisAdjustType,
-    quantityStr,
-    unitCostStr,
-    description,
-    dateStr,
-  };
+  // While close is flushing the focused field, a render must not put the
+  // previous state back over the text the user just typed.
+  if (!closeInFlightRef.current) {
+    formRef.current = {
+      selectedItemNo,
+      selectedItemUomId,
+      entryType,
+      efrisStockInType,
+      efrisAdjustType,
+      quantityStr,
+      unitCostStr,
+      description,
+      dateStr,
+    };
+  }
 
   const isPersisted = persistedId != null;
   const canWrite = isPersisted ? canEdit : canCreate;
@@ -418,7 +427,7 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
   );
 
   const persistLine = useCallback(
-    async (
+    (
       overrides: Partial<{
         item: string;
         entry_type: ItemJournalEntryType;
@@ -430,110 +439,126 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
         efris_stock_in_type: string;
         efris_adjust_type: string;
       }> = {},
-    ) => {
-      if (!visible || savingRef.current || !userId) {
-        return;
-      }
-      const current = formRef.current;
-      const itemNo = (overrides.item ?? current.selectedItemNo).trim();
-      const uomId =
-        overrides.item_unit_of_measure !== undefined
-          ? overrides.item_unit_of_measure
-          : current.selectedItemUomId;
-      const nextEntryType = overrides.entry_type ?? current.entryType;
-      const qty =
-        overrides.quantity !== undefined
-          ? overrides.quantity
-          : parseInt(current.quantityStr.replace(/,/g, ''), 10);
-      const unitCost =
-        overrides.unit_cost !== undefined
-          ? overrides.unit_cost
-          : parseFloat(current.unitCostStr.replace(/,/g, '')) || 0;
-      const nextDescription =
-        overrides.description !== undefined
-          ? overrides.description
-          : current.description.trim();
-      const nextDate =
-        overrides.date !== undefined
-          ? overrides.date
-          : current.dateStr.trim() || todayISODate();
-      const nextStockIn =
-        overrides.efris_stock_in_type !== undefined
-          ? overrides.efris_stock_in_type
-          : current.efrisStockInType;
-      const nextAdjust =
-        overrides.efris_adjust_type !== undefined
-          ? overrides.efris_adjust_type
-          : current.efrisAdjustType;
+    ): Promise<PersistLineResult> => {
+      const previous = persistInFlightRef.current;
+      const next = (async (): Promise<PersistLineResult> => {
+        if (previous) {
+          try {
+            await previous;
+          } catch {
+            // The earlier save already reported its own result.
+          }
+        }
+        if (!visible || !userId) {
+          return 'skipped';
+        }
+        const current = formRef.current;
+        const itemNo = (overrides.item ?? current.selectedItemNo).trim();
+        const uomId =
+          overrides.item_unit_of_measure !== undefined
+            ? overrides.item_unit_of_measure
+            : current.selectedItemUomId;
+        const nextEntryType = overrides.entry_type ?? current.entryType;
+        const qty =
+          overrides.quantity !== undefined
+            ? overrides.quantity
+            : parseSaleQuantity(current.quantityStr) ?? 0;
+        const unitCost =
+          overrides.unit_cost !== undefined
+            ? overrides.unit_cost
+            : parseFloat(current.unitCostStr.replace(/,/g, '')) || 0;
+        const nextDescription =
+          overrides.description !== undefined
+            ? overrides.description
+            : current.description.trim();
+        const nextDate =
+          overrides.date !== undefined
+            ? overrides.date
+            : current.dateStr.trim() || todayISODate();
+        const nextStockIn =
+          overrides.efris_stock_in_type !== undefined
+            ? overrides.efris_stock_in_type
+            : current.efrisStockInType;
+        const nextAdjust =
+          overrides.efris_adjust_type !== undefined
+            ? overrides.efris_adjust_type
+            : current.efrisAdjustType;
 
-      const existingId = persistedIdRef.current;
-      if (existingId != null ? !canEdit : !canCreate) {
-        return;
-      }
-      if (!itemNo && existingId == null) {
-        return;
-      }
-      if (!Number.isFinite(qty) || qty <= 0) {
-        return;
-      }
-      if (
-        existingId == null &&
-        (uomId == null || typeof uomId !== 'number' || !Number.isFinite(uomId))
-      ) {
-        return;
-      }
+        const existingId = persistedIdRef.current;
+        if (existingId != null ? !canEdit : !canCreate) {
+          return 'skipped';
+        }
+        if (!itemNo && existingId == null) {
+          return 'skipped';
+        }
+        if (!Number.isFinite(qty) || qty <= 0) {
+          return 'skipped';
+        }
+        if (
+          existingId == null &&
+          (uomId == null || typeof uomId !== 'number' || !Number.isFinite(uomId))
+        ) {
+          return 'skipped';
+        }
 
-      const snapshot = JSON.stringify({
-        item: itemNo,
-        entry_type: nextEntryType,
-        quantity: qty,
-        unit_cost: unitCost,
-        description: nextDescription,
-        date: nextDate,
-        item_unit_of_measure: uomId,
-        efris_stock_in_type: efrisEnabled ? nextStockIn : '',
-        efris_adjust_type: efrisEnabled ? nextAdjust : '',
-      });
-      if (snapshot === lastSavedRef.current) {
-        return;
-      }
+        const snapshot = JSON.stringify({
+          item: itemNo,
+          entry_type: nextEntryType,
+          quantity: qty,
+          unit_cost: unitCost,
+          description: nextDescription,
+          date: nextDate,
+          item_unit_of_measure: uomId,
+          efris_stock_in_type: efrisEnabled ? nextStockIn : '',
+          efris_adjust_type: efrisEnabled ? nextAdjust : '',
+        });
+        if (snapshot === lastSavedRef.current) {
+          return 'skipped';
+        }
 
-      const payload: ItemJournalUpsertPayload = {
-        entry_type: nextEntryType,
-        quantity: qty,
-        unit_cost: unitCost,
-        unit_amount: unitCost,
-        description: nextDescription,
-        date: nextDate,
-        user: userId,
-        adjustment_type: lockedAdjustmentType,
-        ...(efrisEnabled
-          ? {
-              efris_stock_in_type:
-                nextEntryType === 'PositiveAdjustment' ? nextStockIn : '',
-              efris_adjust_type:
-                nextEntryType === 'NegativeAdjustment' ? nextAdjust : '',
-            }
-          : {}),
-      };
-      if (itemNo) {
-        payload.item = itemNo;
-      }
-      if (uomId != null && typeof uomId === 'number' && Number.isFinite(uomId)) {
-        payload.item_unit_of_measure = uomId;
-      }
-      if (existingId != null) {
-        payload.id = existingId;
-      }
+        const payload: ItemJournalUpsertPayload = {
+          entry_type: nextEntryType,
+          quantity: qty,
+          unit_cost: unitCost,
+          unit_amount: unitCost,
+          description: nextDescription,
+          date: nextDate,
+          user: userId,
+          adjustment_type: lockedAdjustmentType,
+          ...(efrisEnabled
+            ? {
+                efris_stock_in_type:
+                  nextEntryType === 'PositiveAdjustment' ? nextStockIn : '',
+                efris_adjust_type:
+                  nextEntryType === 'NegativeAdjustment' ? nextAdjust : '',
+              }
+            : {}),
+        };
+        if (itemNo) {
+          payload.item = itemNo;
+        }
+        if (uomId != null && typeof uomId === 'number' && Number.isFinite(uomId)) {
+          payload.item_unit_of_measure = uomId;
+        }
+        if (existingId != null) {
+          payload.id = existingId;
+        }
 
-      savingRef.current = true;
-      setIsSaving(true);
-      try {
-        const response = await upsertItemJournal(payload);
-        const saved = normalizeLine(
-          (response?.data ?? {}) as Record<string, unknown>,
-        );
-        if (saved) {
+        savingRef.current = true;
+        setIsSaving(true);
+        try {
+          const response = await upsertItemJournal(payload);
+          const saved = normalizeLine(
+            (response?.data ?? {}) as Record<string, unknown>,
+          );
+          if (!saved) {
+            Toast.show({
+              type: 'error',
+              text1: 'Save failed',
+              text2: 'The line could not be saved.',
+            });
+            return 'failed';
+          }
           setPersistedId(saved.id);
           persistedIdRef.current = saved.id;
           setDocumentNo(saved.document_no || '');
@@ -541,21 +566,32 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
           pendingUnitCostRef.current = null;
           onSaved(saved);
           flashSaved();
+          return 'saved';
+        } catch (e: unknown) {
+          const ax = e as {response?: {data?: {detail?: unknown}}; message?: string};
+          const d = ax?.response?.data;
+          const msg =
+            typeof d?.detail === 'string'
+              ? d.detail
+              : d?.detail && typeof d.detail === 'object'
+                ? JSON.stringify(d.detail)
+                : ax?.message || 'Save failed';
+          Toast.show({type: 'error', text1: 'Save failed', text2: msg});
+          return 'failed';
+        } finally {
+          savingRef.current = false;
+          setIsSaving(false);
         }
-      } catch (e: unknown) {
-        const ax = e as {response?: {data?: {detail?: unknown}}; message?: string};
-        const d = ax?.response?.data;
-        const msg =
-          typeof d?.detail === 'string'
-            ? d.detail
-            : d?.detail && typeof d.detail === 'object'
-              ? JSON.stringify(d.detail)
-              : ax?.message || 'Save failed';
-        Toast.show({type: 'error', text1: 'Save failed', text2: msg});
-      } finally {
-        savingRef.current = false;
-        setIsSaving(false);
-      }
+      })();
+
+      let task: Promise<PersistLineResult>;
+      task = next.finally(() => {
+        if (persistInFlightRef.current === task) {
+          persistInFlightRef.current = null;
+        }
+      });
+      persistInFlightRef.current = task;
+      return task;
     },
     [visible, userId, canCreate, canEdit, lockedAdjustmentType, efrisEnabled, onSaved, flashSaved],
   );
@@ -565,7 +601,7 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
       return;
     }
     const current = formRef.current;
-    const qty = parseInt(current.quantityStr.replace(/,/g, ''), 10);
+    const qty = parseSaleQuantity(current.quantityStr) ?? 0;
     if (!current.selectedItemNo.trim() || !Number.isFinite(qty) || qty <= 0) {
       Toast.show({
         type: 'error',
@@ -602,7 +638,10 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
             void (async () => {
               setIsPosting(true);
               try {
-                await persistLine();
+                const saved = await persistLine();
+                if (saved === 'failed') {
+                  return;
+                }
                 const id = persistedIdRef.current;
                 if (id == null) {
                   Toast.show({
@@ -841,6 +880,72 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
     Keyboard.dismiss();
   }, []);
 
+  const handleSavePress = useCallback(async () => {
+    const keyboardOpen = Keyboard.isVisible();
+    await new Promise<void>(resolve => {
+      let settled = false;
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        hideSub.remove();
+        clearTimeout(timer);
+        resolve();
+      };
+      const hideSub = Keyboard.addListener('keyboardDidHide', finish);
+      const timer = setTimeout(finish, keyboardOpen ? 250 : 0);
+      Keyboard.dismiss();
+    });
+    const result = await persistLine();
+    if (result === 'skipped' && lastSavedRef.current) {
+      flashSaved();
+    }
+  }, [persistLine, flashSaved]);
+
+  const requestClose = useCallback(() => {
+    if (isSearchPanelVisible) {
+      closeSearchPanel();
+      return;
+    }
+    if (closeInFlightRef.current) {
+      return;
+    }
+    closeInFlightRef.current = true;
+    void (async () => {
+      try {
+        // Blur writes the native field text into formRef. Wait until that
+        // happens before reading the form, or the save still sees the old value.
+        const keyboardOpen = Keyboard.isVisible();
+        await new Promise<void>(resolve => {
+          let settled = false;
+          const finish = () => {
+            if (settled) {
+              return;
+            }
+            settled = true;
+            hideSub.remove();
+            clearTimeout(timer);
+            resolve();
+          };
+          const hideSub = Keyboard.addListener('keyboardDidHide', finish);
+          const timer = setTimeout(finish, keyboardOpen ? 250 : 0);
+          Keyboard.dismiss();
+        });
+        let result = await persistLine();
+        while (persistInFlightRef.current) {
+          result = await persistInFlightRef.current;
+        }
+        if (result === 'failed') {
+          return;
+        }
+        onClose();
+      } finally {
+        closeInFlightRef.current = false;
+      }
+    })();
+  }, [isSearchPanelVisible, closeSearchPanel, persistLine, onClose]);
+
   const handleDateChange = useCallback(
     (event: {type?: string}, selectedDate?: Date) => {
       if (Platform.OS === 'android') {
@@ -906,7 +1011,7 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
         unit_cost: cost,
         item_unit_of_measure: uomId,
         quantity: persistedIdRef.current != null
-          ? parseInt(formRef.current.quantityStr.replace(/,/g, ''), 10)
+          ? parseSaleQuantity(formRef.current.quantityStr) ?? 0
           : 1,
       });
     },
@@ -945,18 +1050,12 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
       visible={visible}
       animationType="slide"
       transparent={false}
-      onRequestClose={() => {
-        if (isSearchPanelVisible) {
-          closeSearchPanel();
-          return;
-        }
-        onClose();
-      }}>
+      onRequestClose={requestClose}>
       <View style={[styles.pageRoot, themed.pageRoot]}>
         {isSearchPanelVisible ? null : (
         <View style={[styles.pageHeader, {paddingTop: topInset}]}>
           <QuickIconPressable
-            onPress={onClose}
+            onPress={requestClose}
             style={[styles.headerIconButton, themed.headerIconButton]}
             hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
             accessibilityLabel="Close">
@@ -967,12 +1066,23 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
             />
           </QuickIconPressable>
 
-          {canWrite && (isSaving || showSaved) ? (
-            <View style={styles.savePill} accessibilityLabel={isSaving ? 'Saving' : 'Saved'}>
-              <Text style={[styles.savePillText, themed.savePillText]}>
-                {isSaving ? 'Saving...' : 'Saved'}
+          {canWrite ? (
+            <TouchableOpacity
+              style={[
+                styles.savePill,
+                showSaved && !isSaving ? styles.savePillSaved : null,
+              ]}
+              onPress={() => void handleSavePress()}
+              disabled={isSaving}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={
+                isSaving ? 'Saving' : showSaved ? 'Saved' : 'Save'
+              }>
+              <Text style={styles.savePillText}>
+                {isSaving ? 'Saving' : showSaved ? 'Saved' : 'Save'}
               </Text>
-            </View>
+            </TouchableOpacity>
           ) : (
             <View style={styles.headerSpacer} />
           )}
@@ -1124,7 +1234,7 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
             {isPersisted ? editFormTitle : addFormTitle}
           </Text>
           <Text style={[styles.autoSaveHint, themed.autoSaveHint]}>
-            Changes save automatically when you leave a field
+            Tap Save to keep your changes. Leaving a field also saves.
           </Text>
 
           <View style={[styles.previewSection, themed.previewSection]}>
@@ -1324,8 +1434,18 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
                 style={[styles.input, themed.input]}
                 keyboardType="number-pad"
                 value={quantityStr}
-                onChangeText={setQuantityStr}
-                onBlur={() => void persistLine()}
+                onChangeText={value => {
+                  formRef.current.quantityStr = value;
+                  setQuantityStr(value);
+                }}
+                onBlur={event => {
+                  formRef.current.quantityStr = event.nativeEvent.text;
+                  if (closeInFlightRef.current) {
+                    return;
+                  }
+                  setQuantityStr(event.nativeEvent.text);
+                  void persistLine();
+                }}
                 placeholder="0"
                 placeholderTextColor={colors.placeholder}
                 editable={canWrite}
@@ -1383,7 +1503,9 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
                 keyboardType="decimal-pad"
                 value={unitCostStr}
                 onChangeText={text => {
-                  setUnitCostStr(formatUnitCostCommaInput(text));
+                  const formatted = formatUnitCostCommaInput(text);
+                  formRef.current.unitCostStr = formatted;
+                  setUnitCostStr(formatted);
                 }}
                 onFocus={() => {
                   const n = parseFloat(unitCostStr.replace(/,/g, ''));
@@ -1391,9 +1513,14 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
                     setUnitCostStr('');
                   }
                 }}
-                onBlur={() => {
-                  const n = parseFloat(unitCostStr.replace(/,/g, ''));
+                onBlur={event => {
+                  const typed = event.nativeEvent.text;
+                  formRef.current.unitCostStr = typed;
+                  const n = parseFloat(typed.replace(/,/g, ''));
                   const cost = Number.isFinite(n) && n > 0 ? n : 0;
+                  if (closeInFlightRef.current) {
+                    return;
+                  }
                   setUnitCostStr(formatUnitCostForInput(cost));
                   pendingUnitCostRef.current = cost;
                   void persistLine({unit_cost: cost});
@@ -1411,8 +1538,18 @@ const ItemJournalFormModal: React.FC<ItemJournalFormModalProps> = ({
                 multiline
                 numberOfLines={3}
                 value={description}
-                onChangeText={setDescription}
-                onBlur={() => void persistLine()}
+                onChangeText={value => {
+                  formRef.current.description = value;
+                  setDescription(value);
+                }}
+                onBlur={event => {
+                  formRef.current.description = event.nativeEvent.text;
+                  if (closeInFlightRef.current) {
+                    return;
+                  }
+                  setDescription(event.nativeEvent.text);
+                  void persistLine();
+                }}
                 placeholder="Optional notes"
                 placeholderTextColor={colors.placeholder}
                 editable={canWrite}
@@ -1529,15 +1666,21 @@ const styles = StyleSheet.create({
   },
   savePill: {
     minWidth: 72,
-    height: 48,
+    height: 36,
+    borderRadius: 999,
+    backgroundColor: COLORS.primary2,
     justifyContent: 'center',
-    alignItems: 'flex-end',
-    paddingHorizontal: 8,
+    alignItems: 'center',
+    paddingHorizontal: 18,
+  },
+  savePillSaved: {
+    backgroundColor: COLORS.success,
   },
   savePillText: {
     ...FONTS.body4,
     fontWeight: '600',
     fontSize: 15,
+    color: COLORS.white,
   },
   headerSpacer: {
     width: 72,

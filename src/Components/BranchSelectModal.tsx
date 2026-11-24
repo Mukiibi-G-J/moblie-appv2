@@ -19,7 +19,42 @@ import {
 } from '../services/branchProfile.service';
 import {shouldShowBranchSelectModal} from '../utils/branchSelection';
 import {navigationRef} from '../hooks/NavigationService';
+import {isSubscriptionExpiredError} from '../utils/subscriptionExpired';
 import {getPinSetupPending} from '../storage/restaurantDeviceStorage';
+
+const BILLING_ROUTES = new Set(['Subscription', 'SubscriptionMobileMoney']);
+
+function useCurrentRouteName(): string | undefined {
+  const [name, setName] = useState<string | undefined>(() =>
+    navigationRef.current?.getCurrentRoute()?.name,
+  );
+
+  useEffect(() => {
+    let unsub: (() => void) | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const attach = () => {
+      const nav = navigationRef.current;
+      if (!nav?.addListener) {
+        timer = setTimeout(attach, 200);
+        return;
+      }
+      const sync = () => setName(nav.getCurrentRoute()?.name);
+      sync();
+      unsub = nav.addListener('state', sync);
+    };
+
+    attach();
+    return () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      unsub?.();
+    };
+  }, []);
+
+  return name;
+}
 
 type BranchOption = {
   id: number;
@@ -52,10 +87,12 @@ const BranchSelectModal = () => {
   const [confirming, setConfirming] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
-  const showModal = shouldShowBranchSelectModal(
-    ctx?.branchSession,
-    Boolean(accessToken),
-  );
+  const routeName = useCurrentRouteName();
+  const onBillingScreen = routeName != null && BILLING_ROUTES.has(routeName);
+
+  const showModal =
+    shouldShowBranchSelectModal(ctx?.branchSession, Boolean(accessToken)) &&
+    !onBillingScreen;
 
   const multiBranchEnabled =
     ctx?.branchSession?.enable_multiple_branches === true;
@@ -107,6 +144,12 @@ const BranchSelectModal = () => {
         }
         setBranches([]);
         setSelectedId(null);
+        if (isSubscriptionExpiredError(e)) {
+          setLoadError(
+            'Your plan needs a payment before you can choose a branch.',
+          );
+          return;
+        }
         setLoadError(
           e instanceof Error ? e.message : 'Could not load branches.',
         );

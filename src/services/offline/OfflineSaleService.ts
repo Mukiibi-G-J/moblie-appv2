@@ -2,6 +2,7 @@ import {
   getAllBranches,
   getOrCreateDeviceId,
   listPendingOutbox,
+  nextOfflineReceiptNo,
   saveLocalSale,
 } from '../../db/sqlite';
 import {
@@ -16,8 +17,6 @@ import {resolveEffectiveBranchDimensionId} from '../../utils/effectiveBranch';
 import {randomUUID} from '../../utils/randomUuid';
 import type {CartItem} from '../../@types/types.dto';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
-let receiptSeq = 1;
 
 export type SaleSyncStatus = 'posted' | 'pending' | 'failed';
 
@@ -93,9 +92,7 @@ export async function completeOfflineSale(options: {
 }): Promise<CompleteOfflineSaleResult> {
   const localId = randomUUID();
   const systemId = randomUUID();
-  await getOrCreateDeviceId();
-  const shortDevice = (await getOrCreateDeviceId()).slice(0, 8);
-  const receiptNo = `OFF-${shortDevice}-${receiptSeq++}`;
+  const receiptNo = await nextOfflineReceiptNo(await getOrCreateDeviceId());
 
   const lines: CartLineForPayload[] = options.cartItems.map(cartItemToLine);
 

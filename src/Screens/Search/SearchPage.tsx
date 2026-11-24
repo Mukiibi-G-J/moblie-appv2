@@ -133,8 +133,9 @@ const SearchPage = () => {
       setSections([]);
       Toast.show({
         type: 'error',
-        text1: 'Search Error',
-        text2: 'Could not search the system. Please try again.',
+        text1: 'Couldn’t search',
+        text2: 'Try again.',
+        visibilityTime: 5000,
       });
     } finally {
       setIsSearching(false);
@@ -157,8 +158,8 @@ const SearchPage = () => {
     if (!searchMode.barcodeScannerEnabled) {
       Toast.show({
         type: 'info',
-        text1: 'Scanner Disabled',
-        text2: 'Enable barcode scanner in Settings to use camera scan.',
+        text1: 'Turn on the barcode scanner in Settings',
+        visibilityTime: 4000,
       });
       return;
     }

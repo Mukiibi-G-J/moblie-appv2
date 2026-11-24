@@ -38,7 +38,7 @@ export function posItemMaxSaleQuantity(
     return Number.MAX_SAFE_INTEGER;
   }
   const inventoryLimit = Number(item.inventory) || 0;
-  return Math.max(currentQty, inventoryLimit, 1);
+  return Math.max(currentQty, inventoryLimit);
 }
 
 export function buildSoldQuantityMaps(soldLines: CartItem[]): {

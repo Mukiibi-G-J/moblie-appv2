@@ -1,6 +1,6 @@
 import React, {useMemo, useState} from 'react';
-import {View, Text, TouchableOpacity, StyleSheet, Image} from 'react-native';
-import {COLORS, FONTS, icons} from '../../constants';
+import {View, Text, Pressable, StyleSheet, Image} from 'react-native';
+import {COLORS, FONTS, icons, ICON_BUTTON_QUICK_PRESS} from '../../constants';
 import {Customer} from '../../@types/customer';
 import {formatCurrencyCompact} from '../../utils/currency';
 import ChooseActionSheet, {
@@ -69,9 +69,12 @@ const CustomerListItem: React.FC<CustomerListItemProps> = ({
 
   return (
     <View>
-      <TouchableOpacity
-        activeOpacity={onEdit && !isGeneralCustomer ? 0.8 : 1}
-        style={styles.container}
+      <Pressable
+        {...ICON_BUTTON_QUICK_PRESS}
+        style={({pressed}) => [
+          styles.container,
+          pressed && onEdit && !isGeneralCustomer ? {opacity: 0.8} : null,
+        ]}
         onPress={onEdit && !isGeneralCustomer ? () => onEdit(customer) : undefined}>
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>{initials}</Text>
@@ -84,11 +87,14 @@ const CustomerListItem: React.FC<CustomerListItemProps> = ({
           <Text style={styles.secondaryText} numberOfLines={1}>
             {secondaryLine}
           </Text>
-          <TouchableOpacity
+          <Pressable
+            {...ICON_BUTTON_QUICK_PRESS}
             disabled={!hasBalance || !onBalancePress}
             onPress={() => onBalancePress?.(customer)}
-            activeOpacity={hasBalance ? 0.7 : 1}
-            style={styles.balanceLinkWrap}>
+            style={({pressed}) => [
+              styles.balanceLinkWrap,
+              pressed && hasBalance ? {opacity: 0.7} : null,
+            ]}>
             <Text
               style={[
                 styles.balanceText,
@@ -96,20 +102,21 @@ const CustomerListItem: React.FC<CustomerListItemProps> = ({
               ]}>
               Balance: {formattedBalance}
             </Text>
-          </TouchableOpacity>
+          </Pressable>
         </View>
 
         {(onEdit || onDelete) && (
-          <TouchableOpacity
+          <Pressable
+            {...ICON_BUTTON_QUICK_PRESS}
             onPress={() => setActionsVisible(true)}
-            style={styles.actionButton}
+            style={({pressed}) => [styles.actionButton, pressed && {opacity: 0.7}]}
             hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
             accessibilityRole="button"
             accessibilityLabel="Choose an action">
             <Image source={icons.menu1} style={styles.actionIcon} resizeMode="contain" />
-          </TouchableOpacity>
+          </Pressable>
         )}
-      </TouchableOpacity>
+      </Pressable>
 
       <ChooseActionSheet
         visible={actionsVisible}

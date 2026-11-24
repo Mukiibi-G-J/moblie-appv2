@@ -1,10 +1,64 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import axios from "../axios/axios";
+import {createAxiosInstance} from "../axios/axios";
 import type {
   PrintContext,
   ResolvedReceiptConfig,
   ResolvedReceiptTemplate,
+  TemplateSection,
 } from "../shared/receipt/types";
+
+export type ReceiptTemplateRecord = {
+  id: number;
+  code: string;
+  name: string;
+  receipt_type: string;
+  layout_preset: string;
+  sections: TemplateSection[];
+  editor_mode: string;
+  is_active: boolean;
+  is_system: boolean;
+};
+
+function unwrapList(data: unknown): ReceiptTemplateRecord[] {
+  if (Array.isArray(data)) {
+    return data as ReceiptTemplateRecord[];
+  }
+  if (
+    data &&
+    typeof data === "object" &&
+    Array.isArray((data as {results?: unknown}).results)
+  ) {
+    return (data as {results: ReceiptTemplateRecord[]}).results;
+  }
+  return [];
+}
+
+async function receiptApi() {
+  const tenant = (await AsyncStorage.getItem("tenant")) || undefined;
+  return createAxiosInstance(tenant);
+}
+
+export async function listReceiptTemplates(
+  receiptType: string,
+): Promise<ReceiptTemplateRecord[]> {
+  const api = await receiptApi();
+  const res = await api.get(
+    `/api/company/receipt-templates/?receipt_type=${encodeURIComponent(receiptType)}`,
+  );
+  return unwrapList(res.data).filter(row => row.is_active !== false);
+}
+
+export async function saveReceiptTemplateSections(
+  id: number,
+  sections: TemplateSection[],
+): Promise<void> {
+  const api = await receiptApi();
+  await api.patch(`/api/company/receipt-templates/${id}/`, {
+    sections,
+    editor_mode: "visual",
+  });
+  await invalidateReceiptTemplateCache();
+}
 
 function normalizeTemplate(raw: Record<string, unknown>): ResolvedReceiptTemplate {
   return {
@@ -63,7 +117,8 @@ export async function resolveReceiptTemplate(
   }
 
   try {
-    const res = await axios.get<{
+    const api = await receiptApi();
+    const res = await api.get<{
       template: ResolvedReceiptTemplate;
       branding: ResolvedReceiptConfig["branding"];
     }>(`/api/company/receipt-templates/resolve/?${params.toString()}`);

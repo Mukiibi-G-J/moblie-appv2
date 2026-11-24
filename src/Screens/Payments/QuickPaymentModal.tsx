@@ -239,8 +239,8 @@ const QuickPaymentModal: React.FC<QuickPaymentModalProps> = ({
       console.error('Error loading quick payment data:', error);
       Toast.show({
         type: 'error',
-        text1: 'Error',
-        text2: 'Failed to load payment data',
+        text1: 'Couldn’t load payment details',
+        visibilityTime: 5000,
       });
     } finally {
       setLoadingData(false);

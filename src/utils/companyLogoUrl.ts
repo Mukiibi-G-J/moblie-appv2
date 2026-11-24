@@ -24,16 +24,39 @@ export type PreparedCompanyLogo = {
  * Fit logo into the receipt box (object-fit: contain), never upscaling.
  * Used so printers that only accept width still end up with a short bitmap.
  */
+/** Dots for a logo box stored on the image node. Falls back to the small receipt box. */
+export function logoBoxPixels(node?: {
+  maxWidthMm?: number;
+  maxHeightMm?: number;
+}): {maxW: number; maxH: number; allowUpscale: boolean} {
+  const widthMm = Number(node?.maxWidthMm);
+  const heightMm = Number(node?.maxHeightMm);
+  if (widthMm > 0 && heightMm > 0) {
+    const dotsPerMm = 203 / 25.4;
+    return {
+      maxW: Math.round(widthMm * dotsPerMm),
+      maxH: Math.round(heightMm * dotsPerMm),
+      allowUpscale: true,
+    };
+  }
+  return {
+    maxW: RECEIPT_LOGO_WIDTH_PX,
+    maxH: RECEIPT_LOGO_HEIGHT_PX,
+    allowUpscale: false,
+  };
+}
+
 export function fitReceiptLogoSize(
   srcW: number,
   srcH: number,
   maxW: number = RECEIPT_LOGO_WIDTH_PX,
   maxH: number = RECEIPT_LOGO_HEIGHT_PX,
+  allowUpscale = false,
 ): {width: number; height: number} {
   if (!srcW || !srcH || srcW < 1 || srcH < 1) {
     return {width: maxW, height: Math.min(maxH, maxW)};
   }
-  const scale = Math.min(maxW / srcW, maxH / srcH, 1);
+  const scale = Math.min(maxW / srcW, maxH / srcH, allowUpscale ? Infinity : 1);
   return {
     width: Math.max(8, Math.round(srcW * scale)),
     height: Math.max(8, Math.round(srcH * scale)),

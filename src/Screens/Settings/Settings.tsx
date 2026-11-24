@@ -452,8 +452,8 @@ const Settings = () => {
                 {isSimulateOfflineSettingAvailable() ? (
                   <SettingsRow
                     icon={icons.globe}
-                    title="Simulate offline POS"
-                    subtitle="Test offline sales without airplane mode (Wi‑Fi stays on)"
+                    title="Simulate offline"
+                    subtitle="Whole app, no sync. Sales queue on this device. Wi‑Fi stays on."
                     colors={colors}
                     trailing={
                       <Switch

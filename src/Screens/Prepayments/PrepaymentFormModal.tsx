@@ -235,8 +235,8 @@ const PrepaymentFormModal: React.FC<Props> = ({
     } catch (error: any) {
       Toast.show({
         type: 'error',
-        text1: 'Error',
-        text2: error?.response?.data?.detail || 'Failed to save prepayment',
+        text1: error?.response?.data?.detail || 'Couldn’t save this prepayment',
+        visibilityTime: 5000,
       });
     } finally {
       setSaving(false);
@@ -262,8 +262,8 @@ const PrepaymentFormModal: React.FC<Props> = ({
     } catch (error: any) {
       Toast.show({
         type: 'error',
-        text1: 'Error',
-        text2: error?.response?.data?.detail || 'Failed to post prepayment',
+        text1: error?.response?.data?.detail || 'Couldn’t post this prepayment',
+        visibilityTime: 5000,
       });
     } finally {
       setSaving(false);
@@ -289,10 +289,10 @@ const PrepaymentFormModal: React.FC<Props> = ({
     } catch (error: any) {
       Toast.show({
         type: 'error',
-        text1: 'Error',
-        text2:
+        text1:
           error?.response?.data?.detail ||
-          'Failed to post final invoice',
+          'Couldn’t post the final invoice',
+        visibilityTime: 5000,
       });
     } finally {
       setSaving(false);
@@ -322,10 +322,10 @@ const PrepaymentFormModal: React.FC<Props> = ({
     } catch (error: any) {
       Toast.show({
         type: 'error',
-        text1: 'Error',
-        text2:
+        text1:
           error?.response?.data?.detail ||
-          'Failed to add installment',
+          'Couldn’t add this installment',
+        visibilityTime: 5000,
       });
     } finally {
       setSaving(false);

@@ -79,11 +79,12 @@ const FormInput: React.FC<FormInputProps> = ({
         <TextInput
           style={[
             styles.input,
-            {color: colors.textPrimary},
+            {color: colors.textPrimary, backgroundColor: 'transparent'},
             startIcon ? {paddingLeft: 48} : {paddingLeft: ao.spacing.md},
             endIcon || isLoading ? {paddingRight: 48} : {paddingRight: ao.spacing.md},
           ]}
           placeholderTextColor={colors.textTertiary}
+          underlineColorAndroid="transparent"
           onFocus={e => {
             setFocused(true);
             textInputProps.onFocus?.(e);

@@ -266,11 +266,11 @@ const ExpenseHistory = () => {
               } catch (error: any) {
                 Toast.show({
                   type: 'error',
-                  text1: 'Error',
-                  text2:
+                  text1:
                     error?.response?.data?.error ||
                     error?.response?.data?.detail ||
-                    'Failed to reverse expense',
+                    'Couldn’t reverse this expense',
+                  visibilityTime: 5000,
                 });
               }
             },

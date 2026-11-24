@@ -88,7 +88,7 @@ function deriveUserNameFromEmail(email: string): string {
     return s.slice(0, 50);
 }
 
-const SignUp = ({ navigation }) => {
+const SignUp = ({navigation}: {navigation?: any}) => {
     const { colors } = useTheme();
 
     const [form, setForm] = React.useState({

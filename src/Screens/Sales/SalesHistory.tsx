@@ -42,9 +42,9 @@ import {
   ICON_BUTTON_HIT_SLOP,
 } from '../../constants';
 import {
-  downloadSalesInvoicePdf,
   getSalesApiErrorMessage,
   getSalesInvoice,
+  fetchPostedSalesInvoiceLines,
   isAlreadyPostedSalesError,
   postSalesInvoice,
   reverseSalesInvoice,
@@ -54,7 +54,9 @@ import {
   showUserSuccess,
 } from '../../utils/userFeedback';
 import {requestLoadUnpostedIntoPos} from '../../utils/posInvoiceLoad';
-import {savePdfBufferAndShare} from '../../utils/reportPdfDownload';
+import PrintService, {CompanyInfo} from '../../services/PrintService';
+import {loadReceiptBusinessInfo} from '../../services/companyInfoCache';
+import {tenantCompanyToReceiptInfo} from '../../utils/companyReceiptInfo';
 import {useAuth, useTabContext} from '../../context/Store';
 import {usePermissions} from '../../hooks/usePermissions';
 import {usePaymentMethodsQuery} from '../../hooks/useCustomersQuery';
@@ -142,17 +144,20 @@ const PAYMENT_STATUS_OPTIONS = [
 ];
 
 type SalesLine = {
-  id: number;
-  item_name: string;
-  item_no: string;
-  quantity: string;
-  unit_price: string;
-  total_amount: string;
+  id?: number | string;
+  item_name?: string;
+  item_no?: string;
+  quantity?: number | string;
+  unit_price?: string;
+  total_amount?: string;
   unit_of_measure?: string;
 };
 
 type SalesInvoice = SalesHistoryListItemData & {
   user_name?: string;
+  system_id?: string;
+  /** Live SalesInvoice.system_id linked from the posted archive row. */
+  sales_invoice_system_id?: string;
   lines?: SalesLine[];
   created_at?: string;
   amount_received?: number | string;
@@ -502,10 +507,10 @@ const SalesHistory = () => {
   const pageProductsFallback = useMemo(
     () =>
       sales.reduce((sum, inv) => {
-        const lineQty = (inv.lines || []).reduce(
-          (ls, line) => ls + (parseInt(String(line.quantity), 10) || 0),
-          0,
-        );
+        const lineQty = (inv.lines || []).reduce((ls, line) => {
+          const n = Number(line.quantity);
+          return ls + (Number.isFinite(n) ? n : 0);
+        }, 0);
         return sum + lineQty;
       }, 0),
     [sales],
@@ -561,20 +566,31 @@ const SalesHistory = () => {
 
   const openSaleDetail = async (item: SalesInvoice) => {
     setSelectedItem(item);
-    setDetailForModal(null);
+    setDetailForModal(item);
     setShowDetail(true);
-    if (item.id == null) {
-      setDetailForModal(item);
-      return;
-    }
     setDetailLoading(true);
     try {
+      if (isPostedSale(item.status)) {
+        const lines = item.system_id
+          ? await fetchPostedSalesInvoiceLines(String(item.system_id))
+          : [];
+        setDetailForModal({
+          ...item,
+          lines,
+        });
+        return;
+      }
+      if (item.id == null) {
+        setDetailForModal(item);
+        return;
+      }
       const full = await getSalesInvoice(item.id, {
         invoiceNo: item.invoice_no,
       });
       setDetailForModal({
         ...item,
         ...full,
+        invoice_no: item.invoice_no || full?.invoice_no,
         lines: full?.lines ?? item.lines,
       });
     } catch {
@@ -597,67 +613,131 @@ const SalesHistory = () => {
       if (invoice.reversed || status === 'cancelled') {
         Toast.show({
           type: 'info',
-          text1: 'Not available',
-          text2: 'This sales invoice cannot be printed.',
+          text1: 'This invoice can’t be printed',
         });
         return;
       }
       if (!canPrintSalesInvoice(invoice)) {
         Toast.show({
           type: 'info',
-          text1: 'Not available',
-          text2: 'This sales invoice cannot be printed.',
-        });
-        return;
-      }
-      if (invoice.id == null) {
-        Toast.show({
-          type: 'info',
-          text1: 'Not available',
-          text2: 'Save this sale before printing.',
+          text1: 'This invoice can’t be printed',
         });
         return;
       }
       setPrintingReceipt(true);
       try {
-        const bytes = await downloadSalesInvoicePdf(invoice.id);
-        const prefix = isPostedSale(invoice.status) ? 'invoice' : 'proforma';
-        const number = invoice.invoice_no || String(invoice.id);
-        const saved = await savePdfBufferAndShare(bytes, `${prefix}-${number}`);
+        let lines = invoice.lines ?? [];
+        if (!lines.length) {
+          if (isPostedSale(invoice.status) && invoice.system_id) {
+            lines = await fetchPostedSalesInvoiceLines(String(invoice.system_id));
+          } else if (invoice.id != null) {
+            const full = await getSalesInvoice(invoice.id, {
+              invoiceNo: invoice.invoice_no,
+            });
+            lines = full?.lines ?? [];
+          }
+        }
+        if (!lines.length) {
+          Toast.show({
+            type: 'info',
+            text1: 'This invoice has no lines to print',
+          });
+          return;
+        }
+
+        const printService = PrintService.getInstance();
+        const connected = await printService.checkConnection();
+        if (!connected) {
+          Toast.show({
+            type: 'info',
+            text1: 'No printer found',
+            text2:
+              'Open Printer configuration and connect the printer, then try again.',
+            visibilityTime: 4000,
+          });
+          return;
+        }
+
+        let companyInfo: CompanyInfo | undefined;
+        try {
+          const cached = await loadReceiptBusinessInfo();
+          const company = (cached as {company?: Record<string, unknown>})
+            ?.company;
+          if (company) {
+            companyInfo = tenantCompanyToReceiptInfo(company);
+          }
+        } catch {
+          /* company header is optional */
+        }
+
+        const total = Number(invoice.total_amount) || 0;
+        const amountReceived = Number(invoice.amount_received);
+        const change = Number(invoice.change_amount);
+        const printed = await printService.printReceipt({
+          receiptId: invoice.invoice_no || String(invoice.id ?? ''),
+          username: invoice.user_name || auth.full_name || auth.username || '',
+          customerName: invoice.customer_name || 'Customer',
+          cartItems: lines.map(line => ({
+            item_name: line.item_name || line.item_no || 'Item',
+            quantity: Number(line.quantity) || 0,
+            unit_price: Number.parseFloat(String(line.unit_price ?? '0')) || 0,
+            line_total:
+              Number.parseFloat(String(line.total_amount ?? '')) || undefined,
+          })),
+          subtotal: total,
+          total,
+          tax: 0,
+          discount: 0,
+          amountReceived: Number.isFinite(amountReceived)
+            ? amountReceived
+            : undefined,
+          change: Number.isFinite(change) ? change : undefined,
+          paymentMethod: salesHistoryPaymentLabel(invoice),
+          saleDate: invoice.document_date || invoice.created_at,
+          companyInfo,
+          compactReceipt: true,
+        });
+        if (!printed) {
+          Toast.show({
+            type: 'error',
+            text1: 'Couldn’t print the invoice',
+            text2: 'Check that the printer is on and still connected.',
+          });
+          return;
+        }
         Toast.show({
           type: 'success',
-          text1: isPostedSale(invoice.status) ? 'Invoice ready' : 'Pro forma ready',
-          text2: saved.openedViewer
-            ? 'Opened the PDF'
-            : saved.sharedOnIos
-              ? 'Choose where to save or print the PDF'
-              : `Saved to ${saved.displayPath}`,
+          text1: 'Invoice sent to the printer',
+          text2: invoice.invoice_no,
         });
       } catch (error) {
         Toast.show({
           type: 'error',
-          text1: 'Print failed',
-          text2:
+          text1:
             error instanceof Error
               ? error.message
-              : 'Could not create the invoice PDF.',
+              : 'Couldn’t print the invoice',
+          visibilityTime: 5000,
         });
       } finally {
         setPrintingReceipt(false);
       }
     },
-    [],
+    [auth.full_name, auth.username],
   );
 
   const runReverseSales = useCallback(
     async (invoice: SalesInvoice) => {
-      if (invoice.id == null) {
+      const salesKey = isPostedSale(invoice.status)
+        ? invoice.sales_invoice_system_id
+        : invoice.id;
+      if (salesKey == null || salesKey === '') {
         return;
       }
       setReversing(true);
       try {
         const result = await reverseSalesInvoice(
-          invoice.id,
+          salesKey,
           'Reversed from Sales History (mobile app)',
         );
         Toast.show({
@@ -690,8 +770,7 @@ const SalesHistory = () => {
       if (!isPostedSale(invoice.status) || invoice.reversed) {
         Toast.show({
           type: 'info',
-          text1: 'Not available',
-          text2: 'Only posted, non-reversed invoices can be reversed.',
+          text1: 'Only a posted invoice can be reversed',
         });
         return;
       }

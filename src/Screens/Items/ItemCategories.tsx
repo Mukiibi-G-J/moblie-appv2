@@ -126,8 +126,8 @@ const ItemCategories = () => {
       setCategories([]);
       Toast.show({
         type: 'error',
-        text1: 'Error',
-        text2: error?.response?.data?.detail || 'Failed to load categories',
+        text1: error?.response?.data?.detail || 'Couldn’t load categories',
+        visibilityTime: 5000,
       });
     } finally {
       setLoading(false);
@@ -181,8 +181,8 @@ const ItemCategories = () => {
               await deleteItemCategory(category.code);
               Toast.show({
                 type: 'success',
-                text1: 'Success',
-                text2: 'Category deleted successfully',
+                text1: 'Category deleted',
+                visibilityTime: 2000,
               });
               setSelectedCodes(prev => {
                 const next = new Set(prev);
@@ -193,12 +193,12 @@ const ItemCategories = () => {
             } catch (error: any) {
               Toast.show({
                 type: 'error',
-                text1: 'Error',
-                text2:
+                text1:
                   error?.response?.data?.error ||
                   error?.response?.data?.detail ||
                   error?.response?.data?.code?.[0] ||
-                  'Failed to delete category',
+                  'Couldn’t delete this category',
+                visibilityTime: 5000,
               });
             }
           },

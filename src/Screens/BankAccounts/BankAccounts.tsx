@@ -112,8 +112,9 @@ const BankAccounts: React.FC = () => {
         setHasMore(false);
         Toast.show({
           type: 'error',
-          text1: 'Error',
-          text2: error?.response?.data?.detail || 'Failed to load bank accounts',
+          text1:
+            error?.response?.data?.detail || 'Couldn’t load bank accounts',
+          visibilityTime: 5000,
         });
       }
     } finally {
@@ -157,17 +158,17 @@ const BankAccounts: React.FC = () => {
               await BankAccountServices.deleteBankAccount(item.no || item.id!);
               Toast.show({
                 type: 'success',
-                text1: 'Deleted',
-                text2: 'Bank account deleted',
+                text1: 'Bank account deleted',
+                visibilityTime: 2000,
               });
               handleRefresh();
             } catch (error: any) {
               Toast.show({
                 type: 'error',
-                text1: 'Error',
-                text2:
+                text1:
                   error?.response?.data?.detail ||
-                  'Failed to delete bank account',
+                  'Couldn’t delete this bank account',
+                visibilityTime: 5000,
               });
             }
           },

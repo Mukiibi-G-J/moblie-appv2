@@ -20,8 +20,10 @@ export function subscribeSimulatedOfflineGate(listener: GateListener) {
   };
 }
 
+/** Visible in test and debug builds. Release builds with USE_TEST_ENV off hide it. */
 function isSimulateFeatureEnabled(): boolean {
-  return USE_TEST_ENV && SIMULATE_OFFLINE_POS;
+  const devBuild = typeof __DEV__ !== 'undefined' && __DEV__;
+  return USE_TEST_ENV || devBuild;
 }
 
 export async function loadSimulateOfflineFromStorage(): Promise<void> {
@@ -40,7 +42,10 @@ export async function loadSimulateOfflineFromStorage(): Promise<void> {
   }
 }
 
-/** True only when USE_TEST_ENV and SIMULATE_OFFLINE_POS are both true (Settings toggle optional). */
+/**
+ * True while the Settings switch is on.
+ * Defaults to SIMULATE_OFFLINE_POS until the user changes it.
+ */
 export function getSimulateOfflinePos(): boolean {
   if (!isSimulateFeatureEnabled()) {
     return false;
@@ -48,7 +53,7 @@ export function getSimulateOfflinePos(): boolean {
   if (simulateOfflineOverride !== null) {
     return simulateOfflineOverride;
   }
-  return true;
+  return SIMULATE_OFFLINE_POS;
 }
 
 export function isSimulateOfflineSettingAvailable(): boolean {

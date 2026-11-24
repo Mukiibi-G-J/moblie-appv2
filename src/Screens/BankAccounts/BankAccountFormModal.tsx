@@ -5,10 +5,12 @@ import {
   Modal,
   ScrollView,
   TextInput,
+  TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
   Image,
   Platform,
+  Keyboard,
 } from 'react-native';
 import {Picker} from '@react-native-picker/picker';
 import {COLORS, FONTS} from '../../constants';
@@ -126,6 +128,12 @@ const BankAccountFormModal: React.FC<Props> = ({
 
   formDataRef.current = formData;
   currentRecordRef.current = currentRecord;
+
+  const writeForm = (patch: Partial<BankAccountFormValues>) => {
+    const next = {...formDataRef.current, ...patch};
+    formDataRef.current = next;
+    setFormData(next);
+  };
 
   const isEditMode = !!currentRecord?.no;
   const canWrite = isEditMode ? canEdit : canCreate;
@@ -282,14 +290,17 @@ const BankAccountFormModal: React.FC<Props> = ({
     async (
       field: keyof BankAccountFormValues,
       rawValue: BankAccountFormValues[keyof BankAccountFormValues],
-    ) => {
-      if (!visible || !canWrite || savingRef.current) {
-        return;
+    ): Promise<boolean> => {
+      if (!visible || !canWrite) {
+        return true;
+      }
+      if (savingRef.current) {
+        return false;
       }
 
       // Account No is immutable after create.
       if (field === 'no' && currentRecordRef.current?.no) {
-        return;
+        return true;
       }
 
       const normalizedValue = normalizeFieldValue(field, rawValue);
@@ -299,14 +310,14 @@ const BankAccountFormModal: React.FC<Props> = ({
       if (record?.no) {
         const existing = getComparableRecordValue(record, field);
         if (String(existing ?? '') === String(normalizedValue ?? '')) {
-          return;
+          return true;
         }
       }
 
       const fieldError = getFieldError(field, rawValue);
       if (fieldError) {
         setErrors(prev => ({...prev, [field]: fieldError}));
-        return;
+        return false;
       }
 
       if (
@@ -315,7 +326,7 @@ const BankAccountFormModal: React.FC<Props> = ({
           normalizedValue === null ||
           normalizedValue === undefined)
       ) {
-        return;
+        return true;
       }
 
       const noForCreate =
@@ -323,7 +334,7 @@ const BankAccountFormModal: React.FC<Props> = ({
       const nameForCreate =
         field === 'name' ? String(normalizedValue || '') : values.name || '';
       if (!record?.no && (!noForCreate.trim() || !nameForCreate.trim())) {
-        return;
+        return true;
       }
 
       setErrors(prev => {
@@ -345,11 +356,15 @@ const BankAccountFormModal: React.FC<Props> = ({
                   : (rawValue as any),
             }),
           );
+          const nextForm = accountToForm(created);
+          currentRecordRef.current = created;
+          formDataRef.current = nextForm;
           setCurrentRecord(created);
-          setFormData(accountToForm(created));
+          setFormData(nextForm);
           onRecordChange?.(created);
           onSave();
           flashSaved();
+          return true;
         } else {
           const patch: Partial<BankAccount> = {
             [field]: normalizedValue,
@@ -358,21 +373,29 @@ const BankAccountFormModal: React.FC<Props> = ({
             record.no,
             patch,
           );
+          currentRecordRef.current = updated;
           setCurrentRecord(updated);
           if (field === 'min_balance') {
-            setFormData(prev => ({
-              ...prev,
+            const next = {
+              ...formDataRef.current,
               min_balance: String(updated.min_balance ?? 0),
-            }));
+            };
+            formDataRef.current = next;
+            setFormData(next);
           } else if (field !== 'no') {
-            setFormData(prev => ({
-              ...prev,
-              [field]: String((updated as any)[field] ?? prev[field] ?? ''),
-            }));
+            const next = {
+              ...formDataRef.current,
+              [field]: String(
+                (updated as any)[field] ?? formDataRef.current[field] ?? '',
+              ),
+            } as BankAccountFormValues;
+            formDataRef.current = next;
+            setFormData(next);
           }
           onRecordChange?.(updated);
           onSave();
           flashSaved();
+          return true;
         }
       } catch (error: any) {
         console.error('Error auto-saving bank account:', error);
@@ -384,9 +407,10 @@ const BankAccountFormModal: React.FC<Props> = ({
         setErrors(prev => ({...prev, [field]: errorMessage}));
         Toast.show({
           type: 'error',
-          text1: 'Error',
-          text2: errorMessage,
+          text1: errorMessage,
+          visibilityTime: 5000,
         });
+        return false;
       } finally {
         savingRef.current = false;
         setIsSaving(false);
@@ -394,6 +418,65 @@ const BankAccountFormModal: React.FC<Props> = ({
     },
     [visible, canWrite, onRecordChange, onSave, flashSaved],
   );
+
+  const waitUntilIdle = () =>
+    new Promise<void>(resolve => {
+      const tick = () => {
+        if (!savingRef.current) {
+          resolve();
+          return;
+        }
+        setTimeout(tick, 40);
+      };
+      tick();
+    });
+
+  const flushBankAccount = useCallback(async () => {
+    const fields: (keyof BankAccountFormValues)[] = [
+      'no',
+      'name',
+      'bank_account_no',
+      'bank_branch_no',
+      'bank_account_posting_group',
+      'min_balance',
+      'address',
+      'contact',
+    ];
+    for (const field of fields) {
+      await waitUntilIdle();
+      const saved = await autoSaveField(field, formDataRef.current[field]);
+      if (!saved) {
+        return false;
+      }
+    }
+    return true;
+  }, [autoSaveField]);
+
+  const handleSavePress = useCallback(async () => {
+    Keyboard.dismiss();
+    const ok = await flushBankAccount();
+    if (ok && currentRecordRef.current?.no) {
+      flashSaved();
+    }
+  }, [flushBankAccount, flashSaved]);
+
+  const handleDismiss = useCallback(async () => {
+    Keyboard.dismiss();
+    await waitUntilIdle();
+    const draft = formDataRef.current;
+    if (
+      !currentRecordRef.current?.no &&
+      (!draft.no.trim() || !draft.name.trim())
+    ) {
+      onClose();
+      return;
+    }
+    const ok = await flushBankAccount();
+    if (!ok) {
+      return;
+    }
+    onClose();
+  }, [flushBankAccount, onClose]);
 
   const selectedPostingGroupLabel = useMemo(() => {
     const code = formData.bank_account_posting_group;
@@ -407,11 +490,11 @@ const BankAccountFormModal: React.FC<Props> = ({
       visible={visible}
       animationType="slide"
       transparent={false}
-      onRequestClose={onClose}>
+      onRequestClose={() => void handleDismiss()}>
       <View style={styles.pageRoot}>
         <View style={[styles.pageHeader, {paddingTop: topInset}]}>
           <QuickIconPressable
-            onPress={onClose}
+            onPress={() => void handleDismiss()}
             style={styles.headerIconButton}
             hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
             accessibilityLabel="Close">
@@ -422,15 +505,23 @@ const BankAccountFormModal: React.FC<Props> = ({
             />
           </QuickIconPressable>
 
-          {canWrite && (isSaving || showSaved) ? (
-            <View
-              style={styles.headerSaveButton}
-              accessibilityRole="text"
-              accessibilityLabel={isSaving ? 'Saving' : 'Saved'}>
+          {canWrite ? (
+            <TouchableOpacity
+              style={[
+                styles.headerSaveButton,
+                showSaved && !isSaving ? styles.headerSaveButtonSaved : null,
+              ]}
+              onPress={() => void handleSavePress()}
+              disabled={isSaving}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={
+                isSaving ? 'Saving' : showSaved ? 'Saved' : 'Save'
+              }>
               <Text style={styles.headerSaveText}>
-                {isSaving ? 'Saving...' : 'Saved'}
+                {isSaving ? 'Saving' : showSaved ? 'Saved' : 'Save'}
               </Text>
-            </View>
+            </TouchableOpacity>
           ) : (
             <View style={styles.headerSpacer} />
           )}
@@ -445,7 +536,7 @@ const BankAccountFormModal: React.FC<Props> = ({
             {isEditMode ? 'Edit bank account' : 'Add bank account'}
           </Text>
           <Text style={styles.autoSaveHint}>
-            Changes save automatically when you leave a field
+            Tap Save to keep your changes. Leaving a field also saves.
           </Text>
 
           <View style={styles.previewSection}>
@@ -482,9 +573,7 @@ const BankAccountFormModal: React.FC<Props> = ({
                   isEditMode && styles.disabledInput,
                 ]}
                 value={formData.no}
-                onChangeText={text =>
-                  setFormData({...formData, no: text.toUpperCase()})
-                }
+                onChangeText={text => writeForm({no: text.toUpperCase()})}
                 onBlur={() => autoSaveField('no', formDataRef.current.no)}
                 placeholder="e.g. BANK-01"
                 placeholderTextColor={COLORS.gray2}
@@ -507,7 +596,7 @@ const BankAccountFormModal: React.FC<Props> = ({
               <TextInput
                 style={[styles.input, errors.name && styles.inputError]}
                 value={formData.name}
-                onChangeText={text => setFormData({...formData, name: text})}
+                onChangeText={text => writeForm({name: text})}
                 onBlur={() => autoSaveField('name', formDataRef.current.name)}
                 placeholder="e.g. Main Bank UGX"
                 placeholderTextColor={COLORS.gray2}
@@ -530,9 +619,7 @@ const BankAccountFormModal: React.FC<Props> = ({
                   errors.bank_account_no && styles.inputError,
                 ]}
                 value={formData.bank_account_no}
-                onChangeText={text =>
-                  setFormData({...formData, bank_account_no: text})
-                }
+                onChangeText={text => writeForm({bank_account_no: text})}
                 onBlur={() =>
                   autoSaveField(
                     'bank_account_no',
@@ -561,9 +648,7 @@ const BankAccountFormModal: React.FC<Props> = ({
                   errors.bank_branch_no && styles.inputError,
                 ]}
                 value={formData.bank_branch_no}
-                onChangeText={text =>
-                  setFormData({...formData, bank_branch_no: text})
-                }
+                onChangeText={text => writeForm({bank_branch_no: text})}
                 onBlur={() =>
                   autoSaveField(
                     'bank_branch_no',
@@ -605,10 +690,7 @@ const BankAccountFormModal: React.FC<Props> = ({
                       }
                       onValueChange={value => {
                         const nextValue = String(value || '');
-                        setFormData({
-                          ...formData,
-                          bank_account_posting_group: nextValue,
-                        });
+                        writeForm({bank_account_posting_group: nextValue});
                         void autoSaveField(
                           'bank_account_posting_group',
                           nextValue,
@@ -656,10 +738,7 @@ const BankAccountFormModal: React.FC<Props> = ({
                 style={[styles.input, errors.min_balance && styles.inputError]}
                 value={formData.min_balance}
                 onChangeText={text =>
-                  setFormData({
-                    ...formData,
-                    min_balance: text.replace(/[^\d.,-]/g, ''),
-                  })
+                  writeForm({min_balance: text.replace(/[^\d.,-]/g, '')})
                 }
                 onBlur={() =>
                   autoSaveField(
@@ -696,7 +775,7 @@ const BankAccountFormModal: React.FC<Props> = ({
                   errors.address && styles.inputError,
                 ]}
                 value={formData.address}
-                onChangeText={text => setFormData({...formData, address: text})}
+                onChangeText={text => writeForm({address: text})}
                 onBlur={() =>
                   autoSaveField('address', formDataRef.current.address || '')
                 }
@@ -720,7 +799,7 @@ const BankAccountFormModal: React.FC<Props> = ({
               <TextInput
                 style={[styles.input, errors.contact && styles.inputError]}
                 value={formData.contact}
-                onChangeText={text => setFormData({...formData, contact: text})}
+                onChangeText={text => writeForm({contact: text})}
                 onBlur={() =>
                   autoSaveField('contact', formDataRef.current.contact || '')
                 }
@@ -777,15 +856,19 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   headerSaveButton: {
-    minWidth: 88,
-    height: 48,
+    minWidth: 72,
+    height: 36,
+    borderRadius: 999,
+    backgroundColor: COLORS.primary2,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    backgroundColor: 'transparent',
+    paddingHorizontal: 18,
+  },
+  headerSaveButtonSaved: {
+    backgroundColor: COLORS.success,
   },
   headerSaveText: {
-    color: COLORS.gray2,
+    color: COLORS.white,
     fontSize: 15,
     fontWeight: '600',
   },

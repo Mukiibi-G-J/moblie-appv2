@@ -306,9 +306,8 @@ const createAxiosInstance = (tenant?: string) => {
         const Toast = require('react-native-toast-message').default;
         Toast.show({
           type: 'error',
-          text1: 'Access Denied',
-          text2: errorMessage,
-          position: 'bottom',
+          text1: errorMessage,
+          visibilityTime: 5000,
         });
 
         return Promise.reject({
@@ -523,9 +522,8 @@ class ApiService {
       const Toast = require('react-native-toast-message').default;
       Toast.show({
         type: 'error',
-        text1: 'Access Denied',
-        text2: errorMessage,
-        position: 'bottom',
+        text1: errorMessage,
+        visibilityTime: 5000,
       });
 
       return Promise.reject({

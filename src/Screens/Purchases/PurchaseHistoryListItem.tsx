@@ -1,6 +1,6 @@
 import React, {useMemo, useState} from 'react';
-import {View, Text, TouchableOpacity, StyleSheet, Image} from 'react-native';
-import {COLORS, FONTS, icons} from '../../constants';
+import {View, Text, Pressable, StyleSheet, Image} from 'react-native';
+import {COLORS, FONTS, icons, ICON_BUTTON_QUICK_PRESS} from '../../constants';
 import {formatCurrencyCompact} from '../../utils/currency';
 import {useTheme} from '../../context/ThemeContext';
 import ChooseActionSheet, {
@@ -78,9 +78,13 @@ const PurchaseHistoryListItem: React.FC<Props> = ({item, onPress}) => {
 
   return (
     <View>
-      <TouchableOpacity
-      activeOpacity={0.8}
-      style={[styles.container, {borderBottomColor: colors.border}]}
+      <Pressable
+      {...ICON_BUTTON_QUICK_PRESS}
+      style={({pressed}) => [
+        styles.container,
+        {borderBottomColor: colors.border},
+        pressed && {opacity: 0.8},
+      ]}
       onPress={onPress}>
       <View style={[styles.avatar, {backgroundColor: colors.backButtonBg}]}>
         <Text style={styles.avatarText}>{initials}</Text>
@@ -106,9 +110,14 @@ const PurchaseHistoryListItem: React.FC<Props> = ({item, onPress}) => {
         </Text>
       </View>
 
-      <TouchableOpacity
+      <Pressable
+        {...ICON_BUTTON_QUICK_PRESS}
         onPress={() => setActionsVisible(true)}
-        style={[styles.actionButton, {backgroundColor: colors.backButtonBg}]}
+        style={({pressed}) => [
+          styles.actionButton,
+          {backgroundColor: colors.backButtonBg},
+          pressed && {opacity: 0.7},
+        ]}
         hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
         accessibilityRole="button"
         accessibilityLabel="Choose an action">
@@ -117,8 +126,8 @@ const PurchaseHistoryListItem: React.FC<Props> = ({item, onPress}) => {
           style={[styles.actionIcon, {tintColor: colors.textPrimary}]}
           resizeMode="contain"
         />
-      </TouchableOpacity>
-      </TouchableOpacity>
+      </Pressable>
+      </Pressable>
 
       <ChooseActionSheet
         visible={actionsVisible}

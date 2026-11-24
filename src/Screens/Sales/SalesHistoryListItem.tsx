@@ -2,12 +2,12 @@ import React, {useMemo, useState} from 'react';
 import {
   View,
   Text,
-  TouchableOpacity,
+  Pressable,
   StyleSheet,
   Image,
   ActivityIndicator,
 } from 'react-native';
-import {COLORS, FONTS, icons} from '../../constants';
+import {COLORS, FONTS, icons, ICON_BUTTON_QUICK_PRESS} from '../../constants';
 import {formatCurrencyCompact} from '../../utils/currency';
 import {useTheme} from '../../context/ThemeContext';
 import ChooseActionSheet, {
@@ -85,10 +85,14 @@ const SalesHistoryListItem: React.FC<Props> = ({
   const statusLower = String(item.status || '').toLowerCase();
   const isOpenish =
     (statusLower === 'open' || statusLower === 'draft') && !item.reversed;
-  const title = item.customer_name?.trim() || 'Walk-in customer';
+  const customerLabel = item.customer_name?.trim() || 'Walk-in customer';
+  const invoiceLabel = item.invoice_no?.trim()
+    ? `#${item.invoice_no.trim()}`
+    : null;
+  const title = invoiceLabel || customerLabel;
 
   const initials =
-    title
+    customerLabel
       .split(' ')
       .filter(Boolean)
       .slice(0, 2)
@@ -97,10 +101,9 @@ const SalesHistoryListItem: React.FC<Props> = ({
       .slice(0, 2)
       .toUpperCase() || 'SL';
 
-  const invoiceLabel = item.invoice_no ? `#${item.invoice_no}` : null;
   const paymentLabel = salesHistoryPaymentLabel(item);
   const secondaryLine = [
-    invoiceLabel,
+    invoiceLabel ? customerLabel : null,
     paymentLabel !== '—' ? paymentLabel : null,
     formatDate(item.document_date),
   ]
@@ -160,9 +163,13 @@ const SalesHistoryListItem: React.FC<Props> = ({
 
   return (
     <View>
-      <TouchableOpacity
-      activeOpacity={0.8}
-      style={[styles.container, {borderBottomColor: colors.border}]}
+      <Pressable
+      {...ICON_BUTTON_QUICK_PRESS}
+      style={({pressed}) => [
+        styles.container,
+        {borderBottomColor: colors.border},
+        pressed && {opacity: 0.8},
+      ]}
       onPress={onPress}>
       <View style={[styles.avatar, {backgroundColor: colors.backButtonBg}]}>
         <Text style={styles.avatarText}>{initials}</Text>
@@ -201,14 +208,19 @@ const SalesHistoryListItem: React.FC<Props> = ({
       </View>
 
       {canOpenActions ? (
-        <TouchableOpacity
+        <Pressable
+          {...ICON_BUTTON_QUICK_PRESS}
           onPress={() => {
             if (!posting) {
               setActionsVisible(true);
             }
           }}
           disabled={posting}
-          style={[styles.actionButton, {backgroundColor: colors.backButtonBg}]}
+          style={({pressed}) => [
+            styles.actionButton,
+            {backgroundColor: colors.backButtonBg},
+            pressed && !posting && {opacity: 0.7},
+          ]}
           hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
           accessibilityRole="button"
           accessibilityLabel="Choose an action">
@@ -221,9 +233,9 @@ const SalesHistoryListItem: React.FC<Props> = ({
               resizeMode="contain"
             />
           )}
-        </TouchableOpacity>
+        </Pressable>
       ) : null}
-      </TouchableOpacity>
+      </Pressable>
 
       <ChooseActionSheet
         visible={actionsVisible}

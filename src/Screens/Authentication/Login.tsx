@@ -514,7 +514,7 @@ const Login = () => {
             required
             error={tenantError}
             isLoading={isCheckingTenant}
-            helpText="Company name or workspace id, e.g. theadraceexecutivecopy"
+            helpText="The company name your administrator gave you"
             startIcon={
               <Image
                 source={icons.company}

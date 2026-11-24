@@ -30,9 +30,9 @@ function nodeToUsb(node: ReceiptDocumentNode, cols: number): string {
     case "feed":
       return "\n".repeat(Math.min(1, Math.max(0, node.lines || 1)));
     case "cut":
-      // The print head sits above the tear edge. These feeds bring the
-      // website and contact lines out before the paper is torn.
-      return "\n\n\n\n\n";
+      // Two lines clear the tear bar. More than that is blank paper
+      // after "Powered by Zentroapp".
+      return "\n\n";
     default:
       return "";
   }

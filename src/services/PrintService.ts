@@ -10,8 +10,10 @@ import {
 import {printSunmiDocument} from '../shared/receipt/compileToSunmi';
 import {
   buildKotReceiptDocument,
+  buildLayoutSampleDocument,
   buildSaleReceiptDocument,
 } from './receiptPrintOrchestrator';
+import type {ResolvedReceiptTemplate} from '../shared/receipt/types';
 import {
   buildSampleSaleReceiptData,
   fetchCompanyInfoForReceipt,
@@ -480,7 +482,7 @@ class PrintService {
         if (!this.usbService.isConnected()) {
           Toast.show({
             type: 'error',
-            text1: 'USB Printer not connected',
+            text1: 'USB printer isn’t connected',
             text2: 'Connect a USB printer in Settings.',
           });
           return false;
@@ -573,7 +575,7 @@ class PrintService {
       if (!this.bluetoothService.isPrinterConnected()) {
         Toast.show({
           type: 'info',
-          text1: 'Bluetooth Printer Not Connected',
+          text1: 'Printer isn’t connected',
           text2: 'Please connect to a Bluetooth printer first.',
         });
         return false;
@@ -628,7 +630,7 @@ class PrintService {
       if (!this.bluetoothService.isPrinterConnected()) {
         Toast.show({
           type: 'info',
-          text1: 'Bluetooth Printer Not Connected',
+          text1: 'Printer isn’t connected',
           text2: 'Please connect to a Bluetooth printer in settings.',
         });
         return false;
@@ -1183,7 +1185,7 @@ class PrintService {
     if (!this.usbService.isConnected()) {
       Toast.show({
         type: 'error',
-        text1: 'USB Printer not connected',
+        text1: 'USB printer isn’t connected',
         text2: 'Go to Printer Configuration and connect a USB printer.',
       });
       return false;
@@ -1214,7 +1216,7 @@ class PrintService {
         if (!this.usbService.isConnected()) {
           Toast.show({
             type: 'error',
-            text1: 'USB Printer not connected',
+            text1: 'USB printer isn’t connected',
             text2: 'Connect a USB printer in Printer Configuration.',
           });
           return false;
@@ -1309,6 +1311,91 @@ class PrintService {
       });
     }
     return ok;
+  }
+
+  /**
+   * Sample slip for the layout open on Receipt layout, including unsaved edits.
+   */
+  public async printLayoutSample(
+    template: ResolvedReceiptTemplate,
+  ): Promise<boolean> {
+    const savedType = await this.getSavedPrinterType();
+    const printDoc = async (
+      printer: 'usb' | 'sunmi' | 'bluetooth',
+    ): Promise<boolean> => {
+      const document = await buildLayoutSampleDocument(template, printer);
+      if (printer === 'usb') {
+        if (!this.usbService.isConnected()) {
+          return false;
+        }
+        return this.usbService.printPreparedDocument(document);
+      }
+      if (printer === 'sunmi') {
+        const ready = await this.initializeSunmiPrinter();
+        if (!ready) {
+          return false;
+        }
+        await printSunmiDocument(document);
+        return true;
+      }
+      if (!this.bluetoothService.isPrinterConnected()) {
+        return false;
+      }
+      return this.bluetoothService.printPreparedDocument(document);
+    };
+
+    try {
+      if (savedType === 'usb') {
+        if (Platform.OS !== 'android') {
+          Toast.show({
+            type: 'info',
+            text1: 'Printing',
+            text2: 'USB receipt printing is available on Android only.',
+          });
+          return false;
+        }
+        return await printDoc('usb');
+      }
+
+      const resolved = await this.resolvePrinterType(savedType);
+      this.printerType = resolved;
+
+      if (resolved === 'sunmi') {
+        const sunmiOk = await printDoc('sunmi');
+        if (sunmiOk || savedType !== 'auto') {
+          return sunmiOk;
+        }
+        this.printerType = 'bluetooth';
+        await this.ensureBluetoothSession(savedType);
+        if (
+          !this.bluetoothService.isPrinterConnected() &&
+          savedType === 'auto'
+        ) {
+          if (await this.useBuiltinUsbIfAuto(savedType)) {
+            return await printDoc('usb');
+          }
+          this.noteBuiltinUsbDenied();
+          return false;
+        }
+        return await printDoc('bluetooth');
+      }
+
+      await this.ensureBluetoothSession(savedType);
+      if (
+        !this.bluetoothService.isPrinterConnected() &&
+        savedType === 'auto'
+      ) {
+        if (await this.useBuiltinUsbIfAuto(savedType)) {
+          return await printDoc('usb');
+        }
+        this.noteBuiltinUsbDenied();
+        return false;
+      }
+      return await printDoc('bluetooth');
+    } catch (error) {
+      console.error('Layout test print failed:', error);
+      return false;
+    }
   }
 
   /**

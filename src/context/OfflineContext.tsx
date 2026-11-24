@@ -16,6 +16,7 @@ import {
   loadSimulateOfflineFromStorage,
   refreshServerReachability,
   setNetInfoConnected,
+  setServerReachable,
   setSimulateOfflinePos,
   subscribePosConnectivity,
   type SyncStatus,
@@ -80,6 +81,8 @@ export function OfflineProvider({children}: {children: React.ReactNode}) {
       setNetInfoConnected(connected);
       if (connected) {
         void refreshServerReachability();
+      } else {
+        setServerReachable(false);
       }
     });
     void NetInfo.fetch().then(state => {
@@ -88,6 +91,8 @@ export function OfflineProvider({children}: {children: React.ReactNode}) {
       setNetInfoConnected(connected);
       if (connected) {
         void refreshServerReachability();
+      } else {
+        setServerReachable(false);
       }
     });
     return () => unsubscribe();
@@ -95,10 +100,16 @@ export function OfflineProvider({children}: {children: React.ReactNode}) {
 
   const handleSetSimulateOffline = useCallback(async (enabled: boolean) => {
     await setSimulateOfflinePos(enabled);
-    setConnectivityTick(tick => tick + 1);
     if (!enabled) {
-      void runSyncCycle().then(() => refreshOutboxCount());
+      const reachable = await refreshServerReachability();
+      setConnectivityTick(tick => tick + 1);
+      if (reachable) {
+        void runSyncCycle().then(() => refreshOutboxCount());
+      }
+      return;
     }
+    setServerReachable(false);
+    setConnectivityTick(tick => tick + 1);
   }, [refreshOutboxCount]);
 
   const value = useMemo<OfflineContextValue>(

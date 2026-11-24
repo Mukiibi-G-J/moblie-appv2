@@ -195,8 +195,8 @@ const LoanFormModal: React.FC<Props> = ({
     } catch (error: any) {
       Toast.show({
         type: 'error',
-        text1: 'Error',
-        text2: error?.response?.data?.detail || 'Failed to save loan',
+        text1: error?.response?.data?.detail || 'Couldn’t save this loan',
+        visibilityTime: 5000,
       });
     } finally {
       setSaving(false);

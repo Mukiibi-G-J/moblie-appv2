@@ -1,6 +1,6 @@
 import React, {useMemo, useState} from 'react';
-import {View, Text, TouchableOpacity, StyleSheet, Image} from 'react-native';
-import {COLORS, FONTS, icons} from '../../constants';
+import {View, Text, Pressable, StyleSheet, Image} from 'react-native';
+import {COLORS, FONTS, icons, ICON_BUTTON_QUICK_PRESS} from '../../constants';
 import {useTheme} from '../../context/ThemeContext';
 import ChooseActionSheet, {
   type ChooseActionItem,
@@ -111,9 +111,13 @@ const ItemJournalListItem: React.FC<Props> = ({
 
   return (
     <View>
-    <TouchableOpacity
-      activeOpacity={canOpenLine && isOpen ? 0.8 : 1}
-      style={[styles.container, {borderBottomColor: colors.border}]}
+    <Pressable
+      {...ICON_BUTTON_QUICK_PRESS}
+      style={({pressed}) => [
+        styles.container,
+        {borderBottomColor: colors.border},
+        pressed && canOpenLine && isOpen ? {opacity: 0.8} : null,
+      ]}
       onPress={canOpenLine && isOpen ? onPress : undefined}>
       <View style={[styles.avatar, {backgroundColor: colors.backButtonBg}]}>
         <Text style={styles.avatarText}>{initials}</Text>
@@ -140,9 +144,14 @@ const ItemJournalListItem: React.FC<Props> = ({
       </View>
 
       {(canOpenLine || canPost || (canRemove && isOpen)) && (
-        <TouchableOpacity
+        <Pressable
+          {...ICON_BUTTON_QUICK_PRESS}
           onPress={() => setActionsVisible(true)}
-          style={[styles.actionButton, {backgroundColor: colors.backButtonBg}]}
+          style={({pressed}) => [
+            styles.actionButton,
+            {backgroundColor: colors.backButtonBg},
+            pressed && {opacity: 0.7},
+          ]}
           hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
           accessibilityRole="button"
           accessibilityLabel="Choose an action">
@@ -151,9 +160,9 @@ const ItemJournalListItem: React.FC<Props> = ({
             style={[styles.actionIcon, {tintColor: colors.textPrimary}]}
             resizeMode="contain"
           />
-        </TouchableOpacity>
+        </Pressable>
       )}
-    </TouchableOpacity>
+    </Pressable>
 
       <ChooseActionSheet
         visible={actionsVisible}

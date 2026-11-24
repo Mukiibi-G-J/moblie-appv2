@@ -128,7 +128,8 @@ describe('compact thermal receipts save paper', () => {
     const template = getFallbackTemplate('sale', 'compact');
     const doc = buildReceiptDocument(swimmingSale(), template, branding);
     const usb = compileDocumentToUsbText(doc);
-    expect(usb.endsWith('\n\n\n\n\n')).toBe(true);
+    expect(usb.endsWith('\n\n')).toBe(true);
+    expect(usb.endsWith('\n\n\n\n\n')).toBe(false);
     expect(usb).not.toContain('<B>');
     expect(usb).not.toContain('<C>--------------------------------</C>');
 

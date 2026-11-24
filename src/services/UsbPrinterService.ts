@@ -13,7 +13,11 @@ import {
   buildKotReceiptDocument,
   buildSaleReceiptDocument,
 } from './receiptPrintOrchestrator';
-import {prepareCompanyLogoForPrint} from '../utils/companyLogoUrl';
+import {
+  fitReceiptLogoSize,
+  logoBoxPixels,
+  prepareCompanyLogoForPrint,
+} from '../utils/companyLogoUrl';
 import {
   buildSampleSaleReceiptData,
   fetchCompanyInfoForReceipt,
@@ -409,7 +413,7 @@ class UsbPrinterService {
   }
 
   private async printReceiptLogo(document: {
-    nodes: Array<{type?: string; src?: string}>;
+    nodes: Array<{type?: string; src?: string; maxWidthMm?: number; maxHeightMm?: number}>;
     paperProfile?: {logoWidthPx?: number};
   }): Promise<void> {
     const src = document.nodes.find(node => node.type === 'image')?.src;
@@ -433,11 +437,36 @@ class UsbPrinterService {
       const path = prepared.localPath.startsWith('file://')
         ? prepared.localPath
         : `file://${prepared.localPath}`;
+      const imageNode = document.nodes.find(node => node.type === 'image');
+      const logoBox = logoBoxPixels(imageNode);
+      const {width} = fitReceiptLogoSize(
+        prepared.width,
+        prepared.height,
+        imageNode?.maxWidthMm
+          ? logoBox.maxW
+          : document.paperProfile?.logoWidthPx ?? logoBox.maxW,
+        logoBox.maxH,
+        logoBox.allowUpscale,
+      );
       await printImage.call(USBPrinter, path, {
-        imageWidth: document.paperProfile?.logoWidthPx ?? 96,
+        imageWidth: width,
       });
     } catch (error) {
       console.warn('USB receipt logo skipped:', error);
+    }
+  }
+
+  async printPreparedDocument(document: ReceiptDocument): Promise<boolean> {
+    try {
+      if (!this.connectedDevice) {
+        return false;
+      }
+      await this.printReceiptLogo(document);
+      await printUsbSaleDocument(document);
+      return true;
+    } catch (error) {
+      console.error('USB layout test print failed:', error);
+      return false;
     }
   }
 

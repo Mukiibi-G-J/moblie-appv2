@@ -1,6 +1,6 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
 import {View, StyleSheet} from 'react-native';
-import {StackNavigationProp} from '@react-navigation/stack';
+import {NativeStackNavigationProp} from '@react-navigation/native-stack';
 import {useTheme} from '../context/ThemeContext';
 import {constants} from '../constants';
 import {PAGE_NAMES} from '../constants/pageNames';
@@ -14,7 +14,7 @@ import Cart from './Cart/Cart';
 import MoreMenu from './More/MoreMenu';
 
 type MainLayoutProps = {
-  navigation: StackNavigationProp<any>;
+  navigation: NativeStackNavigationProp<any>;
 };
 
 const MemoHome = React.memo(Home);
@@ -61,14 +61,20 @@ const MainLayout: React.FC<MainLayoutProps> = ({navigation}) => {
         case constants.screens.home:
           return <MemoHome />;
         case constants.screens.makeSale:
-          return <MemoCart navigation={navigation} isTabMode />;
+          return (
+            <MemoCart
+              navigation={navigation}
+              isTabMode
+              isTabActive={selectedTab === constants.screens.makeSale}
+            />
+          );
         case constants.screens.more:
           return <MemoMoreMenu />;
         default:
           return null;
       }
     },
-    [navigation],
+    [navigation, selectedTab],
   );
 
   return (

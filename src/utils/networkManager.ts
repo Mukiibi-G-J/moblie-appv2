@@ -41,10 +41,9 @@ class NetworkManager {
     private showNetworkError() {
         Toast.show({
             type: 'error',
-            text1: 'No Internet Connection',
-            text2: 'Please check your connection and try again',
-            position: 'bottom',
-            visibilityTime: 4000,
+            text1: 'You’re offline',
+            text2: 'Check your connection and try again.',
+            visibilityTime: 5000,
         });
     }
 
@@ -56,10 +55,9 @@ class NetworkManager {
             // Network error
             Toast.show({
                 type: 'error',
-                text1: 'Connection Error',
-                text2: 'Unable to connect to the server. Please check your internet connection.',
-                position: 'bottom',
-                visibilityTime: 4000,
+                text1: 'Can’t reach the server',
+                text2: 'Check your connection and try again.',
+                visibilityTime: 5000,
             });
             return;
         }
@@ -69,9 +67,9 @@ class NetworkManager {
             case 401:
                 Toast.show({
                     type: 'error',
-                    text1: 'Session Expired',
-                    text2: 'Please sign in again',
-                    position: 'bottom',
+                    text1: 'Your session ended',
+                    text2: 'Sign in again.',
+                    visibilityTime: 5000,
                 });
                 break;
             case 402:
@@ -81,33 +79,31 @@ class NetworkManager {
             case 403:
                 Toast.show({
                     type: 'error',
-                    text1: 'Access Denied',
-                    text2: 'You don\'t have permission to perform this action',
-                    position: 'bottom',
+                    text1: 'You don’t have permission for this',
+                    visibilityTime: 5000,
                 });
                 break;
             case 404:
                 Toast.show({
                     type: 'error',
-                    text1: 'Not Found',
-                    text2: 'The requested resource was not found',
-                    position: 'bottom',
+                    text1: 'That record wasn’t found',
+                    visibilityTime: 5000,
                 });
                 break;
             case 500:
                 Toast.show({
                     type: 'error',
-                    text1: 'Server Error',
-                    text2: 'Something went wrong on our end. Please try again later.',
-                    position: 'bottom',
+                    text1: 'Something went wrong on the server',
+                    text2: 'Try again in a moment.',
+                    visibilityTime: 5000,
                 });
                 break;
             default:
                 Toast.show({
                     type: 'error',
-                    text1: 'Error',
-                    text2: 'An unexpected error occurred. Please try again.',
-                    position: 'bottom',
+                    text1: 'Something went wrong',
+                    text2: 'Try again.',
+                    visibilityTime: 5000,
                 });
         }
     }

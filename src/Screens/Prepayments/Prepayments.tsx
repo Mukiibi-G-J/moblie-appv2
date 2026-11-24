@@ -159,8 +159,8 @@ const Prepayments: React.FC = () => {
         setHasMore(false);
         Toast.show({
           type: 'error',
-          text1: 'Error',
-          text2: error?.response?.data?.detail || 'Failed to load prepayments',
+          text1: error?.response?.data?.detail || 'Couldn’t load prepayments',
+          visibilityTime: 5000,
         });
       }
     } finally {
@@ -224,10 +224,10 @@ const Prepayments: React.FC = () => {
             } catch (error: any) {
               Toast.show({
                 type: 'error',
-                text1: 'Error',
-                text2:
+                text1:
                   error?.response?.data?.detail ||
-                  'Failed to delete prepayment',
+                  'Couldn’t delete this prepayment',
+                visibilityTime: 5000,
               });
             }
           },

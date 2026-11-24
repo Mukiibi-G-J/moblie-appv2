@@ -884,12 +884,15 @@ const SalesItemBrowser: React.FC<Props> = ({
     return opt?.label ?? 'Items';
   }, [selectedSearchFilter]);
 
-  const handleTypedResultPress = (item: CartItem) => {
-    if (isPosItemOutOfStock(item)) {
-      return;
-    }
-    handleAddItem(item);
-  };
+  const handleTypedResultPress = useCallback(
+    (item: CartItem) => {
+      if (isPosItemOutOfStock(item)) {
+        return;
+      }
+      handleAddItem(item);
+    },
+    [handleAddItem],
+  );
 
   const renderTabButton = (tab: {id: BrowseTab; label: string}) => {
     const isActive = activeTab === tab.id;
@@ -1096,55 +1099,16 @@ const SalesItemBrowser: React.FC<Props> = ({
     </View>
   );
 
-  const getSearchResultInitials = (name: string) => {
-    const parts = name.trim().split(/\s+/).filter(Boolean).slice(0, 2);
-    const letters = parts.map(part => part[0] || '').join('');
-    return (letters || 'it').slice(0, 2).toLowerCase();
-  };
-
-  const renderSearchResultRow = ({item}: {item: CartItem}) => {
-    const isOutOfStock = isPosItemOutOfStock(item);
-    const initialsShort = getSearchResultInitials(item.item_name || '');
-
-    return (
-      <TouchableOpacity
-        style={[
-          styles.searchResultRow,
-          bt.searchResultRow,
-          isOutOfStock && styles.searchResultRowDisabled,
-        ]}
-        onPress={() => handleTypedResultPress(item)}
-        activeOpacity={isOutOfStock ? 1 : 0.75}
-        disabled={isOutOfStock}>
-        <View
-          style={[
-            styles.searchResultInitialsTile,
-            bt.searchResultTile,
-            isOutOfStock && styles.searchResultInitialsTileDisabled,
-            isOutOfStock && bt.searchResultTileDis,
-          ]}>
-          <Text style={[styles.searchResultInitialsText, bt.searchResultInitials]}>
-            {initialsShort}
-          </Text>
-        </View>
-        <View style={styles.searchResultTextCol}>
-          <Text
-            style={[
-              styles.searchResultName,
-              bt.searchResultName,
-              isOutOfStock && styles.searchResultNameDisabled,
-              isOutOfStock && bt.searchResultNameDis,
-            ]}
-            numberOfLines={1}>
-            {item.item_name}
-          </Text>
-        </View>
-        <Text style={[styles.searchResultPrice, bt.searchResultPrice]}>
-          {formatMoney(item.unit_price)}
-        </Text>
-      </TouchableOpacity>
-    );
-  };
+  const renderSearchResultRow = useCallback(
+    ({item}: {item: CartItem}) => (
+      <PosSearchResultRow
+        item={item}
+        theme={bt}
+        onPress={handleTypedResultPress}
+      />
+    ),
+    [bt, handleTypedResultPress],
+  );
 
   const renderTypedSearchList = () => {
     if (loadingItems) {
@@ -2565,6 +2529,75 @@ const PosCategoryChipBar = React.memo(function PosCategoryChipBarInner({
       </ScrollView>
       {layoutToggle}
     </View>
+  );
+});
+
+type PosSearchResultTheme = {
+  searchResultRow: object;
+  searchResultTile: object;
+  searchResultTileDis: object;
+  searchResultInitials: object;
+  searchResultName: object;
+  searchResultNameDis: object;
+  searchResultPrice: object;
+};
+
+function searchResultInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean).slice(0, 2);
+  const letters = parts.map(part => part[0] || '').join('');
+  return (letters || 'it').slice(0, 2).toLowerCase();
+}
+
+const PosSearchResultRow = React.memo(function PosSearchResultRow({
+  item,
+  theme,
+  onPress,
+}: {
+  item: CartItem;
+  theme: PosSearchResultTheme;
+  onPress: (item: CartItem) => void;
+}) {
+  const isOutOfStock = isPosItemOutOfStock(item);
+  const initialsShort = searchResultInitials(item.item_name || '');
+
+  return (
+    <Pressable
+      {...ICON_BUTTON_QUICK_PRESS}
+      disabled={isOutOfStock}
+      onPress={() => onPress(item)}
+      style={({pressed}) => [
+        styles.searchResultRow,
+        theme.searchResultRow,
+        isOutOfStock && styles.searchResultRowDisabled,
+        pressed && !isOutOfStock && {opacity: 0.75},
+      ]}>
+      <View
+        style={[
+          styles.searchResultInitialsTile,
+          theme.searchResultTile,
+          isOutOfStock && styles.searchResultInitialsTileDisabled,
+          isOutOfStock && theme.searchResultTileDis,
+        ]}>
+        <Text style={[styles.searchResultInitialsText, theme.searchResultInitials]}>
+          {initialsShort}
+        </Text>
+      </View>
+      <View style={styles.searchResultTextCol}>
+        <Text
+          style={[
+            styles.searchResultName,
+            theme.searchResultName,
+            isOutOfStock && styles.searchResultNameDisabled,
+            isOutOfStock && theme.searchResultNameDis,
+          ]}
+          numberOfLines={1}>
+          {item.item_name}
+        </Text>
+      </View>
+      <Text style={[styles.searchResultPrice, theme.searchResultPrice]}>
+        {formatMoney(item.unit_price)}
+      </Text>
+    </Pressable>
   );
 });
 

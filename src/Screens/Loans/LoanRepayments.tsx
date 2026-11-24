@@ -144,8 +144,8 @@ const LoanRepayments: React.FC = () => {
         setHasMore(false);
         Toast.show({
           type: 'error',
-          text1: 'Error',
-          text2: error?.response?.data?.detail || 'Failed to load repayments',
+          text1: error?.response?.data?.detail || 'Couldn’t load repayments',
+          visibilityTime: 5000,
         });
       }
     } finally {
@@ -204,10 +204,10 @@ const LoanRepayments: React.FC = () => {
             } catch (error: any) {
               Toast.show({
                 type: 'error',
-                text1: 'Error',
-                text2:
+                text1:
                   error?.response?.data?.detail ||
-                  'Failed to delete repayment',
+                  'Couldn’t delete this repayment',
+                visibilityTime: 5000,
               });
             }
           },
@@ -250,10 +250,10 @@ const LoanRepayments: React.FC = () => {
             } catch (error: any) {
               Toast.show({
                 type: 'error',
-                text1: 'Error',
-                text2:
+                text1:
                   error?.response?.data?.detail ||
-                  'Failed to post repayment',
+                  'Couldn’t post this repayment',
+                visibilityTime: 5000,
               });
             }
           },

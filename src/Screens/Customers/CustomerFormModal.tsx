@@ -12,6 +12,7 @@ import {
   Platform,
   FlatList,
   PermissionsAndroid,
+  Keyboard,
 } from 'react-native';
 import {Picker} from '@react-native-picker/picker';
 import {COLORS, FONTS} from '../../constants';
@@ -154,6 +155,12 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
   formDataRef.current = formData;
   currentRecordRef.current = currentRecord;
 
+  const writeForm = (patch: Partial<CustomerFormValues>) => {
+    const next = {...formDataRef.current, ...patch};
+    formDataRef.current = next;
+    setFormData(next);
+  };
+
   const isEditMode = !!currentRecord?.id;
   const isGeneralCustomer = isProtectedGeneralCustomer(currentRecord || customer);
   const canWrite = isEditMode ? canEdit : canCreate;
@@ -260,9 +267,12 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
     async (
       field: keyof CustomerFormValues,
       rawValue: CustomerFormValues[keyof CustomerFormValues],
-    ) => {
-      if (!visible || isGeneralCustomer || !canWrite || savingRef.current) {
-        return;
+    ): Promise<boolean> => {
+      if (!visible || isGeneralCustomer || !canWrite) {
+        return true;
+      }
+      if (savingRef.current) {
+        return false;
       }
 
       const value =
@@ -273,27 +283,27 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
       if (record?.id) {
         const existing = (record as any)[field];
         if (String(existing ?? '') === String(value ?? '')) {
-          return;
+          return true;
         }
       }
 
       const fieldError = getFieldError(field, value);
       if (fieldError) {
         setErrors(prev => ({...prev, [field]: fieldError}));
-        return;
+        return false;
       }
 
       if (
         !OPTIONAL_CUSTOMER_FIELDS.has(field) &&
         (value === '' || value === null || value === undefined)
       ) {
-        return;
+        return true;
       }
 
       const nameForCreate =
         field === 'name' ? String(value || '') : values.name || '';
       if (!record?.id && !nameForCreate.trim()) {
-        return;
+        return true;
       }
 
       setErrors(prev => {
@@ -309,19 +319,25 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
           const created = await CustomerServices.createCustomer(
             buildCreatePayload({...values, [field]: value as any}),
           );
+          const nextForm = customerToForm(created);
+          currentRecordRef.current = created;
+          formDataRef.current = nextForm;
           setCurrentRecord(created);
-          setFormData(customerToForm(created));
+          setFormData(nextForm);
           onRecordChange?.(created);
           onSave();
           flashSaved();
+          return true;
         } else {
           const updated = await CustomerServices.updateCustomer(record.id, {
             [field]: value,
           } as Partial<Customer>);
+          currentRecordRef.current = updated;
           setCurrentRecord(updated);
           onRecordChange?.(updated);
           onSave();
           flashSaved();
+          return true;
         }
       } catch (error: any) {
         console.error('Error auto-saving customer:', error);
@@ -333,9 +349,10 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
         setErrors(prev => ({...prev, [field]: errorMessage}));
         Toast.show({
           type: 'error',
-          text1: 'Error',
-          text2: errorMessage,
+          text1: errorMessage,
+          visibilityTime: 5000,
         });
+        return false;
       } finally {
         savingRef.current = false;
         setIsSaving(false);
@@ -343,6 +360,59 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
     },
     [visible, isGeneralCustomer, canWrite, onRecordChange, onSave, flashSaved],
   );
+
+  const waitUntilIdle = () =>
+    new Promise<void>(resolve => {
+      const tick = () => {
+        if (!savingRef.current) {
+          resolve();
+          return;
+        }
+        setTimeout(tick, 40);
+      };
+      tick();
+    });
+
+  const flushCustomer = useCallback(async () => {
+    const fields: (keyof CustomerFormValues)[] = [
+      'name',
+      'contact',
+      'phone_number',
+      'address',
+      'city',
+      'payment_method',
+    ];
+    for (const field of fields) {
+      await waitUntilIdle();
+      const saved = await autoSaveField(field, formDataRef.current[field]);
+      if (!saved) {
+        return false;
+      }
+    }
+    return true;
+  }, [autoSaveField]);
+
+  const handleSavePress = useCallback(async () => {
+    Keyboard.dismiss();
+    const ok = await flushCustomer();
+    if (ok && currentRecordRef.current?.id) {
+      flashSaved();
+    }
+  }, [flushCustomer, flashSaved]);
+
+  const handleDismiss = useCallback(async () => {
+    Keyboard.dismiss();
+    await waitUntilIdle();
+    if (!currentRecordRef.current?.id && !formDataRef.current.name.trim()) {
+      onClose();
+      return;
+    }
+    const ok = await flushCustomer();
+    if (!ok) {
+      return;
+    }
+    onClose();
+  }, [flushCustomer, onClose]);
 
   const normalizePhoneNumber = (value: string) =>
     value.replace(/[^\d+]/g, '').trim();
@@ -460,11 +530,11 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
       visible={visible}
       animationType="slide"
       transparent={false}
-      onRequestClose={onClose}>
+      onRequestClose={() => void handleDismiss()}>
       <View style={styles.pageRoot}>
         <View style={[styles.pageHeader, {paddingTop: topInset}]}>
           <QuickIconPressable
-            onPress={onClose}
+            onPress={() => void handleDismiss()}
             style={styles.headerIconButton}
             hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
             accessibilityLabel="Close">
@@ -475,15 +545,23 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
             />
           </QuickIconPressable>
 
-          {canWrite && !isGeneralCustomer && (isSaving || showSaved) ? (
-            <View
-              style={styles.headerSaveButton}
-              accessibilityRole="text"
-              accessibilityLabel={isSaving ? 'Saving' : 'Saved'}>
+          {canWrite && !isGeneralCustomer ? (
+            <TouchableOpacity
+              style={[
+                styles.headerSaveButton,
+                showSaved && !isSaving ? styles.headerSaveButtonSaved : null,
+              ]}
+              onPress={() => void handleSavePress()}
+              disabled={isSaving}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={
+                isSaving ? 'Saving' : showSaved ? 'Saved' : 'Save'
+              }>
               <Text style={styles.headerSaveText}>
-                {isSaving ? 'Saving...' : 'Saved'}
+                {isSaving ? 'Saving' : showSaved ? 'Saved' : 'Save'}
               </Text>
-            </View>
+            </TouchableOpacity>
           ) : (
             <View style={styles.headerSpacer} />
           )}
@@ -498,7 +576,7 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
             {isEditMode ? 'Edit customer' : 'Add customer'}
           </Text>
           <Text style={styles.autoSaveHint}>
-            Changes save automatically when you leave a field
+            Tap Save to keep your changes. Leaving a field also saves.
           </Text>
 
           <View style={styles.previewSection}>
@@ -556,7 +634,7 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
               <TextInput
                 style={[styles.input, errors.name && styles.inputError]}
                 value={formData.name}
-                onChangeText={text => setFormData({...formData, name: text})}
+                onChangeText={text => writeForm({name: text})}
                 onBlur={() => autoSaveField('name', formDataRef.current.name)}
                 placeholder="Customer name"
                 placeholderTextColor={COLORS.gray2}
@@ -570,7 +648,7 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
               <TextInput
                 style={styles.input}
                 value={formData.contact}
-                onChangeText={text => setFormData({...formData, contact: text})}
+                onChangeText={text => writeForm({contact: text})}
                 onBlur={() =>
                   autoSaveField('contact', formDataRef.current.contact || '')
                 }
@@ -585,9 +663,7 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
               <TextInput
                 style={[styles.input, errors.phone_number && styles.inputError]}
                 value={formData.phone_number}
-                onChangeText={text =>
-                  setFormData({...formData, phone_number: text})
-                }
+                onChangeText={text => writeForm({phone_number: text})}
                 onBlur={() =>
                   autoSaveField(
                     'phone_number',
@@ -615,7 +691,7 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
               <TextInput
                 style={[styles.input, styles.textArea]}
                 value={formData.address}
-                onChangeText={text => setFormData({...formData, address: text})}
+                onChangeText={text => writeForm({address: text})}
                 onBlur={() =>
                   autoSaveField('address', formDataRef.current.address || '')
                 }
@@ -632,7 +708,7 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
               <TextInput
                 style={styles.input}
                 value={formData.city}
-                onChangeText={text => setFormData({...formData, city: text})}
+                onChangeText={text => writeForm({city: text})}
                 onBlur={() =>
                   autoSaveField('city', formDataRef.current.city || '')
                 }
@@ -662,7 +738,7 @@ const CustomerFormModal: React.FC<CustomerFormModalProps> = ({
                       selectedValue={formData.payment_method || 0}
                       onValueChange={value => {
                         const nextValue = value === 0 ? null : value;
-                        setFormData({...formData, payment_method: nextValue});
+                        writeForm({payment_method: nextValue});
                         void autoSaveField('payment_method', nextValue);
                       }}
                       style={styles.picker}
@@ -798,15 +874,19 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   headerSaveButton: {
-    minWidth: 88,
-    height: 48,
+    minWidth: 72,
+    height: 36,
+    borderRadius: 999,
+    backgroundColor: COLORS.primary2,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    backgroundColor: 'transparent',
+    paddingHorizontal: 18,
+  },
+  headerSaveButtonSaved: {
+    backgroundColor: COLORS.success,
   },
   headerSaveText: {
-    color: COLORS.gray2,
+    color: COLORS.white,
     fontSize: 15,
     fontWeight: '600',
   },

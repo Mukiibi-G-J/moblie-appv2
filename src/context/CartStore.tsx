@@ -6,7 +6,7 @@ import React, {
   useReducer,
   useRef,
 } from 'react';
-import {InteractionManager} from 'react-native';
+import {DeviceEventEmitter, InteractionManager} from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {CartItem, CartState, CartAction} from '../@types/types.dto';
 
@@ -140,6 +140,15 @@ export function CartProvider({children}: {children: React.ReactNode}) {
   const dispatch = useCallback((action: CartAction) => {
     dispatchSync(action);
     return Promise.resolve();
+  }, []);
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('auth-identity-switch', () => {
+      dispatchSync({type: 'CLEAR_CART'});
+    });
+    return () => {
+      sub.remove();
+    };
   }, []);
 
   return (

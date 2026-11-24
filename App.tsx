@@ -4,8 +4,15 @@ import {
   DarkTheme,
   DefaultTheme,
 } from '@react-navigation/native';
-import { createStackNavigator } from '@react-navigation/stack';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
+import {
+  createNativeStackNavigator,
+  type NativeStackNavigationProp,
+} from '@react-navigation/native-stack';
+import {
+  SafeAreaInsetsContext,
+  SafeAreaProvider,
+  useSafeAreaInsets,
+} from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { View, Text } from 'react-native';
 import SplashScreen from './src/Screens/SplashScreen/SplashScreen';
@@ -86,6 +93,8 @@ import RestaurantReservations from './src/Screens/Restaurant/RestaurantReservati
 import RestaurantMenus from './src/Screens/Restaurant/RestaurantMenus';
 import RestaurantSettings from './src/Screens/Restaurant/RestaurantSettings';
 import PrinterConfig from './src/Screens/PrinterConfig/PrinterConfig';
+import GeneralLedgerSetup from './src/Screens/GeneralLedgerSetup/GeneralLedgerSetup';
+import ReceiptLayout from './src/Screens/ReceiptLayout/ReceiptLayout';
 import SubscriptionPage from './src/Screens/Subscription/SubscriptionPage';
 import MobileMoneyPaymentInstructions from './src/Screens/Subscription/MobileMoneyPaymentInstructions';
 import BarcodeScannerScreen from './src/Screens/Scanner/BarcodeScannerScreen';
@@ -96,8 +105,9 @@ import RestaurantPinRouteGate from './src/Components/RestaurantPinRouteGate';
 import BranchSelectModal from './src/Components/BranchSelectModal';
 import NotificationBootstrap from './src/Components/NotificationBootstrap';
 import CustomerDisplayHost from './src/Components/CustomerDisplayHost';
+import ImpersonationBanner from './src/Components/ImpersonationBanner';
 
-const Stack = createStackNavigator();
+const Stack = createNativeStackNavigator<any>();
 
 function guestRoute<P extends object>(
   Inner: React.ComponentType<P>,
@@ -270,7 +280,9 @@ const RouteRestaurantSettings = protectRoute(
   PAGE_NAMES.RESTAURANT_SETTINGS,
 );
 
-function HomeAuthenticatedLayout(props: object) {
+function HomeAuthenticatedLayout(props: {
+  navigation: NativeStackNavigationProp<any>;
+}) {
   return (
     <AuthGuard requireAuth={true}>
       <MainLayout {...props} />
@@ -705,6 +717,16 @@ const AppNavigator = () => {
               options={{ headerShown: false }}
             />
             <Stack.Screen
+              name="GeneralLedgerSetup"
+              component={GeneralLedgerSetup}
+              options={{headerShown: false}}
+            />
+            <Stack.Screen
+              name="ReceiptLayout"
+              component={ReceiptLayout}
+              options={{headerShown: false}}
+            />
+            <Stack.Screen
               name="BarcodeScanner"
               component={BarcodeScannerScreen}
               options={{headerShown: false}}
@@ -719,6 +741,8 @@ const AppNavigator = () => {
 
 function ThemedNavigation() {
   const {isDark, colors} = useTheme();
+  const insets = useSafeAreaInsets();
+  const impersonating = Boolean(useAppContext()?.impersonation?.active);
   const navTheme = useMemo(
     () => ({
       ...(isDark ? DarkTheme : DefaultTheme),
@@ -734,11 +758,17 @@ function ThemedNavigation() {
     [isDark, colors],
   );
   return (
-    <NavigationContainer ref={navigationRef} theme={navTheme}>
-      <AppNavigator />
-      <BranchSelectModal />
-      <RestaurantPinRouteGate />
-    </NavigationContainer>
+    <View style={{flex: 1, backgroundColor: colors.screenMuted}}>
+      <ImpersonationBanner />
+      <SafeAreaInsetsContext.Provider
+        value={impersonating ? {...insets, top: 0} : insets}>
+        <NavigationContainer ref={navigationRef} theme={navTheme}>
+          <AppNavigator />
+          <BranchSelectModal />
+          <RestaurantPinRouteGate />
+        </NavigationContainer>
+      </SafeAreaInsetsContext.Provider>
+    </View>
   );
 }
 

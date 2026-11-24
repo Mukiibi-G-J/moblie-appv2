@@ -14,6 +14,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Keyboard,
+  Modal,
   ActivityIndicator,
   ScrollView,
   Alert,
@@ -65,7 +66,6 @@ import {
   COLORS,
   icons,
   dummyData,
-  constants,
   ICON_BUTTON_HIT_SLOP,
   ICON_BUTTON_QUICK_PRESS,
 } from '../../constants';
@@ -77,7 +77,7 @@ import {
   QuickIconPressable,
 } from '../../Components';
 import TodayMySalesBar from '../../Components/TodayMySalesBar';
-import { useAppContext, useTabContext } from '../../context/Store';
+import { useAppContext } from '../../context/Store';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useSalesUiMode } from '../../hooks/useSalesUiMode';
 import { useSaleCustomersQuery } from '../../hooks/useSaleCustomersQuery';
@@ -98,6 +98,11 @@ import {
   posItemMaxSaleQuantity,
   posItemStockLabel,
 } from '../../utils/posItemStock';
+import {
+  formatSaleQuantity,
+  parseSaleQuantity,
+  stepSaleQuantity,
+} from '../../utils/saleQuantity';
 import SalesCompletionModal from '../../Components/SalesCompletionModal';
 import { useSearchMode } from '../../context/SearchModeStore';
 import { safeGoBack } from '../../hooks/NavigationService';
@@ -129,6 +134,7 @@ import {
 } from '../../utils/posUom';
 import {
   canEditSalesUnitPrice,
+  formatSalesPriceDraft,
   formatSalesPriceInput,
   parseSalesPriceInput,
   resolveEditedSalesPrice,
@@ -176,9 +182,12 @@ const formatMoney = (value: number | string | undefined | null) => {
 const Cart = ({
   navigation,
   isTabMode = false,
+  isTabActive = true,
 }: {
-  navigation: any;
+  navigation?: any;
   isTabMode?: boolean;
+  /** False while Make Sale stays mounted under another tab. */
+  isTabActive?: boolean;
 }) => {
   const [myCartList, setMyCartList] = React.useState(dummyData.myCart);
   const [searchQuery, setSearchQuery] = useState('');
@@ -319,7 +328,6 @@ const Cart = ({
   const { cartItems } = state;
   const auth = appContext?.auth;
   const {storeLabel, logoUri} = useCompanyInfo();
-  const {selectedTab} = useTabContext();
   const { canRead, canCreate, canEdit, canDelete, hasAnyPageAccess } =
     usePermissions();
   const SALES_PAGE = PAGE_NAMES.SALES;
@@ -340,6 +348,7 @@ const Cart = ({
     preventBelowOriginal: false,
   });
   const [priceDraft, setPriceDraft] = useState('');
+  const [qtyDraft, setQtyDraft] = useState('1');
   const canPostPreviousDates = userSetup?.canPostPreviousDates !== false;
   const canChangeSellingDate =
     (canInsertSale || canModifySale) && canPostPreviousDates;
@@ -474,9 +483,8 @@ const Cart = ({
     showSalesModal,
     storeLabel,
   ]);
-  const customerScreenActive = isTabMode
-    ? selectedTab === constants.screens.makeSale
-    : isFocused;
+  const saleTabActive = isTabMode ? isTabActive : isFocused;
+  const customerScreenActive = saleTabActive;
   const idleCustomerDisplay = useMemo(
     () => buildIdleCustomerDisplay(storeLabel, logoUri),
     [logoUri, storeLabel],
@@ -514,25 +522,33 @@ const Cart = ({
   }, []);
 
   useEffect(() => {
+    if (!saleTabActive) {
+      return;
+    }
     if (Platform.OS !== 'android' || !searchModeState.barcodeScannerEnabled) {
       setCameraPermission(Platform.OS === 'android' ? null : false);
       return;
     }
     requestCartCameraPermission();
-  }, [searchModeState.barcodeScannerEnabled, requestCartCameraPermission]);
+  }, [
+    saleTabActive,
+    searchModeState.barcodeScannerEnabled,
+    requestCartCameraPermission,
+  ]);
 
   useEffect(() => {
-    if (!isFocused) {
+    if (!saleTabActive) {
       setScannerTorchOn(false);
     }
-  }, [isFocused]);
+  }, [saleTabActive]);
 
   useFocusEffect(
     useCallback(() => {
-      if (showTodayMySales) {
-        setTodayMySalesRefreshKey(k => k + 1);
+      if (!saleTabActive || !showTodayMySales) {
+        return;
       }
-    }, [showTodayMySales]),
+      setTodayMySalesRefreshKey(k => k + 1);
+    }, [saleTabActive, showTodayMySales]),
   );
 
   useEffect(() => {
@@ -553,6 +569,10 @@ const Cart = ({
   cartItemsRef.current = cartItems;
 
   useEffect(() => {
+    if (!saleTabActive) {
+      setKeyboardVisible(false);
+      return;
+    }
     const keyboardDidShowListener = Keyboard.addListener(
       'keyboardDidShow',
       () => {
@@ -570,15 +590,15 @@ const Cart = ({
       keyboardDidHideListener.remove();
       keyboardDidShowListener.remove();
     };
-  }, []);
+  }, [saleTabActive]);
 
   // Load drafts when screen is focused; customers come from React Query cache.
   useEffect(() => {
-    if (isFocused) {
+    if (saleTabActive) {
       loadDrafts();
       refetchSaleCustomers();
     }
-  }, [isFocused, refetchSaleCustomers]);
+  }, [saleTabActive, refetchSaleCustomers]);
 
   useEffect(() => {
     if (!saleCustomers.length) {
@@ -618,29 +638,31 @@ const Cart = ({
 
   // Ensure keyboard stays focused when modal opens
   useEffect(() => {
-    if (isModalVisible) {
-      // Keep the search input focused when modal opens
-      const focusInterval = setInterval(() => {
-        searchInputRef.current?.focus();
-      }, 100);
-
-      // Clear interval after 1 second
-      setTimeout(() => {
-        clearInterval(focusInterval);
-      }, 1000);
-
-      return () => clearInterval(focusInterval);
+    if (!saleTabActive || !isModalVisible) {
+      return;
     }
-  }, [isModalVisible]);
+    // Keep the search input focused when modal opens
+    const focusInterval = setInterval(() => {
+      searchInputRef.current?.focus();
+    }, 100);
+
+    // Clear interval after 1 second
+    const stopFocusing = setTimeout(() => {
+      clearInterval(focusInterval);
+    }, 1000);
+
+    return () => {
+      clearInterval(focusInterval);
+      clearTimeout(stopFocusing);
+    };
+  }, [saleTabActive, isModalVisible]);
 
   const addToCart = (item: CartItem) => {
     if (!canMutateCart) {
       Toast.show({
         type: 'info',
-        text1: 'Permission denied',
-        text2: 'You cannot add items to this sale.',
+        text1: 'You can’t add items to this sale',
         visibilityTime: 3000,
-        position: 'top',
       });
       return;
     }
@@ -652,19 +674,8 @@ const Cart = ({
     if (isInventoryPosItem(item) && quantity > item.inventory) {
       Toast.show({
         type: 'error',
-        text1: '⚠️ Stock Limit Reached',
-        text2: `Only ${item.inventory} items available`,
-        text1Style: {
-          fontSize: 16,
-          fontWeight: '600',
-          color: '#E53935',
-        },
-        text2Style: {
-          fontSize: 14,
-          color: '#666',
-        },
-        visibilityTime: 2500,
-        position: 'top',
+        text1: `Only ${item.inventory} left in stock`,
+        visibilityTime: 3000,
       });
       return;
     }
@@ -752,22 +763,9 @@ const Cart = ({
     try {
       if (!itemCode.trim()) {
         Toast.show({
-          type: 'error',
-          text1: 'Error',
-          text2: 'Please enter a search query.',
-          text1Style: {
-            fontSize: 13,
-            fontWeight: '600',
-            color: '#FF3B30',
-            textAlign: 'center',
-          },
-          text2Style: {
-            fontSize: 11,
-            color: '#666',
-            textAlign: 'center',
-          },
-          visibilityTime: 4000,
-          position: 'top',
+          type: 'info',
+          text1: 'Enter something to search',
+          visibilityTime: 2500,
         });
         return;
       }
@@ -778,43 +776,16 @@ const Cart = ({
       } else {
         Toast.show({
           type: 'info',
-          text1: 'No Results',
-          text2: 'No items found for your search.',
-          text1Style: {
-            fontSize: 20,
-            fontWeight: 'bold',
-            color: '#005151', // iOS-style blue for info
-            textAlign: 'center',
-          },
-          text2Style: {
-            fontSize: 17,
-            color: '#666',
-            textAlign: 'center',
-            lineHeight: 22,
-          },
-          visibilityTime: 4000,
-          position: 'top',
+          text1: 'No items match that search',
+          visibilityTime: 2500,
         });
       }
     } catch (error) {
       Toast.show({
         type: 'error',
-        text1: 'Error',
-        text2: `Error: ${error}`,
-        text1Style: {
-          fontSize: 20,
-          fontWeight: 'bold',
-          color: '#FF3B30',
-          textAlign: 'center',
-        },
-        text2Style: {
-          fontSize: 17,
-          color: '#666',
-          textAlign: 'center',
-          lineHeight: 22,
-        },
-        visibilityTime: 4000,
-        position: 'top',
+        text1: 'Couldn’t search items',
+        text2: 'Try again.',
+        visibilityTime: 5000,
       });
     } finally {
       setIsLoading(false);
@@ -829,10 +800,8 @@ const Cart = ({
     if (!searchModeState.barcodeScannerEnabled) {
       Toast.show({
         type: 'info',
-        text1: 'Scanner Disabled',
-        text2: 'Enable barcode scanner in Settings to use camera scan.',
-        visibilityTime: 3000,
-        position: 'top',
+        text1: 'Turn on the barcode scanner in Settings',
+        visibilityTime: 4000,
       });
       return;
     }
@@ -862,10 +831,10 @@ const Cart = ({
   };
 
   const showEmbeddedScanner =
+    saleTabActive &&
     Platform.OS === 'android' &&
     searchModeState.barcodeScannerEnabled &&
-    cameraPermission === true &&
-    isFocused;
+    cameraPermission === true;
 
   const showScanShortcutButton =
     searchModeState.barcodeScannerEnabled &&
@@ -931,16 +900,15 @@ const Cart = ({
     if (!canMutateCart) {
       Toast.show({
         type: 'info',
-        text1: 'Permission denied',
-        text2: 'You cannot edit cart lines.',
+        text1: 'You can’t edit these lines',
         visibilityTime: 3000,
-        position: 'top',
       });
       return;
     }
     const opened = withCartUomDefaults({...item});
     setEditingCartItem(opened);
     setPriceDraft(formatSalesPriceInput(Number(opened.unit_price) || 0));
+    setQtyDraft(formatSaleQuantity(Number(opened.quantity) || 1));
     setCartItemEditorVisible(true);
     void enrichCartItemTracking(opened);
   };
@@ -949,6 +917,7 @@ const Cart = ({
     setCartItemEditorVisible(false);
     setEditingCartItem(null);
     setPriceDraft('');
+    setQtyDraft('1');
     setUomModalVisible(false);
     setUomOptions([]);
     setUomResolvedPrices({});
@@ -1070,7 +1039,7 @@ const Cart = ({
 
     const currentQty = Number(editingCartItem.quantity) || 1;
     const maxQty = posItemMaxSaleQuantity(editingCartItem, currentQty);
-    const nextQty = Math.min(maxQty, Math.max(1, currentQty + delta));
+    const nextQty = stepSaleQuantity(currentQty, delta, maxQty);
 
     if (nextQty === currentQty) {
       return;
@@ -1080,8 +1049,46 @@ const Cart = ({
       ...editingCartItem,
       quantity: nextQty,
     };
+    setQtyDraft(formatSaleQuantity(nextQty));
     setEditingCartItem(updated);
     dispatch({ type: 'CART_UPDATE_ITEM', payload: updated });
+  };
+
+  const commitEditingCartItemQuantity = () => {
+    if (!canModifySale || !editingCartItem) {
+      if (editingCartItem) {
+        setQtyDraft(formatSaleQuantity(Number(editingCartItem.quantity) || 1));
+      }
+      return;
+    }
+    const parsed = parseSaleQuantity(qtyDraft);
+    if (parsed == null) {
+      setQtyDraft(formatSaleQuantity(Number(editingCartItem.quantity) || 1));
+      Toast.show({
+        type: 'info',
+        text1: 'Enter a quantity',
+        text2: 'Use a number such as 0.2 or 0.5 kg.',
+        visibilityTime: 2500,
+        position: 'top',
+      });
+      return;
+    }
+    const maxQty = posItemMaxSaleQuantity(
+      editingCartItem,
+      Number(editingCartItem.quantity) || parsed,
+    );
+    const nextQty = Math.min(parsed, maxQty);
+    if (nextQty < parsed) {
+      Toast.show({
+        type: 'info',
+        text1: `Only ${formatSaleQuantity(maxQty)} left in stock`,
+        visibilityTime: 3000,
+      });
+    }
+    const updated: CartItem = {...editingCartItem, quantity: nextQty};
+    setQtyDraft(formatSaleQuantity(nextQty));
+    setEditingCartItem(updated);
+    dispatch({type: 'CART_UPDATE_ITEM', payload: updated});
   };
 
   const commitEditingCartItemPrice = () => {
@@ -1132,7 +1139,7 @@ const Cart = ({
     }
     const currentQty = Number(item.quantity) || 1;
     const maxQty = posItemMaxSaleQuantity(item, currentQty);
-    const nextQty = Math.min(maxQty, Math.max(1, currentQty + delta));
+    const nextQty = stepSaleQuantity(currentQty, delta, maxQty);
     if (nextQty === currentQty) {
       return;
     }
@@ -1140,6 +1147,7 @@ const Cart = ({
     dispatch({type: 'CART_UPDATE_ITEM', payload: updated});
     if (editingCartItem?.system_id === item.system_id) {
       setEditingCartItem(updated);
+      setQtyDraft(formatSaleQuantity(nextQty));
     }
   };
 
@@ -1293,10 +1301,8 @@ const Cart = ({
     if (!canInsertSale) {
       Toast.show({
         type: 'error',
-        text1: 'Permission denied',
-        text2: 'You do not have permission to complete sales.',
-        visibilityTime: 3500,
-        position: 'top',
+        text1: 'You can’t complete this sale',
+        visibilityTime: 4000,
       });
       return;
     }
@@ -1505,20 +1511,16 @@ const Cart = ({
       if (!canModifySale) {
         Toast.show({
           type: 'error',
-          text1: 'Permission denied',
-          text2: 'You cannot update drafts.',
-          visibilityTime: 3500,
-          position: 'top',
+          text1: 'You can’t update drafts',
+          visibilityTime: 4000,
         });
         return;
       }
     } else if (!canInsertSale) {
       Toast.show({
         type: 'error',
-        text1: 'Permission denied',
-        text2: 'You cannot save new drafts.',
-        visibilityTime: 3500,
-        position: 'top',
+        text1: 'You can’t save new drafts',
+        visibilityTime: 4000,
       });
       return;
     }
@@ -1550,10 +1552,8 @@ const Cart = ({
       if (!generalCustomer) {
         Toast.show({
           type: 'error',
-          text1: 'Error',
-          text2: 'Please select a customer first',
+          text1: 'Select a customer first',
           visibilityTime: 3000,
-          position: 'top',
         });
         return;
       }
@@ -1563,10 +1563,9 @@ const Cart = ({
       if (paymentMethodsData.length === 0) {
         Toast.show({
           type: 'error',
-          text1: 'Error',
-          text2: 'No payment methods available. Please contact your administrator.',
-          visibilityTime: 3000,
-          position: 'top',
+          text1: 'No payment methods are set up',
+          text2: 'Ask an administrator to add one.',
+          visibilityTime: 5000,
         });
         return;
       }
@@ -1627,10 +1626,8 @@ const Cart = ({
   
         Toast.show({
           type: 'success',
-          text1: 'Draft Updated',
-          text2: `Draft has been updated successfully`,
-          visibilityTime: 3000,
-          position: 'top',
+          text1: 'Draft updated',
+          visibilityTime: 2000,
         });
   
         // Clear the current draft ID and system_id after successful update
@@ -1641,10 +1638,9 @@ const Cart = ({
         if (drafts.length >= 3) {
           Toast.show({
             type: 'error',
-            text1: 'Maximum Drafts Reached',
-            text2: 'You can only have 3 drafts. Please complete or delete an existing draft first.',
-            visibilityTime: 3000,
-            position: 'top',
+            text1: 'You already have 3 drafts',
+            text2: 'Finish or delete one before saving another.',
+            visibilityTime: 5000,
           });
           return;
         }
@@ -1654,10 +1650,11 @@ const Cart = ({
   
         Toast.show({
           type: 'success',
-          text1: 'Draft Saved',
-          text2: `Invoice No: ${response.data.invoice_no || 'Draft'}`,
-          visibilityTime: 3000,
-          position: 'top',
+          text1: 'Draft saved',
+          text2: response.data.invoice_no
+            ? `Invoice ${response.data.invoice_no}`
+            : undefined,
+          visibilityTime: 2000,
         });
       }
   
@@ -1675,10 +1672,8 @@ const Cart = ({
       console.error('Failed to save draft:', error);
       Toast.show({
         type: 'error',
-        text1: 'Error',
-        text2: error.response?.data?.message || 'Failed to save draft',
-        visibilityTime: 3000,
-        position: 'top',
+        text1: error.response?.data?.message || 'Couldn’t save this draft',
+        visibilityTime: 5000,
       });
     } finally {
       setIsSavingDraft(false);
@@ -1766,7 +1761,7 @@ const Cart = ({
                   ? Number(itemDetails.quantity_per_unit)
                   : 1;
             const unitPrice = parseFloat(String(line.unit_price)) || 0;
-            const qty = parseInt(String(line.quantity), 10) || 1;
+            const qty = Number(line.quantity) || 1;
             return {
               system_id: String(systemId),
               no: String(itemNo || ''),
@@ -1926,10 +1921,8 @@ const Cart = ({
     if (!canRemoveSale) {
       Toast.show({
         type: 'error',
-        text1: 'Permission denied',
-        text2: 'You cannot delete drafts.',
-        visibilityTime: 3500,
-        position: 'top',
+        text1: 'You can’t delete drafts',
+        visibilityTime: 4000,
       });
       return;
     }
@@ -1950,19 +1943,15 @@ const Cart = ({
   
       Toast.show({
         type: 'success',
-        text1: 'Draft Deleted',
-        text2: 'Draft has been deleted successfully',
+        text1: 'Draft deleted',
         visibilityTime: 2000,
-        position: 'top',
       });
     } catch (error: any) {
       console.error('Failed to delete draft:', error);
       Toast.show({
         type: 'error',
-        text1: 'Error',
-        text2: 'Failed to delete draft',
-        visibilityTime: 3000,
-        position: 'top',
+        text1: 'Couldn’t delete this draft',
+        visibilityTime: 5000,
       });
     }
   };
@@ -2070,8 +2059,9 @@ const Cart = ({
   const renderSaleCustomerPickerFlatList = (listStyle: object | object[], contentExtra?: object) => (
     <FlatList
       data={filteredSaleCustomers}
-      keyExtractor={item => String(item.id)}
+      keyExtractor={item => String(item.system_id || item.id || item.no)}
       keyboardShouldPersistTaps="handled"
+      nestedScrollEnabled
       style={listStyle}
       contentContainerStyle={
         contentExtra
@@ -2082,7 +2072,8 @@ const Cart = ({
         const isSelected = selectedSaleCustomer?.id === item.id;
   
         return (
-          <TouchableOpacity
+          <Pressable
+            {...ICON_BUTTON_QUICK_PRESS}
             style={[
               styles.saleCustomerRow,
               ct.saleCustRow,
@@ -2137,7 +2128,7 @@ const Cart = ({
                 });
               }
             }}
-            activeOpacity={0.75}>
+          >
             <View style={styles.saleCustomerAvatar}>
               <Text style={styles.saleCustomerAvatarText}>
                 {(item.name || 'C')
@@ -2154,7 +2145,7 @@ const Cart = ({
               <Text style={[styles.saleCustomerName, ct.saleCustName]}>{item.name}</Text>
               <Text style={[styles.saleCustomerMeta, ct.saleCustMeta]}>{item.no}</Text>
             </View>
-          </TouchableOpacity>
+          </Pressable>
         );
       }}
       ListEmptyComponent={
@@ -2195,26 +2186,36 @@ const Cart = ({
   
       {loadingSaleCustomers
         ? saleCustomerPickerLoading()
-        : renderSaleCustomerPickerFlatList([styles.saleCustomerPickerList, { flexGrow: 0 }])}
+        : renderSaleCustomerPickerFlatList([
+            styles.saleCustomerPickerList,
+            {height: SALE_CUSTOMER_PICKER_LIST_MAX_HEIGHT},
+          ])}
     </View>
   );
   
-  /** When Current sale is closed, picker uses its own Modal; when open, picker is inlined above the sheet. */
+  const closeCustomerPicker = () => {
+    setCustomerPickerVisible(false);
+    setCustomerPickerQuery('');
+  };
+
+  /** Own modal when Current sale is closed. While that sheet is open, the list is inlined so Android can still receive the tap. */
   const renderCustomerPicker = () => (
-    <ReactNativeModal
-      isVisible={customerPickerVisible && !reviewSaleVisible}
-      animationIn="slideInUp"
-      animationOut="slideOutDown"
-      onBackdropPress={() => setCustomerPickerVisible(false)}
-      style={styles.modal}
-      backdropOpacity={0.3}
-      useNativeDriver={true}
-      onBackButtonPress={() => {
-        setCustomerPickerVisible(false);
-        return true;
-      }}>
-      {renderSaleCustomerPickerSheet()}
-    </ReactNativeModal>
+    <Modal
+      visible={customerPickerVisible && !reviewSaleVisible}
+      transparent
+      animationType="slide"
+      statusBarTranslucent
+      onRequestClose={closeCustomerPicker}>
+      <View style={styles.customerPickerModalRoot}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss customer list"
+          style={styles.customerPickerModalDismiss}
+          onPress={closeCustomerPicker}
+        />
+        {renderSaleCustomerPickerSheet()}
+      </View>
+    </Modal>
   );
   
   const renderReviewSaleSheet = () => {
@@ -2312,11 +2313,11 @@ const Cart = ({
             <Image source={icons.down_arrow} style={styles.saleDateRowChevron} />
           </TouchableOpacity>
   
-          <TouchableOpacity
+          <Pressable
             style={[styles.customerRow, ct.customerRow]}
             disabled={!canMutateCart}
             onPress={() => setCustomerPickerVisible(true)}
-            activeOpacity={0.78}>
+            {...ICON_BUTTON_QUICK_PRESS}>
             <View style={[styles.customerRowIconWrap, ct.customerIconWrap]}>
               <Image source={icons.profile} style={styles.customerRowIcon} />
               <Image source={icons.plus} style={styles.customerRowPlusIcon} />
@@ -2336,7 +2337,7 @@ const Cart = ({
               </Text>
             </View>
             <Image source={icons.down_arrow} style={styles.customerRowChevron} />
-          </TouchableOpacity>
+          </Pressable>
   
           {reviewSaleVisible ? (
             <GestureHandlerRootView
@@ -2378,8 +2379,8 @@ const Cart = ({
                             style={[styles.squareCartItemName, ct.squareCartName]}
                             numberOfLines={1}>
                             {item.item_name}
-                            {(Number(item.quantity) || 1) > 1
-                              ? ` x ${Number(item.quantity) || 1}`
+                            {Number(item.quantity) !== 1
+                              ? ` x ${formatSaleQuantity(Number(item.quantity) || 1)}`
                               : ''}
                           </Text>
                         </View>
@@ -2643,8 +2644,7 @@ const Cart = ({
                           ]}
                           value={priceDraft}
                           onChangeText={text => {
-                            const cleaned = text.replace(/[^\d.,]/g, '');
-                            setPriceDraft(cleaned);
+                            setPriceDraft(formatSalesPriceDraft(text));
                           }}
                           onBlur={commitEditingCartItemPrice}
                           onSubmitEditing={commitEditingCartItemPrice}
@@ -2668,6 +2668,9 @@ const Cart = ({
                     )}
 
                     <Text style={styles.cartEditorSectionLabel}>QUANTITY</Text>
+                    <Text style={[styles.cartEditorUomHint, ct.cartEditorTrackHint]}>
+                      Type part of a unit, such as 0.2 or 0.5 kg.
+                    </Text>
   
                     <View style={styles.cartEditorQuantityRow}>
                       <Pressable
@@ -2690,9 +2693,27 @@ const Cart = ({
   
                       <View
                         style={[styles.cartEditorQuantityValueWrap, ct.cartEditorQtyValBr]}>
-                        <Text style={styles.cartEditorQuantityValue}>
-                          {Number(editingCartItem?.quantity) || 1}
-                        </Text>
+                        <TextInput
+                          style={styles.cartEditorQuantityValue}
+                          value={qtyDraft}
+                          onChangeText={text => {
+                            const cleaned = text.replace(/[^\d.]/g, '');
+                            const parts = cleaned.split('.');
+                            const next =
+                              parts.length <= 1
+                                ? cleaned
+                                : `${parts[0]}.${parts.slice(1).join('').slice(0, 3)}`;
+                            setQtyDraft(next);
+                          }}
+                          onBlur={commitEditingCartItemQuantity}
+                          onSubmitEditing={commitEditingCartItemQuantity}
+                          keyboardType="decimal-pad"
+                          selectTextOnFocus
+                          editable={canModifySale}
+                          placeholder="0.5"
+                          placeholderTextColor={COLORS.gray}
+                          accessibilityLabel="Quantity"
+                        />
                       </View>
   
                       <Pressable
@@ -2847,72 +2868,72 @@ const Cart = ({
             onClose={() => setUomModalVisible(false)}
             onSelect={handleUomSelected}
           />
-  
+
           {customerPickerVisible ? (
-            <View style={styles.customerPickerInlineRoot} pointerEvents="box-none">
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Dismiss customer list"
-                style={styles.customerPickerInlineBackdrop}
-                onPress={() => setCustomerPickerVisible(false)}
-              />
-              {/* Full-panel overlay (same idea as quantity / cart line editor) — list uses flex:1 so no dim gap above Charge */}
-              <View
-                style={[styles.customerPickerInlineForeground, { backgroundColor: colors.background }]}
-                pointerEvents="auto">
-                <GestureHandlerRootView style={styles.customerPickerEmbeddedFlex}>
-                  <SafeAreaView
-                    style={[styles.customerPickerEmbeddedScreen, ct.cartEditorScreen]}
-                    edges={['bottom']}>
-                    <View style={[styles.customerPickerEmbeddedHeader, ct.cartEditorHdr]}>
-                      <QuickIconPressable
-                        style={styles.cartEditorHeaderButton}
-                        onPress={() => setCustomerPickerVisible(false)}
-                        hitSlop={ICON_BUTTON_HIT_SLOP}
-                        accessibilityLabel="Close customer list">
-                        <Image source={icons.cross} style={styles.cartEditorCloseIcon} />
-                      </QuickIconPressable>
-                      <Text style={[styles.customerPickerEmbeddedTitle, { color: COLORS.primary2 }]}>
-                        Select customer
-                      </Text>
-                      <View style={styles.customerPickerHeaderSpacer} />
+            <View
+              style={[
+                styles.customerPickerInlineRoot,
+                {backgroundColor: colors.background},
+              ]}
+              pointerEvents="auto">
+              <SafeAreaView
+                style={[styles.customerPickerEmbeddedScreen, ct.cartEditorScreen]}
+                edges={['bottom']}>
+                <View style={[styles.customerPickerEmbeddedHeader, ct.cartEditorHdr]}>
+                  <QuickIconPressable
+                    style={styles.cartEditorHeaderButton}
+                    onPress={closeCustomerPicker}
+                    hitSlop={ICON_BUTTON_HIT_SLOP}
+                    accessibilityLabel="Close customer list">
+                    <Image source={icons.cross} style={styles.cartEditorCloseIcon} />
+                  </QuickIconPressable>
+                  <Text style={[styles.customerPickerEmbeddedTitle, {color: COLORS.primary2}]}>
+                    Select customer
+                  </Text>
+                  <View style={styles.customerPickerHeaderSpacer} />
+                </View>
+
+                <View
+                  style={[
+                    styles.customerPickerEmbeddedSearchPad,
+                    {backgroundColor: colors.surface},
+                  ]}>
+                  <View
+                    style={[
+                      styles.saleCustomerSearchWrap,
+                      ct.saleCustSearch,
+                      {marginHorizontal: 0},
+                    ]}>
+                    <Image source={icons.search} style={styles.saleCustomerSearchIcon} />
+                    <TextInput
+                      value={customerPickerQuery}
+                      onChangeText={setCustomerPickerQuery}
+                      placeholder="Search customers..."
+                      placeholderTextColor={colors.placeholder}
+                      underlineColorAndroid="transparent"
+                      autoCorrect={false}
+                      style={[styles.saleCustomerSearchInput, ct.saleCustSearchIn]}
+                    />
+                  </View>
+                </View>
+
+                <View
+                  style={[
+                    styles.customerPickerEmbeddedBody,
+                    {backgroundColor: colors.surface},
+                  ]}>
+                  {loadingSaleCustomers ? (
+                    <View style={styles.customerPickerEmbeddedLoadingWrap}>
+                      {saleCustomerPickerLoading()}
                     </View>
-  
-                    <View
-                      style={[
-                        styles.customerPickerEmbeddedSearchPad,
-                        { backgroundColor: colors.surface },
-                      ]}>
-                      <View style={[styles.saleCustomerSearchWrap, ct.saleCustSearch, { marginHorizontal: 0 }]}>
-                        <Image source={icons.search} style={styles.saleCustomerSearchIcon} />
-                        <TextInput
-                          value={customerPickerQuery}
-                          onChangeText={setCustomerPickerQuery}
-                          placeholder="Search customers..."
-                          placeholderTextColor={colors.placeholder}
-                          underlineColorAndroid="transparent"
-                          autoCorrect={false}
-                          style={[styles.saleCustomerSearchInput, ct.saleCustSearchIn]}
-                        />
-                      </View>
-                    </View>
-  
-                    <View
-                      style={[styles.customerPickerEmbeddedBody, { backgroundColor: colors.surface }]}>
-                      {loadingSaleCustomers ? (
-                        <View style={styles.customerPickerEmbeddedLoadingWrap}>
-                          {saleCustomerPickerLoading()}
-                        </View>
-                      ) : (
-                        renderSaleCustomerPickerFlatList(
-                          [styles.customerPickerEmbeddedList, { backgroundColor: colors.surface }],
-                          styles.customerPickerEmbeddedListContent,
-                        )
-                      )}
-                    </View>
-                  </SafeAreaView>
-                </GestureHandlerRootView>
-              </View>
+                  ) : (
+                    renderSaleCustomerPickerFlatList(
+                      [styles.customerPickerEmbeddedList, {backgroundColor: colors.surface}],
+                      styles.customerPickerEmbeddedListContent,
+                    )
+                  )}
+                </View>
+              </SafeAreaView>
             </View>
           ) : null}
         </View>
@@ -2975,27 +2996,7 @@ const Cart = ({
                 style={[styles.modalItemContainer, ct.modalItem]}
                 onPress={() => {
                   addToCart(item);
-                  setTimeout(() => {
-                    Toast.show({
-                      type: 'success',
-                      text1: 'Item Added',
-                      text2: `${item.item_name} has been added to sale.`,
-                      text1Style: {
-                        fontSize: 13,
-                        fontWeight: '600',
-                        color: '#4CD964', // iOS-style green for success
-                        textAlign: 'center',
-                      },
-                      text2Style: {
-                        fontSize: 11,
-                        color: '#666',
-                        textAlign: 'center',
-                      },
-                      visibilityTime: 4000,
-                      position: 'top',
-                    });
-                    toggleModal();
-                  }, 0);
+                  toggleModal();
                 }}>
                 <View style={[styles.modalImageContainer, ct.modalImgBg]}>
                   <Image
@@ -3343,10 +3344,8 @@ const Cart = ({
                   if (!canMutateCart) {
                     Toast.show({
                       type: 'info',
-                      text1: 'Permission denied',
-                      text2: 'You cannot add items to this sale.',
+                      text1: 'You can’t add items to this sale',
                       visibilityTime: 3000,
-                      position: 'top',
                     });
                     return;
                   }
@@ -3659,22 +3658,18 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     margin: 0,
   },
+  customerPickerModalRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0,0,0,0.32)',
+  },
+  customerPickerModalDismiss: {
+    flex: 1,
+  },
   customerPickerInlineRoot: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 400,
     elevation: 400,
-  },
-  customerPickerInlineBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.32)',
-  },
-  customerPickerInlineForeground: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 1,
-    elevation: 12,
-  },
-  customerPickerEmbeddedFlex: {
-    flex: 1,
   },
   customerPickerEmbeddedScreen: {
     flex: 1,
@@ -4270,6 +4265,9 @@ const styles = StyleSheet.create({
     ...FONTS.h2,
     color: COLORS.primary2,
     fontWeight: '700',
+    textAlign: 'center',
+    width: '100%',
+    padding: 0,
   },
   cartEditorTrackingSection: {
     marginBottom: 40,

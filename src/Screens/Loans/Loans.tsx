@@ -125,8 +125,8 @@ const Loans: React.FC = () => {
         setHasMore(false);
         Toast.show({
           type: 'error',
-          text1: 'Error',
-          text2: error?.response?.data?.detail || 'Failed to load loans',
+          text1: error?.response?.data?.detail || 'Couldn’t load loans',
+          visibilityTime: 5000,
         });
       }
     } finally {
@@ -187,9 +187,9 @@ const Loans: React.FC = () => {
             } catch (error: any) {
               Toast.show({
                 type: 'error',
-                text1: 'Error',
-                text2:
-                  error?.response?.data?.detail || 'Failed to delete loan',
+                text1:
+                  error?.response?.data?.detail || 'Couldn’t delete this loan',
+                visibilityTime: 5000,
               });
             }
           },
@@ -233,9 +233,9 @@ const Loans: React.FC = () => {
             } catch (error: any) {
               Toast.show({
                 type: 'error',
-                text1: 'Error',
-                text2:
-                  error?.response?.data?.detail || 'Failed to post loan',
+                text1:
+                  error?.response?.data?.detail || 'Couldn’t post this loan',
+                visibilityTime: 5000,
               });
             }
           },

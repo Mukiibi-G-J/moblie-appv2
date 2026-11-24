@@ -110,8 +110,9 @@ const BankAccountLedger: React.FC = () => {
         setHasMore(false);
         Toast.show({
           type: 'error',
-          text1: 'Error',
-          text2: error?.response?.data?.detail || 'Failed to load ledger entries',
+          text1:
+            error?.response?.data?.detail || 'Couldn’t load ledger entries',
+          visibilityTime: 5000,
         });
       }
     } finally {

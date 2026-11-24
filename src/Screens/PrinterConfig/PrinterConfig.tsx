@@ -160,8 +160,8 @@ const PrinterConfig: React.FC = () => {
       console.error('Failed to set printer type:', error);
       Toast.show({
         type: 'error',
-        text1: 'Error',
-        text2: 'Failed to update printer type',
+        text1: 'Couldn’t update the printer type',
+        visibilityTime: 5000,
       });
     } finally {
       setIsLoading(false);

@@ -28,7 +28,7 @@ interface UnitOfMeasureFormModalProps {
   visible: boolean;
   onClose: () => void;
   unit: UnitOfMeasure | null;
-  onSave: () => void;
+  onSave: (unit?: UnitOfMeasure) => void;
   canCreate: boolean;
   canEdit: boolean;
 }
@@ -123,7 +123,7 @@ const UnitOfMeasureFormModal: React.FC<UnitOfMeasureFormModalProps> = ({
         await createUnitOfMeasure(payload);
         Toast.show({type: 'success', text1: 'Unit created'});
       }
-      onSave();
+      onSave(payload);
       onClose();
     } catch (error) {
       Toast.show({

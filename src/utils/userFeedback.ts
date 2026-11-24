@@ -32,9 +32,9 @@ export function showUserError(
             Clipboard.setString(`${title}\n${body}`);
             Toast.show({
               type: 'success',
-              text1: 'Error copied',
-              text2: 'You can paste it when contacting support.',
-              visibilityTime: 2500,
+              text1: 'Copied',
+              text2: 'Paste it when you contact support.',
+              visibilityTime: 2000,
             });
           } catch {
             /* ignore */
@@ -62,7 +62,7 @@ export function showUserSuccess(title: string, message?: string) {
     type: 'success',
     text1: title,
     text2: message,
-    visibilityTime: 3500,
+    visibilityTime: 2000,
     position: 'top',
   });
 }
@@ -72,7 +72,7 @@ export function showUserInfo(title: string, message?: string) {
     type: 'info',
     text1: title,
     text2: message,
-    visibilityTime: 4000,
+    visibilityTime: 3000,
     position: 'top',
   });
 }

@@ -1,6 +1,6 @@
 import React, {useMemo, useState} from 'react';
-import {View, Text, TouchableOpacity, StyleSheet, Image} from 'react-native';
-import {COLORS, FONTS, icons} from '../../constants';
+import {View, Text, Pressable, StyleSheet, Image} from 'react-native';
+import {COLORS, FONTS, icons, ICON_BUTTON_QUICK_PRESS} from '../../constants';
 import {formatCurrencyCompact} from '../../utils/currency';
 import {useTheme} from '../../context/ThemeContext';
 import {Vendor} from '../../@types/vendor';
@@ -64,9 +64,13 @@ const SupplierListItem: React.FC<SupplierListItemProps> = ({
 
   return (
     <View>
-      <TouchableOpacity
-      activeOpacity={onEdit && !isGeneralVendor ? 0.8 : 1}
-      style={[styles.container, {borderBottomColor: colors.border}]}
+      <Pressable
+      {...ICON_BUTTON_QUICK_PRESS}
+      style={({pressed}) => [
+        styles.container,
+        {borderBottomColor: colors.border},
+        pressed && onEdit && !isGeneralVendor ? {opacity: 0.8} : null,
+      ]}
       onPress={onEdit && !isGeneralVendor ? () => onEdit(vendor) : undefined}>
       <View style={[styles.avatar, {backgroundColor: colors.backButtonBg}]}>
         <Text style={styles.avatarText}>{initials}</Text>
@@ -83,11 +87,14 @@ const SupplierListItem: React.FC<SupplierListItemProps> = ({
           numberOfLines={1}>
           {secondaryLine}
         </Text>
-        <TouchableOpacity
+        <Pressable
+          {...ICON_BUTTON_QUICK_PRESS}
           disabled={!hasBalance || !onBalancePress}
           onPress={() => onBalancePress?.(vendor)}
-          activeOpacity={hasBalance ? 0.7 : 1}
-          style={styles.balanceLinkWrap}>
+          style={({pressed}) => [
+            styles.balanceLinkWrap,
+            pressed && hasBalance ? {opacity: 0.7} : null,
+          ]}>
           <Text
             style={[
               styles.balanceText,
@@ -97,7 +104,7 @@ const SupplierListItem: React.FC<SupplierListItemProps> = ({
             ]}>
             Balance: {formattedBalance}
           </Text>
-        </TouchableOpacity>
+        </Pressable>
         {vendor.blocked ? (
           <View style={styles.blockedBadge}>
             <Text style={styles.blockedBadgeText}>Blocked</Text>
@@ -106,9 +113,14 @@ const SupplierListItem: React.FC<SupplierListItemProps> = ({
       </View>
 
       {(onEdit || onDelete) && (
-        <TouchableOpacity
+        <Pressable
+          {...ICON_BUTTON_QUICK_PRESS}
           onPress={() => setActionsVisible(true)}
-          style={[styles.actionButton, {backgroundColor: colors.backButtonBg}]}
+          style={({pressed}) => [
+            styles.actionButton,
+            {backgroundColor: colors.backButtonBg},
+            pressed && {opacity: 0.7},
+          ]}
           hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
           accessibilityRole="button"
           accessibilityLabel="Choose an action">
@@ -117,9 +129,9 @@ const SupplierListItem: React.FC<SupplierListItemProps> = ({
             style={[styles.actionIcon, {tintColor: colors.textPrimary}]}
             resizeMode="contain"
           />
-        </TouchableOpacity>
+        </Pressable>
       )}
-      </TouchableOpacity>
+      </Pressable>
 
       <ChooseActionSheet
         visible={actionsVisible}

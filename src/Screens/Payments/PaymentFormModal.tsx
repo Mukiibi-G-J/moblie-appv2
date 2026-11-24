@@ -192,8 +192,8 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
         console.error('Error loading dropdown data:', error);
         Toast.show({
           type: 'error',
-          text1: 'Error',
-          text2: 'Failed to load form data',
+          text1: 'Couldn’t load the form',
+          visibilityTime: 5000,
         });
       } finally {
         setLoadingDropdowns(false);
@@ -460,15 +460,15 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
         await PaymentJournalServices.updatePaymentJournal(payment.id, paymentData);
         Toast.show({
           type: 'success',
-          text1: 'Success',
-          text2: 'Payment updated successfully',
+          text1: 'Payment updated',
+          visibilityTime: 2000,
         });
       } else {
         await PaymentJournalServices.createPaymentJournal(paymentData);
         Toast.show({
           type: 'success',
-          text1: 'Success',
-          text2: 'Payment created successfully',
+          text1: 'Payment created',
+          visibilityTime: 2000,
         });
       }
 
@@ -484,8 +484,8 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({
         'Failed to save payment';
       Toast.show({
         type: 'error',
-        text1: 'Error',
-        text2: errorMessage,
+        text1: errorMessage,
+        visibilityTime: 5000,
       });
     } finally {
       setLoading(false);

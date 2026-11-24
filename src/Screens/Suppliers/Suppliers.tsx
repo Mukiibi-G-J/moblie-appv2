@@ -111,11 +111,11 @@ const Suppliers: React.FC = () => {
     const detail =
       (vendorsError as any)?.response?.data?.detail ||
       (vendorsError as any)?.message ||
-      'Failed to load suppliers';
+      'Couldn’t load suppliers';
     Toast.show({
       type: 'error',
-      text1: 'Error',
-      text2: String(detail),
+      text1: String(detail),
+      visibilityTime: 5000,
     });
   }, [vendorsError]);
 
@@ -174,16 +174,16 @@ const Suppliers: React.FC = () => {
               await VendorServices.deleteVendor(vendor.id);
               Toast.show({
                 type: 'success',
-                text1: 'Success',
-                text2: 'Supplier deleted successfully',
+                text1: 'Supplier deleted',
+                visibilityTime: 2000,
               });
               onRefresh();
             } catch (error: any) {
               Toast.show({
                 type: 'error',
-                text1: 'Error',
-                text2:
-                  error?.response?.data?.detail || 'Failed to delete supplier',
+                text1:
+                  error?.response?.data?.detail || 'Couldn’t delete this supplier',
+                visibilityTime: 5000,
               });
             }
           },
@@ -219,8 +219,8 @@ const Suppliers: React.FC = () => {
       setVendorLedgerEntries([]);
       Toast.show({
         type: 'error',
-        text1: 'Error',
-        text2: 'Failed to load supplier ledger entries.',
+        text1: 'Couldn’t load this supplier’s ledger',
+        visibilityTime: 5000,
       });
     } finally {
       setLedgerLoading(false);

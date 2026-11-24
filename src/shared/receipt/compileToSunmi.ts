@@ -3,6 +3,7 @@ import { writeEfrisQrPng } from "../../services/efrisQrFile";
 import {
   prepareCompanyLogoForPrint,
   fitReceiptLogoSize,
+  logoBoxPixels,
 } from "../../utils/companyLogoUrl";
 import { effectiveReceiptCols, padReceiptColumns } from "./formatters";
 import type { ReceiptDocument, ReceiptDocumentNode } from "./types";
@@ -37,7 +38,6 @@ export async function printSunmiDocument(document: ReceiptDocument): Promise<voi
     document.paperProfile?.charsPerLine ?? 32,
     document.paperProfile?.widthMm ?? 58,
   );
-  const maxLogoW = document.paperProfile?.logoWidthPx ?? undefined;
   const textSize = (document.paperProfile?.widthMm ?? 58) <= 58 ? 16 : 22;
 
   for (const node of document.nodes) {
@@ -49,10 +49,15 @@ export async function printSunmiDocument(document: ReceiptDocument): Promise<voi
             const path = prepared.localPath.startsWith("file://")
               ? prepared.localPath
               : `file://${prepared.localPath}`;
+            const logoBox = logoBoxPixels(node);
             const { width, height } = fitReceiptLogoSize(
               prepared.width,
               prepared.height,
-              maxLogoW,
+              node.maxWidthMm
+                ? logoBox.maxW
+                : document.paperProfile?.logoWidthPx ?? logoBox.maxW,
+              logoBox.maxH,
+              logoBox.allowUpscale,
             );
             PrinterSunmi.initLine({ align: "CENTER" });
             PrinterSunmi.printBitmap(path, {
@@ -114,6 +119,5 @@ export async function printSunmiDocument(document: ReceiptDocument): Promise<voi
     }
   }
 
-  PrinterSunmi.addText("\n");
   PrinterSunmi.printTrans();
 }

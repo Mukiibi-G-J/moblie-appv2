@@ -129,6 +129,7 @@ export type ItemCardDetail = {
   unit_cost?: number;
   unit_price?: number;
   type?: string;
+  unit_of_measure?: string;
 };
 
 /** Item card / REST detail — list page omits barcode and unit cost. */
@@ -1294,9 +1295,9 @@ export const fetchOpenSales = async (pageSize: number = 10) => {
 };
 
 /**
- * Get a single sales invoice by ID.
- * Sales History page-data rows use PostedSalesInvoice.id; when that fails,
- * resolve the live SalesInvoice via invoice_no (posted archive `no`).
+ * Get a single sales invoice by id or system id.
+ * A posted-history row's numeric id is PostedSalesInvoice.pk. If that id also
+ * exists on SalesInvoice, ignore it unless the document number matches.
  */
 export const getSalesInvoice = async (
   invoiceId: number | string,
@@ -1310,8 +1311,16 @@ export const getSalesInvoice = async (
     return response.data;
   };
 
+  const invoiceNo = options?.invoiceNo?.trim();
+
   try {
-    return await fetchById(invoiceId);
+    const data = await fetchById(invoiceId);
+    if (invoiceNo && !salesInvoiceMatchesNumber(data, invoiceNo)) {
+      const mismatch: any = new Error('Sales invoice id does not match this document');
+      mismatch.response = {status: 404};
+      throw mismatch;
+    }
+    return data;
   } catch (error: any) {
     const status = error?.response?.status ?? error?.status;
     const invoiceNo = options?.invoiceNo?.trim();
@@ -1347,6 +1356,51 @@ export const getSalesInvoice = async (
     console.error('Error fetching sales invoice:', error);
     throw error;
   }
+};
+
+function salesInvoiceMatchesNumber(data: any, invoiceNo: string): boolean {
+  const wanted = invoiceNo.trim().toLowerCase();
+  if (!wanted) {
+    return true;
+  }
+  return [data?.invoice_no, data?.customer_invoice_no, data?.no]
+    .map(value => String(value ?? '').trim().toLowerCase())
+    .filter(Boolean)
+    .includes(wanted);
+}
+
+/** Lines on the posted archive (PSIN), not whichever SalesInvoice shares the numeric id. */
+export const fetchPostedSalesInvoiceLines = async (
+  postedSystemId: string,
+): Promise<
+  Array<{
+    id?: number | string;
+    item_name?: string;
+    item_no?: string;
+    quantity?: number | string;
+    unit_of_measure?: string;
+    unit_price?: string;
+    total_amount?: string;
+  }>
+> => {
+  const systemId = postedSystemId.trim();
+  if (!systemId) {
+    return [];
+  }
+  const {fetchPageDataList, PAGE_IDS} = await import('./pageDataService');
+  const rows = await fetchPageDataList({
+    pageId: PAGE_IDS.PostedSalesInvoiceSubform,
+    limit: 200,
+    filters: {parent_system_id: systemId},
+  });
+  return rows.map(row => ({
+    id: (row.id as number | string | undefined) ?? undefined,
+    item_name: String(row.description || row.item || 'Item'),
+    item_no: row.item != null ? String(row.item) : '',
+    quantity: row.quantity as number | string | undefined,
+    unit_price: row.unit_price != null ? String(row.unit_price) : '0',
+    total_amount: row.amount != null ? String(row.amount) : '0',
+  }));
 };
 
 function pdfErrorFromBuffer(data: ArrayBuffer): string | null {
@@ -1410,7 +1464,7 @@ export type ReverseSalesInvoiceResult = {
 
 /** Reverse a posted sales invoice (web parity: SalesServices.reverseSales). */
 export const reverseSalesInvoice = async (
-  salesId: number,
+  salesId: number | string,
   reason?: string,
 ): Promise<ReverseSalesInvoiceResult> => {
   const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
@@ -2091,6 +2145,85 @@ export const updateItem = async (itemId: string | number, itemData: Item) => {
   } catch (error) {
     throw error;
   }
+};
+
+export type EfrisLookupOption = {
+  id?: number;
+  code: string;
+  name: string;
+};
+
+export type EfrisItemProfile = {
+  efris_goods_category_id: string;
+  efris_commodity_category_id: string;
+  efris_measure_unit: string;
+  efris_uploaded: boolean;
+  detail?: string;
+};
+
+async function efrisClient() {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  return createAxiosInstance(tenant);
+}
+
+export const fetchEfrisCategories = async (): Promise<EfrisLookupOption[]> => {
+  const axiosInstance = await efrisClient();
+  const response = await axiosInstance.get('/api/efris/categories/');
+  const rows = Array.isArray(response?.data) ? response.data : [];
+  return rows
+    .map((row: {code?: string; name?: string; id?: number}) => ({
+      id: row.id,
+      code: String(row.code || '').trim(),
+      name: String(row.name || row.code || '').trim(),
+    }))
+    .filter(row => row.code);
+};
+
+export const fetchEfrisUnits = async (): Promise<EfrisLookupOption[]> => {
+  const axiosInstance = await efrisClient();
+  const response = await axiosInstance.get('/api/efris/units/');
+  const rows = Array.isArray(response?.data) ? response.data : [];
+  return rows
+    .map((row: {code?: string; name?: string; id?: number}) => ({
+      id: row.id,
+      code: String(row.code || '').trim(),
+      name: String(row.name || row.code || '').trim(),
+    }))
+    .filter(row => row.code);
+};
+
+export const fetchEfrisItemProfile = async (
+  itemNo: string,
+): Promise<EfrisItemProfile> => {
+  const axiosInstance = await efrisClient();
+  const response = await axiosInstance.get(
+    `/api/efris/items/${encodeURIComponent(itemNo)}/profile/`,
+  );
+  return response.data;
+};
+
+export const saveEfrisItemProfile = async (
+  itemNo: string,
+  body: {goods_category_id?: string; measure_unit?: string},
+): Promise<EfrisItemProfile> => {
+  const axiosInstance = await efrisClient();
+  const response = await axiosInstance.post(
+    `/api/efris/items/${encodeURIComponent(itemNo)}/profile/`,
+    body,
+  );
+  return response.data;
+};
+
+export const uploadItemToEfris = async (
+  itemNo: string,
+  body: {goods_category_id: string; measure_unit: string},
+): Promise<EfrisItemProfile> => {
+  const axiosInstance = await efrisClient();
+  const response = await axiosInstance.post(
+    `/api/efris/items/${encodeURIComponent(itemNo)}/upload/`,
+    body,
+  );
+  return response.data;
 };
 
 export const deleteItem = async (item: Pick<Item, 'system_id' | 'no' | 'id'>) => {

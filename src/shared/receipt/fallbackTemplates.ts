@@ -41,6 +41,7 @@ const SALE_COMPACT_SECTIONS = [
 ];
 
 const KOT_SECTIONS = [
+  { id: "logo", enabled: true, order: 5, config: { large: true } },
   { id: "title", enabled: true, order: 10, config: { text: "KITCHEN ORDER" } },
   { id: "order_meta", enabled: true, order: 20, config: {} },
   { id: "items", enabled: true, order: 30, config: {} },

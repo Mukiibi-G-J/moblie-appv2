@@ -10,8 +10,10 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
+  Pressable,
   TextInput,
   ScrollView,
+  FlatList,
   ActivityIndicator,
   Image,
   KeyboardAvoidingView,
@@ -54,9 +56,15 @@ import {
 import {loadReceiptBusinessInfo} from '../services/companyInfoCache';
 import {tenantCompanyToReceiptInfo} from '../utils/companyReceiptInfo';
 import {useOfflineOptional} from '../context/OfflineContext';
-import {getEffectiveIsOnline} from '../utils/posConnectivity';
-import {getCartTrackingMode} from '../utils/posConnectivity';
-import {usePosPaymentMethodsQuery} from '../hooks/useSaleCustomersQuery';
+import {
+  getCartTrackingMode,
+  getEffectiveIsOnline,
+  isCheckoutNetworkFailure,
+} from '../utils/posConnectivity';
+import {
+  usePosPaymentMethodsQuery,
+  useSaleCustomersQuery,
+} from '../hooks/useSaleCustomersQuery';
 import PrintService, {CompanyInfo} from '../services/PrintService';
 import {useTheme} from '../context/ThemeContext';
 import {
@@ -189,6 +197,8 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
   const [printReceipt, setPrintReceipt] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [paymentDropdownOpen, setPaymentDropdownOpen] = useState(false);
+  const [customerPickerOpen, setCustomerPickerOpen] = useState(false);
+  const [customerQuery, setCustomerQuery] = useState('');
 
   const {
     data: paymentMethods = [],
@@ -196,6 +206,10 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
     refetch: refetchPaymentMethods,
     isError: paymentMethodsError,
   } = usePosPaymentMethodsQuery(isVisible, isPosOnline);
+  const {
+    data: saleCustomers = [],
+    isLoading: loadingSaleCustomers,
+  } = useSaleCustomersQuery(isVisible);
 
   const formatTotalDisplay = () => formatCurrencyCompact(total);
   const needsAmountReceived = Boolean(paymentMethod?.requires_amount_received);
@@ -211,6 +225,8 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
       setAmountReceivedDisplay('');
       setTransactionId('');
       setPaymentDropdownOpen(false);
+      setCustomerPickerOpen(false);
+      setCustomerQuery('');
       didAutoSelectPaymentRef.current = false;
       refetchPaymentMethods();
     }
@@ -321,90 +337,94 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
     const now = new Date();
     const receiptSaleDate = `${finalDocumentDate}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
 
+    const queueSaleOnDevice = async () => {
+      const offlineResult = await completeOfflineSale({
+        cartItems,
+        customerName: selectedCustomer?.name || 'General Customer',
+        customerId: selectedCustomer?.id || null,
+        paymentMethodId: paymentMethod?.id || null,
+        amountReceived:
+          paymentMethod?.requires_amount_received === false
+            ? 0
+            : parseFloat(amountReceived) || total,
+        changeAmount:
+          paymentMethod?.requires_amount_received === false
+            ? 0
+            : Math.max(0, (parseFloat(amountReceived) || total) - total),
+        documentDate: finalDocumentDate,
+        transactionId: needsTransactionId ? transactionId.trim() : '',
+      });
+
+      if (printReceipt) {
+        try {
+          const printService = PrintService.getInstance();
+          const isPrinterAvailable = await printService.checkConnection();
+          if (isPrinterAvailable) {
+            let companyInfo: CompanyInfo | undefined;
+            try {
+              const cached = await loadReceiptBusinessInfo();
+              const company = (cached as {company?: Record<string, string>})
+                ?.company;
+              if (company) {
+                companyInfo = tenantCompanyToReceiptInfo(
+                  company as Record<string, unknown>,
+                );
+              }
+            } catch {
+              /* optional */
+            }
+
+            await printService.printReceipt({
+              receiptId: offlineResult.receiptNo,
+              username,
+              customerName: selectedCustomer?.name || 'General Customer',
+              cartItems,
+              subtotal: total,
+              total,
+              tax: 0,
+              discount: 0,
+              amountReceived: parseFloat(amountReceived) || total,
+              change: calculateChange(),
+              paymentMethod: paymentMethod?.description || 'Cash',
+              saleDate: receiptSaleDate,
+              companyInfo,
+            });
+          }
+        } catch {
+          /* non-fatal */
+        }
+      }
+
+      const statusLabel =
+        offlineResult.syncStatus === 'posted'
+          ? 'Sale posted'
+          : offlineResult.syncStatus === 'failed'
+            ? 'Saved — sync failed'
+            : 'Saved — pending sync';
+
+      if (offlineResult.syncStatus === 'failed') {
+        showUserError(
+          statusLabel,
+          offlineResult.syncError ||
+            `Receipt ${offlineResult.receiptNo} was saved locally but sync failed.`,
+        );
+      } else {
+        showUserSuccess(statusLabel, `Receipt ${offlineResult.receiptNo}`);
+      }
+
+      onSuccess({
+        id: offlineResult.localId,
+        invoice_no: offlineResult.receiptNo,
+        offline: true,
+        syncStatus: offlineResult.syncStatus,
+        syncError: offlineResult.syncError,
+      });
+      finishSale();
+    };
+
     if (!isPosOnline) {
       try {
-        const offlineResult = await completeOfflineSale({
-          cartItems,
-          customerName: selectedCustomer?.name || 'General Customer',
-          customerId: selectedCustomer?.id || null,
-          paymentMethodId: paymentMethod?.id || null,
-          amountReceived:
-            paymentMethod?.requires_amount_received === false
-              ? 0
-              : parseFloat(amountReceived) || total,
-          changeAmount:
-            paymentMethod?.requires_amount_received === false
-              ? 0
-              : Math.max(0, (parseFloat(amountReceived) || total) - total),
-          documentDate: finalDocumentDate,
-          transactionId: needsTransactionId ? transactionId.trim() : '',
-        });
-
-        if (printReceipt) {
-          try {
-            const printService = PrintService.getInstance();
-            const isPrinterAvailable = await printService.checkConnection();
-            if (isPrinterAvailable) {
-              let companyInfo: CompanyInfo | undefined;
-              try {
-                const cached = await loadReceiptBusinessInfo();
-                const company = (cached as {company?: Record<string, string>})
-                  ?.company;
-                if (company) {
-                  companyInfo = tenantCompanyToReceiptInfo(
-                    company as Record<string, unknown>,
-                  );
-                }
-              } catch {
-                /* optional */
-              }
-
-              await printService.printReceipt({
-                receiptId: offlineResult.receiptNo,
-                username,
-                customerName: selectedCustomer?.name || 'General Customer',
-                cartItems,
-                subtotal: total,
-                total,
-                tax: 0,
-                discount: 0,
-                amountReceived: parseFloat(amountReceived) || total,
-                change: calculateChange(),
-                paymentMethod: paymentMethod?.description || 'Cash',
-                saleDate: receiptSaleDate,
-                companyInfo,
-              });
-            }
-          } catch {
-            /* non-fatal */
-          }
-        }
-
-        const statusLabel =
-          offlineResult.syncStatus === 'posted'
-            ? 'Sale posted'
-            : offlineResult.syncStatus === 'failed'
-              ? 'Saved — sync failed'
-              : 'Saved — pending sync';
-
-        if (offlineResult.syncStatus === 'failed') {
-          showUserError(
-            statusLabel,
-            offlineResult.syncError ||
-              `Receipt ${offlineResult.receiptNo} was saved locally but sync failed.`,
-          );
-        } else {
-          showUserSuccess(statusLabel, `Receipt ${offlineResult.receiptNo}`);
-        }
-
-        onSuccess({
-          id: offlineResult.localId,
-          invoice_no: offlineResult.receiptNo,
-          offline: true,
-          syncStatus: offlineResult.syncStatus,
-          syncError: offlineResult.syncError,
-        });
-        finishSale();
+        await queueSaleOnDevice();
       } catch (error: unknown) {
         const msg =
           error instanceof Error ? error.message : 'Offline sale failed';
@@ -675,6 +695,19 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
       console.error('Error status:', error?.response?.status);
       console.error('Error message:', error?.message);
       console.error('=== END ERROR ===');
+      if (isCheckoutNetworkFailure(error)) {
+        try {
+          await queueSaleOnDevice();
+        } catch (offlineError: unknown) {
+          const offlineMsg =
+            offlineError instanceof Error
+              ? offlineError.message
+              : 'Offline sale failed';
+          setErrorMessage(offlineMsg);
+          showUserError('Offline sale failed', offlineMsg);
+        }
+        return;
+      }
       const msg = getSalesApiErrorMessage(
         error,
         'An unexpected error occurred while completing the sale.',
@@ -694,6 +727,8 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
     setAmountReceivedDisplay('');
     setTransactionId('');
     setPaymentDropdownOpen(false);
+    setCustomerPickerOpen(false);
+    setCustomerQuery('');
     setPrintReceipt(true);
     setErrorMessage(null);
     onClose();
@@ -728,6 +763,23 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
 
   const change = calculateChange();
 
+  const filteredSaleCustomers = useMemo(() => {
+    const query = customerQuery.trim().toLowerCase();
+    if (!query) {
+      return saleCustomers;
+    }
+    return saleCustomers.filter(customer => {
+      const name = customer.name?.toLowerCase() || '';
+      const no = customer.no?.toLowerCase() || '';
+      return name.includes(query) || no.includes(query);
+    });
+  }, [customerQuery, saleCustomers]);
+
+  const closeCustomerPicker = () => {
+    setCustomerPickerOpen(false);
+    setCustomerQuery('');
+  };
+
   /** Cash methods: require full payment before enabling Complete Sale */
   const tenderAmountOk =
     !needsAmountReceived ||
@@ -749,7 +801,13 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
     <ReactNativeModal
       isVisible={isVisible}
       onBackdropPress={handleClose}
-      onBackButtonPress={handleClose}
+      onBackButtonPress={() => {
+        if (customerPickerOpen) {
+          closeCustomerPicker();
+          return;
+        }
+        handleClose();
+      }}
       style={styles.modal}
       animationIn="slideInUp"
       animationOut="slideOutDown"
@@ -1019,14 +1077,35 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
               <Text style={[styles.sectionTitle, st.sectionTitle]}>
                 Customer
               </Text>
-              <View style={[styles.selectedCustomerCard, st.customerCard]}>
-                <Text style={[styles.selectedCustomerName, st.customerName]}>
-                  {selectedCustomer?.name || 'General'}
-                </Text>
-                <Text style={[styles.selectedCustomerCode, st.customerCode]}>
-                  {selectedCustomer?.no || 'GEN'}
-                </Text>
-              </View>
+              <TouchableOpacity
+                style={[styles.selectedCustomerCard, st.customerCard, styles.customerChangeRow]}
+                onPress={() => {
+                  if (isProcessing) {
+                    return;
+                  }
+                  setPaymentDropdownOpen(false);
+                  setCustomerPickerOpen(true);
+                }}
+                disabled={isProcessing}
+                activeOpacity={0.75}
+                accessibilityRole="button"
+                accessibilityLabel="Change customer">
+                <View style={styles.customerChangeText}>
+                  <Text style={[styles.selectedCustomerName, st.customerName]}>
+                    {selectedCustomer?.name || 'General'}
+                  </Text>
+                  <Text style={[styles.selectedCustomerCode, st.customerCode]}>
+                    {selectedCustomer?.no || 'Tap to choose a customer'}
+                  </Text>
+                </View>
+                <View style={styles.customerChangeAction}>
+                  <Text style={styles.customerChangeLabel}>Change</Text>
+                  <Image
+                    source={icons.down_arrow}
+                    style={[styles.dropdownChevron, st.dropdownChevron]}
+                  />
+                </View>
+              </TouchableOpacity>
             </View>
 
             {/* Receipt Printing */}
@@ -1076,6 +1155,87 @@ const SalesCompletionModal: React.FC<SalesCompletionModalProps> = ({
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
+        {customerPickerOpen ? (
+          <View
+            style={[styles.customerPickerRoot, {backgroundColor: colors.surface}]}
+            pointerEvents="auto">
+            <View style={[styles.customerPickerHeader, {borderBottomColor: colors.border}]}>
+              <QuickIconPressable
+                style={styles.customerPickerClose}
+                onPress={closeCustomerPicker}
+                hitSlop={ICON_BUTTON_HIT_SLOP}
+                accessibilityLabel="Close customer list">
+                <Text style={[styles.checkoutCloseGlyph, st.checkoutCloseGlyph]}>✕</Text>
+              </QuickIconPressable>
+              <Text style={[styles.customerPickerTitle, st.sectionTitle]}>
+                Select customer
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.customerPickerSearch,
+                {backgroundColor: colors.inputBackground, borderColor: colors.border},
+              ]}>
+              <TextInput
+                value={customerQuery}
+                onChangeText={setCustomerQuery}
+                placeholder="Search name or number"
+                placeholderTextColor={colors.placeholder}
+                autoCorrect={false}
+                autoCapitalize="none"
+                style={[styles.customerPickerSearchInput, {color: colors.textPrimary}]}
+              />
+            </View>
+            {loadingSaleCustomers ? (
+              <View style={styles.customerPickerState}>
+                <ActivityIndicator size="small" color={COLORS.primary} />
+                <Text style={[styles.customerPickerStateText, st.customerCode]}>
+                  Loading customers...
+                </Text>
+              </View>
+            ) : (
+              <FlatList
+                data={filteredSaleCustomers}
+                keyExtractor={item => String(item.system_id || item.id || item.no)}
+                keyboardShouldPersistTaps="handled"
+                style={styles.customerPickerList}
+                contentContainerStyle={styles.customerPickerListContent}
+                renderItem={({item}) => {
+                  const selected = selectedCustomer?.id === item.id;
+                  return (
+                    <Pressable
+                      style={[
+                        styles.customerPickerRow,
+                        {borderBottomColor: colors.border},
+                        selected && styles.customerPickerRowSelected,
+                      ]}
+                      onPress={() => {
+                        setSelectedCustomer(item);
+                        closeCustomerPicker();
+                      }}>
+                      <View style={styles.customerChangeText}>
+                        <Text style={[styles.selectedCustomerName, st.customerName]}>
+                          {item.name || 'Customer'}
+                        </Text>
+                        <Text style={[styles.selectedCustomerCode, st.customerCode]}>
+                          {item.no}
+                        </Text>
+                      </View>
+                      {selected ? <Text style={styles.dropdownCheck}>✓</Text> : null}
+                    </Pressable>
+                  );
+                }}
+                ListEmptyComponent={
+                  <View style={styles.customerPickerState}>
+                    <Text style={[styles.customerPickerStateText, st.customerCode]}>
+                      No customers match that search.
+                    </Text>
+                  </View>
+                }
+              />
+            )}
+          </View>
+        ) : null}
       </SafeAreaView>
     </ReactNativeModal>
   );
@@ -1304,6 +1464,87 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.transparentPrimary,
     borderRadius: SIZES.radius,
     padding: SIZES.radius,
+  },
+  customerChangeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  customerChangeText: {
+    flex: 1,
+    paddingRight: 12,
+  },
+  customerChangeAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  customerChangeLabel: {
+    ...FONTS.body5,
+    color: COLORS.primary,
+    fontWeight: '700',
+  },
+  customerPickerRoot: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 40,
+    elevation: 40,
+  },
+  customerPickerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 56,
+    paddingHorizontal: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  customerPickerClose: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  customerPickerTitle: {
+    ...FONTS.h4,
+    fontWeight: '700',
+  },
+  customerPickerSearch: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderRadius: SIZES.radius,
+    minHeight: 46,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  customerPickerSearchInput: {
+    ...FONTS.body4,
+    paddingVertical: 8,
+  },
+  customerPickerList: {
+    flex: 1,
+  },
+  customerPickerListContent: {
+    paddingBottom: 24,
+  },
+  customerPickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  customerPickerRowSelected: {
+    backgroundColor: COLORS.transparentPrimary,
+  },
+  customerPickerState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  customerPickerStateText: {
+    ...FONTS.body4,
+    marginTop: 8,
+    textAlign: 'center',
   },
   selectedCustomerName: {
     ...FONTS.body4,

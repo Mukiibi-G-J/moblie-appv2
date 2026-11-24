@@ -5,6 +5,7 @@ import {createAxiosInstance} from '../axios/axios';
 export const PAGE_IDS = {
   SalesInvoiceList: 10003,
   PostedSalesInvoiceList: 10004,
+  PostedSalesInvoiceSubform: 10015,
   CustomerList: 10101,
   CustomerLedgerEntryList: 10103,
   ItemList: 10201,
@@ -26,6 +27,7 @@ export const PAGE_IDS = {
   PaymentJournalList: 10401,
   PaymentMethodList: 10405,
   GLAccountList: 10501,
+  GeneralLedgerSetupCard: 10504,
   FinancialReportList: 10510,
   FinancialReportOverview: 10511,
   ExpenseList: 10520,
@@ -73,7 +75,7 @@ type PageDefLike = {
   PageControls?: PageControlLike[];
 };
 
-const controlIdCache = new Map<number, number>();
+const controlIdCache = new Map<string, number>();
 
 const PAGE_SIZE = 50;
 
@@ -107,17 +109,33 @@ export async function resolveTenantPageId(requestedId: number): Promise<number> 
   return requestedId;
 }
 
+async function controlCacheKey(pageId: number): Promise<string> {
+  const tenant = (await AsyncStorage.getItem('tenant')) || '';
+  return `${tenant}:${pageId}`;
+}
+
+function isControlNotFound(error: unknown): boolean {
+  const response = (error as {response?: {status?: number; data?: {error?: unknown}}})
+    ?.response;
+  return (
+    response?.status === 404 &&
+    String(response.data?.error ?? '') === 'Control not found'
+  );
+}
+
 /**
- * Resolve the list Repeater control id for a page (cached per process).
- * Falls back to hardcoded known ids when the page def call fails.
- * Omitting ControlId is also valid — backend uses first Repeater/Group.
+ * Resolve the list Repeater control id for this tenant.
+ * A failed lookup is not cached — a primewise fallback id must not stick
+ * after offline, or on a company whose control ids differ.
+ * Omitting ControlId is valid: the backend uses the first Repeater/Group.
  */
 export async function resolveListControlId(
   pageId: number,
   fallbackControlId?: number,
 ): Promise<number | undefined> {
   const resolvedPageId = await resolveTenantPageId(pageId);
-  const cached = controlIdCache.get(resolvedPageId);
+  const cacheKey = await controlCacheKey(resolvedPageId);
+  const cached = controlIdCache.get(cacheKey);
   if (cached != null) {
     return cached;
   }
@@ -135,7 +153,7 @@ export async function resolveListControlId(
       );
     const controlId = repeater?.PageControlId ?? repeater?.ControlId;
     if (typeof controlId === 'number' && Number.isFinite(controlId)) {
-      controlIdCache.set(resolvedPageId, controlId);
+      controlIdCache.set(cacheKey, controlId);
       return controlId;
     }
   } catch (error) {
@@ -145,15 +163,13 @@ export async function resolveListControlId(
     );
   }
 
-  // Primewise fallback ControlIds are only valid when PageId was not remapped.
   if (fallbackControlId != null && resolvedPageId === pageId) {
-    controlIdCache.set(resolvedPageId, fallbackControlId);
     return fallbackControlId;
   }
   return undefined;
 }
 
-export async function fetchPageDataList(
+async function requestPageDataList(
   params: PageDataListParams,
 ): Promise<PageDataRecord[]> {
   const {
@@ -189,6 +205,23 @@ export async function fetchPageDataList(
   }
 
   return response.data as PageDataRecord[];
+}
+
+export async function fetchPageDataList(
+  params: PageDataListParams,
+): Promise<PageDataRecord[]> {
+  try {
+    return await requestPageDataList(params);
+  } catch (error) {
+    if (params.controlId == null || !isControlNotFound(error)) {
+      throw error;
+    }
+    await clearPageControlIdCache(params.pageId);
+    const resolved = await resolveListControlId(params.pageId);
+    const nextControlId =
+      resolved != null && resolved !== params.controlId ? resolved : undefined;
+    return requestPageDataList({...params, controlId: nextControlId});
+  }
 }
 
 /**
@@ -258,7 +291,6 @@ export async function fetchPageDataAll<T = PageDataRecord>(options: {
 /** Known ControlIds from primewise (used only as resolve fallback). */
 export const FALLBACK_CONTROL_IDS: Partial<Record<number, number>> = {
   [PAGE_IDS.ItemList]: 11,
-  [PAGE_IDS.PostedSalesInvoiceList]: 60,
 };
 
 export const PAGE_DATA_PAGE_SIZE = PAGE_SIZE;
@@ -270,8 +302,17 @@ export function pageDataHasMore(
   return pageLength >= pageSize;
 }
 
-export function clearPageControlIdCache(): void {
-  controlIdCache.clear();
+export async function clearPageControlIdCache(pageId?: number): Promise<void> {
+  if (pageId == null) {
+    controlIdCache.clear();
+    return;
+  }
+  const suffix = `:${pageId}`;
+  for (const key of controlIdCache.keys()) {
+    if (key.endsWith(suffix)) {
+      controlIdCache.delete(key);
+    }
+  }
 }
 
 export type PageRelationOption = {

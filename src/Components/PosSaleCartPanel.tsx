@@ -17,6 +17,7 @@ import {
 } from '../constants';
 import {useTheme} from '../context/ThemeContext';
 import {formatCurrencyCompact} from '../utils/currency';
+import {formatSaleQuantity} from '../utils/saleQuantity';
 import {QuickIconPressable} from './QuickIconPressable';
 import FooterTotal from './FooterTotal';
 
@@ -172,7 +173,7 @@ export function PosSaleCartPanel({
                       <Text style={styles.stepGlyph}>−</Text>
                     </QuickIconPressable>
                     <Text style={[styles.qty, {color: colors.textPrimary}]}>
-                      {qty}
+                      {formatSaleQuantity(qty)}
                     </Text>
                     <QuickIconPressable
                       accessibilityLabel={`Increase ${item.item_name}`}
@@ -184,7 +185,7 @@ export function PosSaleCartPanel({
                   </View>
                 ) : (
                   <Text style={[styles.qty, {color: colors.textPrimary}]}>
-                    × {qty}
+                    × {formatSaleQuantity(qty)}
                   </Text>
                 )}
                 <Text style={[styles.lineAmount, {color: colors.textPrimary}]}>

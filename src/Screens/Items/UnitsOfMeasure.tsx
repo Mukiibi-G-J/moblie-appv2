@@ -93,8 +93,8 @@ const UnitsOfMeasure = () => {
       setUnits([]);
       Toast.show({
         type: 'error',
-        text1: 'Error',
-        text2: error?.response?.data?.detail || 'Failed to load units',
+        text1: error?.response?.data?.detail || 'Couldn’t load units',
+        visibilityTime: 5000,
       });
     } finally {
       setLoading(false);

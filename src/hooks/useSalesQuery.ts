@@ -11,7 +11,6 @@ import {
   fetchSalesUserSummary,
 } from '../services/app.services';
 import {
-  FALLBACK_CONTROL_IDS,
   PAGE_DATA_PAGE_SIZE,
   PAGE_IDS,
   fetchPageDataList,
@@ -126,12 +125,7 @@ export function useSalesQuery(options: UseSalesQueryOptions = {}) {
         };
       }
 
-      const controlId = await resolveListControlId(
-        pageId,
-        isPostedList
-          ? FALLBACK_CONTROL_IDS[PAGE_IDS.PostedSalesInvoiceList]
-          : undefined,
-      );
+      const controlId = await resolveListControlId(pageId);
       const rows = await fetchPageDataList({
         pageId,
         controlId,

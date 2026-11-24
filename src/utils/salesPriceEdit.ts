@@ -36,6 +36,26 @@ export function parseSalesPriceInput(text: string): number {
   return Math.round(n * 100) / 100;
 }
 
+function groupIntegerDigits(intRaw: string): string {
+  const stripped = intRaw.replace(/^0+(?=\d)/, '');
+  const digits = stripped === '' ? '0' : stripped;
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/** Format a price string as the user types. Keeps a trailing decimal point. */
+export function formatSalesPriceDraft(text: string): string {
+  const cleaned = String(text).replace(/[^0-9.]/g, '');
+  if (!cleaned) {
+    return '';
+  }
+  const dot = cleaned.indexOf('.');
+  const intRaw = dot === -1 ? cleaned : cleaned.slice(0, dot);
+  const decRaw =
+    dot === -1 ? '' : cleaned.slice(dot + 1).replace(/\./g, '').slice(0, 2);
+  const grouped = groupIntegerDigits(intRaw);
+  return dot === -1 ? grouped : `${grouped}.${decRaw}`;
+}
+
 /** Format a unit price for the cart price-edit TextInput. */
 export function formatSalesPriceInput(value: number): string {
   const n = Number(value);
@@ -43,7 +63,10 @@ export function formatSalesPriceInput(value: number): string {
     return '0';
   }
   const rounded = Math.round(n * 100) / 100;
-  return Number.isInteger(rounded) ? String(rounded) : String(rounded);
+  const [whole, frac = ''] = rounded.toFixed(2).split('.');
+  const grouped = groupIntegerDigits(whole);
+  const trimmed = frac.replace(/0+$/, '');
+  return trimmed ? `${grouped}.${trimmed}` : grouped;
 }
 
 export function resolveEditedSalesPrice(options: {

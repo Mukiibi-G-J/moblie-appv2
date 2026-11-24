@@ -227,11 +227,11 @@ const Expenses = () => {
     const detail =
       (expensesError as any)?.response?.data?.detail ||
       (expensesError as any)?.message ||
-      'Failed to load expenses';
+      'Couldn’t load expenses';
     Toast.show({
       type: 'error',
-      text1: 'Error',
-      text2: String(detail),
+      text1: String(detail),
+      visibilityTime: 5000,
     });
   }, [expensesError]);
 
@@ -303,16 +303,16 @@ const Expenses = () => {
               await ExpenseServices.deleteExpense(expense.id);
               Toast.show({
                 type: 'success',
-                text1: 'Success',
-                text2: 'Expense deleted successfully',
+                text1: 'Expense deleted',
+                visibilityTime: 2000,
               });
               onRefresh();
             } catch (error: any) {
               Toast.show({
                 type: 'error',
-                text1: 'Error',
-                text2:
-                  error?.response?.data?.detail || 'Failed to delete expense',
+                text1:
+                  error?.response?.data?.detail || 'Couldn’t delete this expense',
+                visibilityTime: 5000,
               });
             }
           },
@@ -360,17 +360,17 @@ const Expenses = () => {
               const result = await ExpenseServices.postExpense(expense.id);
               Toast.show({
                 type: 'success',
-                text1: 'Success',
-                text2: result.message || 'Expense posted successfully',
+                text1: result.message || 'Expense posted',
+                visibilityTime: 2000,
               });
               onRefresh();
               navigation.navigate('ExpenseHistory');
             } catch (error: any) {
               Toast.show({
                 type: 'error',
-                text1: 'Error',
-                text2:
-                  error?.response?.data?.detail || 'Failed to post expense',
+                text1:
+                  error?.response?.data?.detail || 'Couldn’t post this expense',
+                visibilityTime: 5000,
               });
             }
           },

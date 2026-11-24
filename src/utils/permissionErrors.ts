@@ -22,9 +22,8 @@ export const handlePermissionError = (error: any, action?: string): boolean => {
 
     Toast.show({
       type: 'error',
-      text1: 'Access Denied',
-      text2: message,
-      position: 'bottom',
+      text1: message,
+      visibilityTime: 5000,
     });
 
     return true; // Error was handled

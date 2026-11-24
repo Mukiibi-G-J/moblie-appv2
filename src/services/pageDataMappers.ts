@@ -71,7 +71,17 @@ export function mapPageDataItem(row: PageDataRecord) {
     description: asString(row.description) || undefined,
     bar_code_no: asString(row.bar_code_no) || undefined,
     unit_cost: asOptionalNumber(row.unit_cost),
-    unit_of_measure: asString(row.unit_of_measure) || undefined,
+    unit_of_measure: (() => {
+      const raw = row.unit_of_measure;
+      if (raw == null || raw === '') {
+        return undefined;
+      }
+      if (typeof raw === 'object') {
+        const code = (raw as {code?: unknown}).code;
+        return code != null && String(code) ? String(code) : undefined;
+      }
+      return String(raw);
+    })(),
     // Present when page-data includes nested tracking; otherwise Make Sale
     // enriches via GET /api/items/?no= (same as web POS).
     tracking_code: mapTrackingCode(
@@ -147,6 +157,8 @@ export function mapPageDataSale(row: PageDataRecord): Record<string, unknown> {
     posted_id: asOptionalNumber(row.id) ?? row.id,
     system_id: systemIdOf(row),
     invoice_no: asString(row.no ?? row.invoice_no),
+    sales_invoice_system_id:
+      asString(row.sales_invoice_system_id) || undefined,
     customer_name: asString(row.customer ?? row.customer_name),
     document_date: asString(
       row.document_date || row.posting_date || row.created_at,
@@ -360,6 +372,7 @@ export function mapPageDataUser(row: PageDataRecord): User {
     username: asString(row.username),
     full_name: asString(row.full_name),
     phone_number: asString(row.phone_number),
+    must_change_password: Boolean(row.must_change_password),
     is_active: row.is_active !== false,
     is_staff: Boolean(row.is_staff),
     is_superuser: Boolean(row.is_superuser),

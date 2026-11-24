@@ -16,6 +16,7 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import Toast from 'react-native-toast-message';
 import {COLORS, FONTS, SIZES} from '../../constants';
 import icons from '../../constants/icons';
+import {QuickIconPressable} from '../../Components';
 import {useTheme} from '../../context/ThemeContext';
 import {safeGoBack} from '../../hooks/NavigationService';
 import {usePermissions} from '../../hooks/usePermissions';
@@ -25,6 +26,7 @@ import {UserSetup} from '../../@types/userSetup';
 import {UserSetupService} from '../../services/UserSetupService';
 import {queryKeys} from '../../query/keys';
 import UserSetupFormModal from './UserSetupFormModal';
+import UserSetupListItem from './UserSetupListItem';
 
 const UserSetupList: React.FC = () => {
   const navigation = useNavigation<any>();
@@ -45,7 +47,6 @@ const UserSetupList: React.FC = () => {
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
-  const [totalCount, setTotalCount] = useState(0);
   const [selectedSetup, setSelectedSetup] = useState<UserSetup | null>(null);
   const [formVisible, setFormVisible] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -77,19 +78,17 @@ const UserSetupList: React.FC = () => {
         setSetups(prev =>
           page === 1 ? response.results : [...prev, ...response.results],
         );
-        setTotalCount(response.count);
         setHasMore(!!response.next);
       } else {
         setSetups([]);
-        setTotalCount(0);
         setHasMore(false);
       }
     } catch (error: any) {
       setSetups([]);
       Toast.show({
         type: 'error',
-        text1: 'Error',
-        text2: error?.response?.data?.detail || 'Failed to load user setups',
+        text1: error?.response?.data?.detail || 'Couldn’t load user setups',
+        visibilityTime: 5000,
       });
     } finally {
       setLoading(false);
@@ -116,11 +115,11 @@ const UserSetupList: React.FC = () => {
     } catch (error: any) {
       Toast.show({
         type: 'error',
-        text1: 'Error',
-        text2:
+        text1:
           error?.response?.data?.error ||
           error?.response?.data?.detail ||
-          'Failed to create missing setups',
+          'Couldn’t create the missing setups',
+        visibilityTime: 5000,
       });
     }
   };
@@ -142,9 +141,9 @@ const UserSetupList: React.FC = () => {
             } catch (error: any) {
               Toast.show({
                 type: 'error',
-                text1: 'Error',
-                text2:
-                  error?.response?.data?.detail || 'Failed to delete user setup',
+                text1:
+                  error?.response?.data?.detail || 'Couldn’t delete this user setup',
+                visibilityTime: 5000,
               });
             }
           },
@@ -153,121 +152,148 @@ const UserSetupList: React.FC = () => {
     );
   };
 
-  const renderItem = ({item}: {item: UserSetup}) => (
-    <TouchableOpacity
-      style={[styles.card, {backgroundColor: colors.surface, borderColor: colors.border}]}
-      onPress={() => {
-        if (canEditSetup) {
-          setSelectedSetup(item);
-          setFormVisible(true);
-        }
-      }}
-      onLongPress={() => {
-        if (canDeleteSetup) {
-          handleDelete(item);
-        }
-      }}>
-      <Text style={[styles.name, {color: colors.textPrimary}]}>
-        {item.fullName || item.username}
-      </Text>
-      <Text style={[styles.meta, {color: colors.textSecondary}]}>
-        {item.email}
-      </Text>
-      <View style={styles.flagsRow}>
-        {!item.canSeeBuyingPrice && (
-          <Text style={styles.flag}>No buying price</Text>
-        )}
-        {!item.canSeeProfitMargin && (
-          <Text style={styles.flag}>No profit</Text>
-        )}
-        {item.canEditSalesPrice ? (
-          <Text style={styles.flag}>Edit price</Text>
-        ) : null}
-        {item.canViewOnlyTheirSales && (
-          <Text style={styles.flag}>Own sales only</Text>
-        )}
-        {item.defaultSalesUi === 'pos' && (
-          <Text style={styles.flag}>POS UI</Text>
-        )}
-      </View>
-    </TouchableOpacity>
-  );
+  const openCreate = () => {
+    setSelectedSetup(null);
+    setFormVisible(true);
+  };
+
+  const openEdit = (setup: UserSetup) => {
+    setSelectedSetup(setup);
+    setFormVisible(true);
+  };
 
   return (
-    <View style={[styles.container, {backgroundColor: colors.screenMuted}]}>
-      <View
-        style={[
-          styles.topBar,
-          {
-            paddingTop: insets.top + 8,
-            backgroundColor: colors.surface,
-            borderBottomColor: colors.border,
-          },
-        ]}>
-        <TouchableOpacity
-          onPress={() => safeGoBack(navigation, 'UserManagement')}
-          style={styles.backBtn}>
+    <View style={[styles.container, {backgroundColor: colors.background}]}>
+      <View style={[styles.headerSection, {backgroundColor: colors.background}]}>
+        <View
+          style={[
+            styles.allItemsHeader,
+            {
+              paddingTop: Math.max(insets.top, 10),
+              backgroundColor: colors.background,
+            },
+          ]}>
+          <QuickIconPressable
+            style={[
+              styles.headerRoundButton,
+              {borderColor: colors.border, backgroundColor: colors.card},
+            ]}
+            onPress={() => safeGoBack(navigation, 'UserManagement')}
+            accessibilityLabel="Go back">
+            <Image
+              source={icons.back}
+              style={[styles.headerRoundIcon, {tintColor: colors.textPrimary}]}
+              resizeMode="contain"
+            />
+          </QuickIconPressable>
+          <Text style={[styles.allItemsTitle, {color: colors.textPrimary}]}>
+            User Setup
+          </Text>
+          <View style={styles.headerTrailingSpacer} />
+        </View>
+
+        <View style={styles.searchInputContainer}>
           <Image
-            source={icons.back}
-            style={[styles.backIcon, {tintColor: colors.textPrimary}]}
+            source={icons.search}
+            style={styles.searchIcon}
+            resizeMode="contain"
           />
-        </TouchableOpacity>
-        <Text style={[styles.screenTitle, {color: colors.textPrimary}]}>
-          User Setup
-        </Text>
+          <TextInput
+            style={[styles.searchInput, {color: colors.textPrimary}]}
+            placeholder="Search user setups..."
+            placeholderTextColor={COLORS.gray3}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+          {loading && setups.length > 0 ? (
+            <ActivityIndicator size="small" color={COLORS.primary2} />
+          ) : null}
+        </View>
         {canCreateSetup ? (
           <TouchableOpacity
             onPress={() => {
-              setSelectedSetup(null);
-              setFormVisible(true);
-            }}>
-            <Text style={styles.addText}>+ Add</Text>
+              void handleCreateMissing();
+            }}
+            style={styles.missingBtn}>
+            <Text style={styles.missingBtnText}>Create missing setups</Text>
           </TouchableOpacity>
-        ) : (
-          <View style={styles.backBtn} />
-        )}
+        ) : null}
       </View>
 
-      <View style={[styles.searchWrap, {backgroundColor: colors.surface}]}>
-        <TextInput
-          style={[styles.searchInput, {color: colors.textPrimary, borderColor: colors.border}]}
-          placeholder="Search user setups..."
-          placeholderTextColor={colors.textSecondary}
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-        />
-        <TouchableOpacity onPress={handleCreateMissing} style={styles.missingBtn}>
-          <Text style={styles.missingBtnText}>Create missing setups</Text>
-        </TouchableOpacity>
-        <Text style={[styles.count, {color: colors.textSecondary}]}>
-          {totalCount} setup{totalCount === 1 ? '' : 's'}
-        </Text>
-      </View>
-
-      <FlatList
-        data={setups}
-        keyExtractor={item => String(item.id)}
-        renderItem={renderItem}
-        contentContainerStyle={{padding: SIZES.padding, paddingBottom: insets.bottom + 24}}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-        onEndReached={() => {
-          if (!loading && hasMore) {
-            setPage(p => p + 1);
+      {loading && setups.length === 0 ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={COLORS.primary2} />
+          <Text style={styles.loadingText}>Loading user setups...</Text>
+        </View>
+      ) : (
+        <FlatList
+          style={styles.list}
+          data={setups}
+          keyExtractor={item => String(item.id)}
+          renderItem={({item}) => (
+            <UserSetupListItem
+              setup={item}
+              onEdit={canEditSetup ? openEdit : undefined}
+              onDelete={canDeleteSetup ? handleDelete : undefined}
+            />
+          )}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={[COLORS.primary]}
+              tintColor={COLORS.primary}
+            />
           }
-        }}
-        onEndReachedThreshold={0.3}
-        ListEmptyComponent={
-          loading ? (
-            <ActivityIndicator color={COLORS.primary} style={{marginTop: 40}} />
-          ) : (
-            <Text style={[styles.empty, {color: colors.textSecondary}]}>
-              No user setups found
-            </Text>
-          )
-        }
-      />
+          onEndReached={() => {
+            if (!loading && hasMore) {
+              setPage(p => p + 1);
+            }
+          }}
+          onEndReachedThreshold={0.5}
+          contentContainerStyle={
+            setups.length === 0
+              ? styles.emptyListContainer
+              : styles.listContentContainer
+          }
+          showsVerticalScrollIndicator={false}
+          ListFooterComponent={
+            loading && setups.length > 0 ? (
+              <View style={styles.footerLoader}>
+                <ActivityIndicator size="small" color={COLORS.primary} />
+              </View>
+            ) : null
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <View style={styles.emptyIconContainer}>
+                <Image
+                  source={icons.setting}
+                  style={styles.emptyIconImage}
+                  resizeMode="contain"
+                />
+              </View>
+              <Text style={[styles.emptyText, {color: colors.textPrimary}]}>
+                No user setups found
+              </Text>
+              <Text style={styles.emptySubtext}>
+                {searchQuery
+                  ? 'Try a different name or email.'
+                  : 'Create a setup for a user, or fill in the missing ones.'}
+              </Text>
+            </View>
+          }
+        />
+      )}
+
+      {canCreateSetup ? (
+        <TouchableOpacity
+          style={[styles.fab, {bottom: Math.max(insets.bottom, 16) + 16}]}
+          onPress={openCreate}
+          activeOpacity={0.8}>
+          <Text style={styles.fabText}>+</Text>
+        </TouchableOpacity>
+      ) : null}
 
       <UserSetupFormModal
         visible={formVisible}
@@ -291,49 +317,107 @@ const UserSetupList: React.FC = () => {
 
 const styles = StyleSheet.create({
   container: {flex: 1},
-  topBar: {
+  list: {flex: 1},
+  listContentContainer: {paddingBottom: 120},
+  headerSection: {
+    paddingHorizontal: SIZES.padding,
+    paddingBottom: 12,
+  },
+  allItemsHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingBottom: 10,
+  },
+  headerRoundButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerRoundIcon: {width: 20, height: 20},
+  allItemsTitle: {
+    flex: 1,
+    textAlign: 'center',
+    ...FONTS.h3,
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+  },
+  headerTrailingSpacer: {width: 40, height: 40},
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.white,
+    borderRadius: 20,
     paddingHorizontal: 16,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
+    height: 46,
+    borderWidth: 1,
+    borderColor: COLORS.transparentPrimary2,
   },
-  backBtn: {width: 40, height: 40, justifyContent: 'center'},
-  backIcon: {width: 20, height: 20},
-  screenTitle: {...FONTS.h3},
-  addText: {...FONTS.body3, color: COLORS.primary, fontWeight: '600'},
-  searchWrap: {paddingHorizontal: 16, paddingVertical: 12},
+  searchIcon: {
+    width: 20,
+    height: 20,
+    tintColor: COLORS.gray2,
+    marginRight: 10,
+  },
   searchInput: {
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    flex: 1,
     ...FONTS.body3,
-    marginBottom: 8,
+    paddingVertical: 0,
   },
-  missingBtn: {alignSelf: 'flex-start', marginBottom: 6},
-  missingBtnText: {...FONTS.body4, color: COLORS.primary},
-  count: {...FONTS.body5},
-  card: {
-    borderRadius: 10,
-    borderWidth: 1,
-    padding: 14,
-    marginBottom: 10,
+  missingBtn: {alignSelf: 'flex-start', marginTop: 10},
+  missingBtnText: {...FONTS.body4, color: COLORS.primary2, fontWeight: '600'},
+  emptyListContainer: {flexGrow: 1, paddingTop: 36},
+  emptyContainer: {
+    alignItems: 'center',
+    paddingHorizontal: SIZES.padding,
+    paddingVertical: SIZES.padding * 2,
   },
-  name: {...FONTS.h4, marginBottom: 4},
-  meta: {...FONTS.body4},
-  flagsRow: {flexDirection: 'row', flexWrap: 'wrap', marginTop: 8, gap: 6},
-  flag: {
-    ...FONTS.body5,
-    backgroundColor: '#FEF3C7',
-    color: '#92400E',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 8,
-    overflow: 'hidden',
+  emptyIconContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: COLORS.transparentPrimary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: SIZES.base * 2,
   },
-  empty: {textAlign: 'center', marginTop: 40, ...FONTS.body3},
+  emptyIconImage: {width: 40, height: 40, tintColor: COLORS.primary2},
+  emptyText: {
+    ...FONTS.h3,
+    marginBottom: SIZES.base,
+    textAlign: 'center',
+  },
+  emptySubtext: {
+    ...FONTS.body3,
+    color: COLORS.gray2,
+    textAlign: 'center',
+    maxWidth: 250,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: SIZES.padding * 2,
+  },
+  loadingText: {...FONTS.body3, color: COLORS.gray2, marginTop: SIZES.base},
+  footerLoader: {paddingVertical: SIZES.padding, alignItems: 'center'},
+  fab: {
+    position: 'absolute',
+    right: SIZES.padding,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: COLORS.primary2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 8,
+    zIndex: 1000,
+  },
+  fabText: {fontSize: 32, color: COLORS.white, fontWeight: '300', marginTop: -2},
 });
 
 export default UserSetupList;

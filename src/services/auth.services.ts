@@ -6,7 +6,7 @@ import {
 } from '../axios/axios';
 import AsyncStorage from '@react-native-async-storage/async-storage'; // Import AsyncStorage
 import Toast from 'react-native-toast-message';
-import type {AuthMeSession, AuthNavItem} from '../types/auth';
+import type {AuthImpersonation, AuthMeSession, AuthNavItem} from '../types/auth';
 interface LoginResponse {
   access: string;
   refresh?: string;
@@ -371,4 +371,32 @@ export async function writeCachedRoleCentreSession(
 
 export async function clearCachedRoleCentreSession(): Promise<void> {
   await AsyncStorage.removeItem(ROLE_CENTRE_SESSION_KEY);
+}
+
+export type ImpersonateResponse = {
+  access: string;
+  refresh: string;
+  impersonation: AuthImpersonation;
+};
+
+export async function impersonateUser(
+  userId: number,
+): Promise<ImpersonateResponse> {
+  const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+  const axiosInstance = createAxiosInstance(tenant);
+  const response = await axiosInstance.post<ImpersonateResponse>(
+    `/api/users/${userId}/impersonate/`,
+  );
+  return response.data;
+}
+
+/** Best-effort audit. The client still restores the stashed admin tokens. */
+export async function exitImpersonationAudit(): Promise<void> {
+  try {
+    const tenant = (await AsyncStorage.getItem('tenant')) || undefined;
+    const axiosInstance = createAxiosInstance(tenant);
+    await axiosInstance.post('/api/auth/exit-impersonation/');
+  } catch {
+    // Audit is optional; restoring the admin session still proceeds.
+  }
 }

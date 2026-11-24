@@ -114,6 +114,22 @@ export interface AuthMeSession {
     role: string;
   };
   navItems?: AuthNavItem[];
+  impersonation?: AuthImpersonation;
+}
+
+/** Login-as session, same shape as the web impersonation banner. */
+export interface AuthImpersonation {
+  active: boolean;
+  target: {
+    id: number;
+    fullName: string;
+    username: string;
+    email: string;
+  };
+  impersonator: {
+    id: number;
+    username: string;
+  };
 }
 
 export interface AuthState {

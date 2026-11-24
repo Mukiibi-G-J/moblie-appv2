@@ -16,6 +16,7 @@ import {
   Image,
   ImageSourcePropType,
   KeyboardAvoidingView,
+  Keyboard,
   Platform,
 } from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
@@ -381,9 +382,12 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     parseAmount(values.amount) > 0;
 
   const autoSaveField = useCallback(
-    async (field: keyof ExpenseFormValues, rawValue: any) => {
-      if (!visible || isLocked || !canWrite || savingRef.current) {
-        return;
+    async (field: keyof ExpenseFormValues, rawValue: any): Promise<boolean> => {
+      if (!visible || isLocked || !canWrite) {
+        return true;
+      }
+      if (savingRef.current) {
+        return false;
       }
 
       const value =
@@ -395,10 +399,10 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
       const previous = lastSavedRef.current[field];
       if (field === 'amount') {
         if (parseAmount(String(previous ?? '')) === parseAmount(String(value ?? ''))) {
-          return;
+          return true;
         }
       } else if (String(previous ?? '') === String(value ?? '')) {
-        return;
+        return true;
       }
 
       if (field === 'amount' && parseAmount(String(value ?? '')) <= 0) {
@@ -406,33 +410,33 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
           ...prev,
           amount: 'Amount must be greater than 0',
         }));
-        return;
+        return false;
       }
       if (field === 'expense_type' && !value) {
         setErrors(prev => ({
           ...prev,
           expense_type: 'Expense type is required',
         }));
-        return;
+        return false;
       }
       if (field === 'payment_method' && !value) {
         setErrors(prev => ({
           ...prev,
           payment_method: 'Payment method is required to credit the bank or cash account',
         }));
-        return;
+        return false;
       }
       if (field === 'posting_date' && !value) {
         setErrors(prev => ({
           ...prev,
           posting_date: 'Posting date is required',
         }));
-        return;
+        return false;
       }
 
       if (!record?.id && !canCreateFromValues(values)) {
         // Wait until required fields are present before creating.
-        return;
+        return true;
       }
 
       setErrors(prev => {
@@ -449,24 +453,30 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
             buildPayload(values),
           );
           const next = expenseToForm(created, values, expenseTypes);
+          currentRecordRef.current = created;
+          formDataRef.current = next;
+          lastSavedRef.current = next;
           setCurrentRecord(created);
           setFormData(next);
-          lastSavedRef.current = next;
           onRecordChange?.(created);
           onSave();
           flashSaved();
+          return true;
         } else {
           const updated = await ExpenseServices.updateExpense(
             record.id,
             buildPayload(values, {forUpdate: true}),
           );
           const next = expenseToForm(updated, values, expenseTypes);
+          currentRecordRef.current = updated;
+          formDataRef.current = next;
+          lastSavedRef.current = next;
           setCurrentRecord(updated);
           setFormData(next);
-          lastSavedRef.current = next;
           onRecordChange?.(updated);
           onSave();
           flashSaved();
+          return true;
         }
       } catch (error: any) {
         console.error('Error auto-saving expense:', error);
@@ -478,9 +488,10 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
         setErrors(prev => ({...prev, [field as string]: message}));
         Toast.show({
           type: 'error',
-          text1: 'Error',
-          text2: message,
+          text1: message,
+          visibilityTime: 5000,
         });
+        return false;
       } finally {
         savingRef.current = false;
         setIsSaving(false);
@@ -498,11 +509,71 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     ],
   );
 
+  const waitUntilIdle = () =>
+    new Promise<void>(resolve => {
+      const tick = () => {
+        if (!savingRef.current) {
+          resolve();
+          return;
+        }
+        setTimeout(tick, 40);
+      };
+      tick();
+    });
+
+  const flushExpense = useCallback(async () => {
+    if (amountSaveTimerRef.current) {
+      clearTimeout(amountSaveTimerRef.current);
+      amountSaveTimerRef.current = null;
+    }
+    const fields: (keyof ExpenseFormValues)[] = [
+      'posting_date',
+      'expense_type',
+      'payment_method',
+      'description',
+      'amount',
+    ];
+    for (const field of fields) {
+      await waitUntilIdle();
+      const saved = await autoSaveField(field, formDataRef.current[field]);
+      if (!saved) {
+        return false;
+      }
+    }
+    return true;
+  }, [autoSaveField]);
+
+  const handleSavePress = useCallback(async () => {
+    Keyboard.dismiss();
+    const ok = await flushExpense();
+    if (ok && currentRecordRef.current?.id) {
+      flashSaved();
+    }
+  }, [flushExpense, flashSaved]);
+
+  const handleDismiss = useCallback(async () => {
+    Keyboard.dismiss();
+    await waitUntilIdle();
+    if (
+      !currentRecordRef.current?.id &&
+      !canCreateFromValues(formDataRef.current)
+    ) {
+      onClose();
+      return;
+    }
+    const ok = await flushExpense();
+    if (!ok) {
+      return;
+    }
+    onClose();
+  }, [flushExpense, canCreateFromValues, onClose]);
+
   const handleAmountChange = (text: string) => {
     if (!amountFocusedRef.current) {
       return;
     }
     const numericValue = sanitizeAmountInput(text);
+    formDataRef.current = {...formDataRef.current, amount: numericValue};
     setFormData(prev => ({...prev, amount: numericValue}));
     if (amountSaveTimerRef.current) {
       clearTimeout(amountSaveTimerRef.current);
@@ -621,8 +692,8 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
               const result = await ExpenseServices.postExpense(currentRecord.id);
               Toast.show({
                 type: 'success',
-                text1: 'Success',
-                text2: result.message || 'Expense posted successfully',
+                text1: result.message || 'Expense posted',
+                visibilityTime: 2000,
               });
               onSave();
               if (onPosted) {
@@ -636,11 +707,11 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
             } catch (error: any) {
               Toast.show({
                 type: 'error',
-                text1: 'Error',
-                text2:
+                text1:
                   error?.response?.data?.error ||
                   error?.response?.data?.detail ||
-                  'Failed to post expense',
+                  'Couldn’t post this expense',
+                visibilityTime: 5000,
               });
             } finally {
               setPosting(false);
@@ -692,12 +763,12 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
             } catch (error: any) {
               Toast.show({
                 type: 'error',
-                text1: 'Error',
-                text2: extractApiErrorMessage(
+                text1: extractApiErrorMessage(
                   error,
                   'error',
-                  'Failed to reverse expense',
+                  'Couldn’t reverse this expense',
                 ),
+                visibilityTime: 5000,
               });
             } finally {
               setReversing(false);
@@ -721,7 +792,7 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
       visible={visible}
       animationType="slide"
       transparent={false}
-      onRequestClose={onClose}>
+      onRequestClose={() => void handleDismiss()}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={[styles.pageRoot, expTheme.pageRoot]}>
@@ -736,7 +807,7 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                 {paddingTop: topInset},
               ]}>
               <QuickIconPressable
-                onPress={onClose}
+                onPress={() => void handleDismiss()}
                 style={styles.headerIconButton}
                 hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
                 accessibilityLabel="Close">
@@ -748,19 +819,25 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
               </QuickIconPressable>
 
               <View style={styles.headerRightActions}>
-                {canWrite && !isLocked && (isSaving || showSaved) ? (
-                  <View
-                    style={styles.headerStatus}
-                    accessibilityRole="text"
-                    accessibilityLabel={isSaving ? 'Saving' : 'Saved'}>
-                    <Text
-                      style={[
-                        styles.headerStatusText,
-                        {color: colors.textSecondary},
-                      ]}>
-                      {isSaving ? 'Saving...' : 'Saved'}
+                {canWrite && !isLocked ? (
+                  <TouchableOpacity
+                    style={[
+                      styles.headerSaveButton,
+                      showSaved && !isSaving
+                        ? styles.headerSaveButtonSaved
+                        : null,
+                    ]}
+                    onPress={() => void handleSavePress()}
+                    disabled={isSaving}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      isSaving ? 'Saving' : showSaved ? 'Saved' : 'Save'
+                    }>
+                    <Text style={styles.headerSaveText}>
+                      {isSaving ? 'Saving' : showSaved ? 'Saved' : 'Save'}
                     </Text>
-                  </View>
+                  </TouchableOpacity>
                 ) : null}
                 {canPost && isPersisted && currentRecord?.status === 'Open' ? (
                   <TouchableOpacity
@@ -810,7 +887,7 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
               </Text>
               {!isLocked ? (
                 <Text style={[styles.autoSaveHint, expTheme.autoSaveHint]}>
-                  Changes save automatically when you leave a field
+                  Tap Save to keep your changes. Leaving a field also saves.
                 </Text>
               ) : null}
 
@@ -975,9 +1052,13 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                 <TextInput
                   style={[styles.input, expTheme.input, styles.textArea]}
                   value={formData.description}
-                  onChangeText={text =>
-                    setFormData(prev => ({...prev, description: text}))
-                  }
+                  onChangeText={text => {
+                    formDataRef.current = {
+                      ...formDataRef.current,
+                      description: text,
+                    };
+                    setFormData(prev => ({...prev, description: text}));
+                  }}
                   onBlur={() =>
                     void autoSaveField(
                       'description',
@@ -1203,6 +1284,23 @@ const styles = StyleSheet.create({
     gap: 10,
     flex: 1,
     marginLeft: 12,
+  },
+  headerSaveButton: {
+    minWidth: 72,
+    height: 36,
+    borderRadius: 999,
+    backgroundColor: COLORS.primary2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+  },
+  headerSaveButtonSaved: {
+    backgroundColor: COLORS.success,
+  },
+  headerSaveText: {
+    color: COLORS.white,
+    fontSize: 15,
+    fontWeight: '600',
   },
   headerPostButton: {
     minWidth: 88,

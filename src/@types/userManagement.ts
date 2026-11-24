@@ -15,6 +15,7 @@ export interface User {
   global_dimension_1?: number | null;
   global_dimension_1_obj?: {id: number; code: string | null; description: string} | null;
   can_switch_branch?: boolean;
+  must_change_password?: boolean;
   is_active: boolean;
   is_staff: boolean;
   is_superuser: boolean;
@@ -32,6 +33,7 @@ export interface UserFormValues {
   restaurant_pin?: string;
   global_dimension_1?: number | null;
   can_switch_branch?: boolean;
+  must_change_password?: boolean;
   user_group_ids?: number[];
   is_active: boolean;
   is_staff?: boolean;

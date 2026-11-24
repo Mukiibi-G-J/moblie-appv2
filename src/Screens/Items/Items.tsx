@@ -4,6 +4,7 @@ import {
   View,
   Text,
   FlatList,
+  Pressable,
   TouchableOpacity,
   StyleSheet,
   Alert,
@@ -14,6 +15,7 @@ import {
   Image,
   ActivityIndicator,
   Platform,
+  Keyboard,
   KeyboardAvoidingView,
 } from 'react-native';
 import { useFocusEffect, useNavigation, useRoute } from '@react-navigation/native';
@@ -34,12 +36,24 @@ import {
   uploadItemImage,
   deleteItemImage,
   fetchItemUnitsOfMeasure,
+  type ItemUnitOfMeasure,
   fetchItemCardDetail,
   deleteItemCategory,
+  fetchUnitsOfMeasure,
+  deleteUnitOfMeasure,
+  type UnitOfMeasure,
+  fetchEfrisCategories,
+  fetchEfrisItemProfile,
+  fetchEfrisUnits,
+  saveEfrisItemProfile,
+  uploadItemToEfris,
+  type EfrisItemProfile,
+  type EfrisLookupOption,
   type ItemCategory,
 } from '../../services/app.services';
 import ItemUnitOfMeasureModal from './ItemUnitOfMeasureModal';
 import ItemCategoryFormModal from './ItemCategoryFormModal';
+import UnitOfMeasureFormModal from './UnitOfMeasureFormModal';
 import { usePermissions } from '../../hooks/usePermissions';
 import {
   useItemsQuery,
@@ -51,9 +65,9 @@ import { safeGoBack } from '../../hooks/NavigationService';
 import { consumeCategoryPickerSession, isPickingCategory, subscribeCategoryPickerResult } from './categoryPickerSession';
 import { PAGE_NAMES } from '../../constants/pageNames';
 import { COLORS, SIZES, FONTS } from '../../constants/theme';
-import { ICON_BUTTON_ACTIVE_OPACITY, ICON_BUTTON_HIT_SLOP } from '../../constants';
+import { ICON_BUTTON_ACTIVE_OPACITY, ICON_BUTTON_HIT_SLOP, ICON_BUTTON_QUICK_PRESS } from '../../constants';
 import icons from '../../constants/icons';
-import { QuickIconPressable } from '../../Components';
+import { QuickIconPressable, SearchableSelectModal } from '../../Components';
 import MainBottomTabBar from '../../Components/MainBottomTabBar';
 import { useTheme } from '../../context/ThemeContext';
 import { useAppContext, useTabContext } from '../../context/Store';
@@ -140,7 +154,16 @@ const EditItemModal = ({
   const [inventoryEntriesError, setInventoryEntriesError] = useState<string | null>(null);
   const [inventoryEntries, setInventoryEntries] = useState<InventoryEntry[]>([]);
   const [uomModalVisible, setUomModalVisible] = useState(false);
-  const [itemUomCount, setItemUomCount] = useState(0);
+  const [itemUoms, setItemUoms] = useState<ItemUnitOfMeasure[]>([]);
+  const [efrisCategories, setEfrisCategories] = useState<EfrisLookupOption[]>([]);
+  const [efrisUnits, setEfrisUnits] = useState<EfrisLookupOption[]>([]);
+  const [efrisCategoryId, setEfrisCategoryId] = useState('');
+  const [efrisUnit, setEfrisUnit] = useState('');
+  const [efrisUploaded, setEfrisUploaded] = useState(false);
+  const [efrisLoading, setEfrisLoading] = useState(false);
+  const [efrisUploading, setEfrisUploading] = useState(false);
+  const [efrisAttempted, setEfrisAttempted] = useState(false);
+  const [efrisPicker, setEfrisPicker] = useState<'category' | 'unit' | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [showSaved, setShowSaved] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -149,12 +172,19 @@ const EditItemModal = ({
   const [categoryFormVisible, setCategoryFormVisible] = useState(false);
   const [categoryBeingEdited, setCategoryBeingEdited] =
     useState<ItemCategory | null>(null);
+  const [units, setUnits] = useState<UnitOfMeasure[]>([]);
+  const [unitsLoading, setUnitsLoading] = useState(false);
+  const [uomPickerVisible, setUomPickerVisible] = useState(false);
+  const [pickerSelectedUom, setPickerSelectedUom] = useState<string | null>(null);
+  const [uomFormVisible, setUomFormVisible] = useState(false);
+  const [unitBeingEdited, setUnitBeingEdited] = useState<UnitOfMeasure | null>(null);
   const {
     canCreate: canCreateCategory,
     canEdit: canEditCategory,
     canDelete: canDeleteCategory,
   } = usePermissions();
   const CATEGORY_PAGE_NAME = PAGE_NAMES.ITEM_CATEGORIES;
+  const UNIT_PAGE_NAME = PAGE_NAMES.ITEMS;
 
   const editedItemRef = useRef<Item | null>(null);
   const categoriesRef = useRef<Category[]>([]);
@@ -166,12 +196,22 @@ const EditItemModal = ({
   editedItemRef.current = editedItem;
   categoriesRef.current = categories;
 
-  const loadItemUomCount = useCallback(async (itemNo: string) => {
+  const writeEditedItem = (patch: Partial<Item>) => {
+    const prev = editedItemRef.current;
+    if (!prev) {
+      return;
+    }
+    const next = {...prev, ...patch};
+    editedItemRef.current = next;
+    setEditedItem(next);
+  };
+
+  const loadItemUoms = useCallback(async (itemNo: string) => {
     try {
       const rows = await fetchItemUnitsOfMeasure(itemNo);
-      setItemUomCount(rows.length);
+      setItemUoms(rows);
     } catch {
-      setItemUomCount(0);
+      setItemUoms([]);
     }
   }, []);
 
@@ -182,6 +222,7 @@ const EditItemModal = ({
     appCtx?.auth?.userPermissions?.canSeeBuyingPrice !== false;
   const canSeeProfitMarginUi =
     appCtx?.auth?.userPermissions?.canSeeProfitMargin !== false;
+  const efrisEnabled = (appCtx?.auth?.enabled_modules || []).includes('efris');
   const editTheme = useMemo(
     () => ({
       root: { backgroundColor: colors.background },
@@ -280,6 +321,19 @@ const EditItemModal = ({
     }
   }, []);
 
+  const loadUnits = useCallback(async () => {
+    try {
+      setUnitsLoading(true);
+      const data = await fetchUnitsOfMeasure();
+      setUnits(Array.isArray(data) ? data : []);
+    } catch (error) {
+      console.error('Error loading units of measure:', error);
+      setUnits([]);
+    } finally {
+      setUnitsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!visible) {
       setEditedItem(null);
@@ -291,6 +345,10 @@ const EditItemModal = ({
       setPickerSelectedCode(null);
       setCategoryFormVisible(false);
       setCategoryBeingEdited(null);
+      setUomPickerVisible(false);
+      setPickerSelectedUom(null);
+      setUomFormVisible(false);
+      setUnitBeingEdited(null);
       lastSavedRef.current = {};
       if (savedTimerRef.current) {
         clearTimeout(savedTimerRef.current);
@@ -316,6 +374,7 @@ const EditItemModal = ({
           minimum_stock: item.minimum_stock ?? null,
           type: item.type ?? '',
           category_id: item.category_id ?? null,
+          unit_of_measure: item.unit_of_measure ?? null,
         };
       } else {
         setEditedItem(prev => (prev ? {...prev, ...item} : item));
@@ -331,6 +390,7 @@ const EditItemModal = ({
         minimum_stock: null,
         type: defaultCreateType,
         category_id: null,
+        unit_of_measure: null,
       };
     }
     setSelectedImage(null);
@@ -338,7 +398,8 @@ const EditItemModal = ({
     setFieldErrors({});
     setShowSaved(false);
     loadCategories();
-  }, [item?.system_id, item?.id, item?.no, item?.category_id, visible, isCreateMode, loadCategories, defaultCreateType]);
+    loadUnits();
+  }, [item?.system_id, item?.id, item?.no, item?.category_id, visible, isCreateMode, loadCategories, loadUnits, defaultCreateType]);
 
   useEffect(() => {
     if (!visible || isCreateMode || !item) {
@@ -368,17 +429,21 @@ const EditItemModal = ({
             : Number.isFinite(detailCost)
               ? detailCost
               : prev.unit_cost;
+        const nextUnit =
+          prev.unit_of_measure || detail.unit_of_measure || prev.unit_of_measure;
         lastSavedRef.current = {
           ...lastSavedRef.current,
           bar_code_no: nextBarcode,
           unit_cost: Number(nextCost) || 0,
           description: prev.description || detail.description || '',
+          unit_of_measure: nextUnit || null,
         };
         return {
           ...prev,
           bar_code_no: nextBarcode,
           unit_cost: nextCost,
           description: prev.description || detail.description || prev.description,
+          unit_of_measure: nextUnit,
         };
       });
     });
@@ -393,15 +458,54 @@ const EditItemModal = ({
       setInventoryEntries([]);
       setInventoryEntriesError(null);
       setUomModalVisible(false);
-      setItemUomCount(0);
+      setItemUoms([]);
     }
   }, [visible]);
 
   useEffect(() => {
     if (visible && editedItem?.no) {
-      loadItemUomCount(editedItem.no);
+      loadItemUoms(editedItem.no);
     }
-  }, [visible, editedItem?.no, loadItemUomCount]);
+  }, [visible, editedItem?.no, loadItemUoms]);
+
+  const applyEfrisProfile = useCallback((profile: EfrisItemProfile) => {
+    setEfrisCategoryId(profile.efris_goods_category_id || '');
+    setEfrisUnit(profile.efris_measure_unit || '');
+    setEfrisUploaded(Boolean(profile.efris_uploaded));
+  }, []);
+
+  useEffect(() => {
+    if (!visible || !efrisEnabled) {
+      return;
+    }
+    const itemNo = String(editedItem?.no || '').trim();
+    if (!itemNo) {
+      setEfrisCategoryId('');
+      setEfrisUnit('');
+      setEfrisUploaded(false);
+      return;
+    }
+    let cancelled = false;
+    setEfrisLoading(true);
+    void Promise.all([
+      fetchEfrisCategories().catch(() => [] as EfrisLookupOption[]),
+      fetchEfrisUnits().catch(() => [] as EfrisLookupOption[]),
+      fetchEfrisItemProfile(itemNo).catch(() => null),
+    ]).then(([categories, units, profile]) => {
+      if (cancelled) {
+        return;
+      }
+      setEfrisCategories(categories);
+      setEfrisUnits(units);
+      if (profile) {
+        applyEfrisProfile(profile);
+      }
+      setEfrisLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, efrisEnabled, editedItem?.no, applyEfrisProfile]);
 
   const isPersisted = !!(
     editedItem?.system_id ||
@@ -446,9 +550,17 @@ const EditItemModal = ({
         category_id = (matched.id || matched.code) as any;
       }
     }
+    const uomRaw = data?.unit_of_measure;
+    const unit_of_measure =
+      typeof uomRaw === 'string'
+        ? uomRaw
+        : uomRaw && typeof uomRaw === 'object' && uomRaw.code
+          ? String(uomRaw.code)
+          : previous.unit_of_measure;
     return {
       ...previous,
       ...data,
+      unit_of_measure,
       id: data?.id ?? previous.id,
       no: data?.no ?? previous.no,
       system_id: data?.system_id || data?.no || previous.system_id || '',
@@ -481,10 +593,10 @@ const EditItemModal = ({
   };
 
   const autoSaveField = useCallback(
-    async (field: string, rawValue: any) => {
+    async (field: string, rawValue: any): Promise<boolean> => {
       const current = editedItemRef.current;
       if (!visible || !current || !canWrite || savingRef.current) {
-        return;
+        return false;
       }
 
       const value =
@@ -499,16 +611,16 @@ const EditItemModal = ({
       // (onChange already updates editedItem before onBlur runs).
       const previousValue = lastSavedRef.current[field];
       if (String(previousValue ?? '') === String(value ?? '')) {
-        return;
+        return true;
       }
 
       if (field === 'item_name' && (!value || !String(value).trim())) {
         setFieldErrors(prev => ({...prev, item_name: 'Item name is required'}));
-        return;
+        return false;
       }
 
       if (!persisted && !current.item_name?.trim() && field !== 'item_name') {
-        return;
+        return true;
       }
 
       setFieldErrors(prev => {
@@ -524,7 +636,7 @@ const EditItemModal = ({
 
         if (!persisted) {
           if (!nextValues.item_name?.trim()) {
-            return;
+            return false;
           }
           const createPayload: any = {
             item_name: nextValues.item_name.trim(),
@@ -542,6 +654,9 @@ const EditItemModal = ({
           const catCode = resolveCategoryCode(nextValues.category_id);
           if (catCode) {
             createPayload.item_category = catCode;
+          }
+          if (nextValues.unit_of_measure) {
+            createPayload.unit_of_measure = String(nextValues.unit_of_measure);
           }
           const itemType = createPayload.type;
           if (
@@ -572,13 +687,15 @@ const EditItemModal = ({
             minimum_stock: saved.minimum_stock ?? null,
             type: saved.type ?? '',
             category_id: saved.category_id ?? null,
+            unit_of_measure: saved.unit_of_measure ?? null,
           };
           onSave(saved);
           flashSaved();
+          return true;
         } else {
           const itemId = current.system_id || current.no || current.id;
           if (!itemId) {
-            return;
+            return false;
           }
           const updatePayload: any = {
             system_id: current.system_id || current.no || String(itemId),
@@ -605,6 +722,7 @@ const EditItemModal = ({
           };
           onSave(saved);
           flashSaved();
+          return true;
         }
       } catch (error: any) {
         console.error('Error auto-saving item:', error);
@@ -616,6 +734,7 @@ const EditItemModal = ({
           text2: message,
           visibilityTime: 5000,
         });
+        return false;
       } finally {
         savingRef.current = false;
         setIsSaving(false);
@@ -631,6 +750,161 @@ const EditItemModal = ({
       flashSaved,
     ],
   );
+
+  const blurSaveValue = (field: string, item: Item) => {
+    switch (field) {
+      case 'item_name':
+        return item.item_name || '';
+      case 'bar_code_no':
+        return item.bar_code_no || '';
+      case 'description':
+        return item.description || '';
+      case 'unit_price':
+        return Number(item.unit_price) || 0;
+      case 'unit_cost':
+        return Number(item.unit_cost) || 0;
+      case 'minimum_stock':
+        return item.minimum_stock ?? null;
+      default:
+        return (item as any)[field];
+    }
+  };
+
+  const flushDirtyFields = useCallback(async (): Promise<boolean> => {
+    if (!canWrite) {
+      return true;
+    }
+    const fields = [
+      'item_name',
+      'bar_code_no',
+      'description',
+      'unit_price',
+      'unit_cost',
+      'minimum_stock',
+    ];
+    for (const field of fields) {
+      while (savingRef.current) {
+        await new Promise<void>(resolve => setTimeout(resolve, 40));
+      }
+      const current = editedItemRef.current;
+      if (!current) {
+        return true;
+      }
+      const value = blurSaveValue(field, current);
+      const previous = lastSavedRef.current[field];
+      if (String(previous ?? '') === String(value ?? '')) {
+        continue;
+      }
+      const saved = await autoSaveField(field, value);
+      if (!saved) {
+        return false;
+      }
+    }
+    return true;
+  }, [autoSaveField, canWrite]);
+
+  const handleSavePress = useCallback(async () => {
+    Keyboard.dismiss();
+    const ok = await flushDirtyFields();
+    if (ok) {
+      flashSaved();
+    }
+  }, [flushDirtyFields, flashSaved]);
+
+  const handleDismissEdit = useCallback(
+    async (afterClose?: () => void) => {
+      if (categoryPickerVisible) {
+        setCategoryPickerVisible(false);
+        return;
+      }
+      if (uomPickerVisible) {
+        setUomPickerVisible(false);
+        return;
+      }
+      Keyboard.dismiss();
+      const current = editedItemRef.current;
+      const persisted = !!(
+        current?.system_id ||
+        current?.id ||
+        (current?.no && String(current.no).trim())
+      );
+      if (!persisted && !current?.item_name?.trim()) {
+        onClose();
+        afterClose?.();
+        return;
+      }
+      const ok = await flushDirtyFields();
+      if (!ok) {
+        return;
+      }
+      onClose();
+      afterClose?.();
+    },
+    [categoryPickerVisible, uomPickerVisible, flushDirtyFields, onClose],
+  );
+
+  const persistEfrisChoice = useCallback(
+    async (
+      body: {goods_category_id?: string; measure_unit?: string},
+      confirmation: {title: string; value: string},
+    ) => {
+      const itemNo = String(editedItemRef.current?.no || '').trim();
+      if (!itemNo) {
+        return;
+      }
+      try {
+        const saved = await saveEfrisItemProfile(itemNo, body);
+        applyEfrisProfile(saved);
+        Toast.show({
+          type: 'success',
+          text1: confirmation.title,
+          text2: confirmation.value,
+        });
+      } catch (error) {
+        Toast.show({
+          type: 'error',
+          text1: 'Could not save EFRIS details',
+          text2: getApiErrorMessage(error, {fallback: 'Save failed'}),
+        });
+      }
+    },
+    [applyEfrisProfile],
+  );
+
+  const handleUploadToEfris = useCallback(async () => {
+    const itemNo = String(editedItemRef.current?.no || '').trim();
+    if (!itemNo || efrisUploading) {
+      return;
+    }
+    if (!efrisCategoryId || !efrisUnit) {
+      setEfrisAttempted(true);
+      Toast.show({
+        type: 'error',
+        text1: 'Two choices are required',
+        text2: !efrisCategoryId
+          ? 'Tap Goods category and choose one.'
+          : 'Tap EFRIS unit and choose one.',
+      });
+      return;
+    }
+    setEfrisUploading(true);
+    try {
+      const saved = await uploadItemToEfris(itemNo, {
+        goods_category_id: efrisCategoryId,
+        measure_unit: efrisUnit,
+      });
+      applyEfrisProfile(saved);
+      Toast.show({type: 'success', text1: 'Uploaded to EFRIS'});
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Could not upload to EFRIS',
+        text2: getApiErrorMessage(error, {fallback: 'Upload failed'}),
+      });
+    } finally {
+      setEfrisUploading(false);
+    }
+  }, [applyEfrisProfile, efrisCategoryId, efrisUnit, efrisUploading]);
 
   const getSelectedCategoryLabel = () => {
     if (!editedItem || !editedItem.category_id) {
@@ -719,6 +993,8 @@ const EditItemModal = ({
       }
     }
     setPickerSelectedCode(initial);
+    setUomPickerVisible(false);
+    setUomModalVisible(false);
     setCategoryPickerVisible(true);
   };
 
@@ -813,6 +1089,110 @@ const EditItemModal = ({
         category_id: nextCategoryId,
       };
     });
+  };
+
+  const unitLabel = (unit?: {code?: string; description?: string} | null) => {
+    if (!unit?.code) {
+      return 'Unit';
+    }
+    const description = unit.description?.trim();
+    if (description && description !== unit.code) {
+      return `${unit.code} — ${description}`;
+    }
+    return unit.code;
+  };
+
+  const getSelectedUnitLabel = () => {
+    if (!editedItem?.unit_of_measure) {
+      return 'None selected';
+    }
+    const selected = units.find(unit => unit.code === editedItem.unit_of_measure);
+    return selected ? unitLabel(selected) : String(editedItem.unit_of_measure);
+  };
+
+  const openUomPicker = () => {
+    if (!editedItem || unitsLoading) {
+      return;
+    }
+    setCategoryPickerVisible(false);
+    setUomModalVisible(false);
+    setPickerSelectedUom(
+      editedItem.unit_of_measure ? String(editedItem.unit_of_measure) : null,
+    );
+    setUomPickerVisible(true);
+  };
+
+  const openUnits = () => {
+    if (!editedItem || unitsLoading) {
+      return;
+    }
+    if (editedItem.no) {
+      setCategoryPickerVisible(false);
+      setUomPickerVisible(false);
+      setUomModalVisible(true);
+      return;
+    }
+    openUomPicker();
+  };
+
+  const applyPickedUnit = (code: string | null) => {
+    setUomPickerVisible(false);
+    setEditedItem(prev => {
+      if (!prev) {
+        return prev;
+      }
+      const nextUnit = code && code.trim() ? code.trim() : undefined;
+      void autoSaveField('unit_of_measure', nextUnit ?? null);
+      return {...prev, unit_of_measure: nextUnit};
+    });
+  };
+
+  const handleDeleteUnit = (unit: UnitOfMeasure) => {
+    const code = String(unit.code || '').trim();
+    if (!code) {
+      return;
+    }
+    const name = unitLabel(unit);
+    Alert.alert(
+      'Delete unit',
+      `Delete "${name}"? Items using it keep their current unit until you choose another.`,
+      [
+        {text: 'Cancel', style: 'cancel'},
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              try {
+                await deleteUnitOfMeasure(code);
+                setUnits(prev => prev.filter(row => row.code !== code));
+                setPickerSelectedUom(prev => (prev === code ? null : prev));
+                setEditedItem(prev => {
+                  if (!prev || prev.unit_of_measure !== code) {
+                    return prev;
+                  }
+                  void autoSaveField('unit_of_measure', null);
+                  return {...prev, unit_of_measure: undefined};
+                });
+                Toast.show({
+                  type: 'success',
+                  text1: 'Unit deleted',
+                  text2: name,
+                });
+              } catch (error) {
+                Toast.show({
+                  type: 'error',
+                  text1: 'Could not delete unit',
+                  text2: getApiErrorMessage(error, {
+                    fallback: 'This unit may be in use on items.',
+                  }),
+                });
+              }
+            })();
+          },
+        },
+      ],
+    );
   };
 
   useEffect(() => {
@@ -1249,7 +1629,21 @@ const EditItemModal = ({
         visible={visible}
         animationType="slide"
         transparent={false}
-        onRequestClose={onClose}>
+        onRequestClose={() => {
+          if (categoryPickerVisible) {
+            setCategoryPickerVisible(false);
+            return;
+          }
+          if (uomPickerVisible) {
+            setUomPickerVisible(false);
+            return;
+          }
+          if (uomModalVisible) {
+            setUomModalVisible(false);
+            return;
+          }
+          onClose();
+        }}>
         <View style={[styles.editItemModalRoot, editTheme.root]}>
           <KeyboardAvoidingView
             style={[styles.editItemModalFlex, editTheme.flex]}
@@ -1268,6 +1662,28 @@ const EditItemModal = ({
                   <Text style={styles.editItemLoadingCloseText}>Close</Text>
                 </TouchableOpacity>
               </View>
+            ) : uomModalVisible && editedItem.no ? (
+              <ItemUnitOfMeasureModal
+                embedded
+                visible
+                onClose={() => setUomModalVisible(false)}
+                itemNo={editedItem.no}
+                itemName={editedItem.item_name}
+                canEdit={canEdit}
+                onChanged={defaultCode => {
+                  void loadItemUoms(editedItem.no as string);
+                  if (
+                    !defaultCode ||
+                    editedItemRef.current?.unit_of_measure === defaultCode
+                  ) {
+                    return;
+                  }
+                  setEditedItem(prev =>
+                    prev ? {...prev, unit_of_measure: defaultCode} : prev,
+                  );
+                  void autoSaveField('unit_of_measure', defaultCode);
+                }}
+              />
             ) : (
               <>
                 <View
@@ -1281,11 +1697,17 @@ const EditItemModal = ({
                       onPress={
                         categoryPickerVisible
                           ? () => setCategoryPickerVisible(false)
-                          : onClose
+                          : uomPickerVisible
+                            ? () => setUomPickerVisible(false)
+                            : () => void handleDismissEdit()
                       }
                       style={[styles.editItemCloseCircle, editTheme.closeCircle]}
                       accessibilityLabel={
-                        categoryPickerVisible ? 'Close categories' : 'Close'
+                        categoryPickerVisible
+                          ? 'Close categories'
+                          : uomPickerVisible
+                            ? 'Close units'
+                            : 'Close'
                       }>
                       <Image
                         source={icons.cross as any}
@@ -1297,11 +1719,13 @@ const EditItemModal = ({
                   <Text style={[styles.editItemHeaderTitle, editTheme.headerTitle]}>
                     {categoryPickerVisible
                       ? 'Categories'
-                      : isCreateMode && !isPersisted
-                        ? editedItem?.type === 'Service'
-                          ? 'Create Service'
-                          : 'Create Item'
-                        : 'Edit Item'}
+                      : uomPickerVisible
+                        ? 'Unit of measure'
+                        : isCreateMode && !isPersisted
+                          ? editedItem?.type === 'Service'
+                            ? 'Create Service'
+                            : 'Create Item'
+                          : 'Edit Item'}
                   </Text>
                   <View style={[styles.editItemHeaderSide, styles.editItemHeaderSideEnd]}>
                     {categoryPickerVisible ? (
@@ -1311,19 +1735,32 @@ const EditItemModal = ({
                         activeOpacity={0.7}>
                         <Text style={styles.editItemDonePillText}>Done</Text>
                       </TouchableOpacity>
-                    ) : canWrite && (isSaving || showSaved) ? (
-                      <View
-                        style={styles.editItemSavePill}
-                        accessibilityRole="text"
-                        accessibilityLabel={isSaving ? 'Saving' : 'Saved'}>
-                        <Text
-                          style={[
-                            styles.editItemSavePillText,
-                            {color: colors.textSecondary},
-                          ]}>
-                          {isSaving ? 'Saving...' : 'Saved'}
+                    ) : uomPickerVisible ? (
+                      <TouchableOpacity
+                        style={styles.editItemDonePill}
+                        onPress={() => applyPickedUnit(pickerSelectedUom)}
+                        activeOpacity={0.7}>
+                        <Text style={styles.editItemDonePillText}>Done</Text>
+                      </TouchableOpacity>
+                    ) : canWrite ? (
+                      <TouchableOpacity
+                        style={[
+                          styles.editItemDonePill,
+                          showSaved && !isSaving
+                            ? styles.editItemSavedPill
+                            : null,
+                        ]}
+                        onPress={() => void handleSavePress()}
+                        disabled={isSaving}
+                        activeOpacity={0.7}
+                        accessibilityRole="button"
+                        accessibilityLabel={
+                          isSaving ? 'Saving' : showSaved ? 'Saved' : 'Save'
+                        }>
+                        <Text style={styles.editItemDonePillText}>
+                          {isSaving ? 'Saving' : showSaved ? 'Saved' : 'Save'}
                         </Text>
-                      </View>
+                      </TouchableOpacity>
                     ) : (
                       <View style={styles.editItemHeaderSpacer} />
                     )}
@@ -1443,6 +1880,105 @@ const EditItemModal = ({
                       );
                     }}
                   />
+                ) : uomPickerVisible ? (
+                  <FlatList
+                    style={[styles.modalScrollView, editTheme.scrollBg]}
+                    data={units}
+                    keyExtractor={unit => unit.code}
+                    contentContainerStyle={[
+                      styles.editItemScrollContent,
+                      {paddingBottom: Math.max(insets.bottom, 20) + 24},
+                      units.length === 0 ? {flexGrow: 1} : null,
+                    ]}
+                    ListHeaderComponent={
+                      canCreateCategory(UNIT_PAGE_NAME) ? (
+                        <TouchableOpacity
+                          style={styles.editItemPickerCreateRow}
+                          onPress={() => {
+                            setUnitBeingEdited(null);
+                            setUomFormVisible(true);
+                          }}
+                          activeOpacity={0.65}>
+                          <Image
+                            source={icons.plus as any}
+                            style={[
+                              styles.editItemPickerCreatePlus,
+                              {tintColor: colors.textPrimary},
+                            ]}
+                            resizeMode="contain"
+                          />
+                          <Text
+                            style={[
+                              styles.editItemPickerCreateLabel,
+                              {color: colors.textPrimary},
+                            ]}>
+                            Create unit
+                          </Text>
+                        </TouchableOpacity>
+                      ) : null
+                    }
+                    ListEmptyComponent={
+                      <Text style={[styles.editItemOptionsCopy, editTheme.optionsCopy]}>
+                        {unitsLoading
+                          ? 'Loading units…'
+                          : canCreateCategory(UNIT_PAGE_NAME)
+                            ? 'No units yet. Tap Create unit to add one.'
+                            : 'No units found'}
+                      </Text>
+                    }
+                    renderItem={({item: unit}) => {
+                      const checked = pickerSelectedUom === unit.code;
+                      return (
+                        <View style={styles.editItemPickerRow}>
+                          <TouchableOpacity
+                            style={styles.editItemPickerRowMain}
+                            onPress={() =>
+                              setPickerSelectedUom(prev =>
+                                prev === unit.code ? null : unit.code,
+                              )
+                            }
+                            activeOpacity={0.7}>
+                            <Image
+                              source={
+                                checked
+                                  ? (icons.check_on as any)
+                                  : (icons.check_off as any)
+                              }
+                              style={styles.editItemPickerCheck}
+                              resizeMode="contain"
+                            />
+                            <Text
+                              style={[
+                                styles.editItemPickerRowTitle,
+                                editTheme.catTitle,
+                              ]}
+                              numberOfLines={1}>
+                              {unitLabel(unit)}
+                            </Text>
+                          </TouchableOpacity>
+                          {canEditCategory(UNIT_PAGE_NAME) ? (
+                            <TouchableOpacity
+                              onPress={() => {
+                                setUnitBeingEdited(unit);
+                                setUomFormVisible(true);
+                              }}
+                              hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
+                              activeOpacity={0.7}>
+                              <Text style={styles.editItemPickerEdit}>Edit</Text>
+                            </TouchableOpacity>
+                          ) : null}
+                          {canDeleteCategory(UNIT_PAGE_NAME) ? (
+                            <TouchableOpacity
+                              onPress={() => handleDeleteUnit(unit)}
+                              hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}
+                              activeOpacity={0.7}>
+                              <Text style={styles.editItemPickerDelete}>Delete</Text>
+                            </TouchableOpacity>
+                          ) : null}
+                        </View>
+                      );
+                    }}
+                  />
                 ) : (
                 <ScrollView
                   style={[styles.modalScrollView, editTheme.scrollBg]}
@@ -1454,7 +1990,7 @@ const EditItemModal = ({
                   keyboardShouldPersistTaps="handled"
                   nestedScrollEnabled={true}>
                   <Text style={[styles.editItemAutoSaveHint, editTheme.optionsCopy]}>
-                    Changes save automatically when you leave a field
+                    Tap Save to keep your changes. Leaving a field also saves.
                   </Text>
                   {imageUploadError ? (
                     <View style={styles.errorContainer}>
@@ -1534,9 +2070,7 @@ const EditItemModal = ({
                     <TextInput
                       style={[styles.squareOutlineInput, editTheme.outlineInput]}
                       value={editedItem.item_name}
-                      onChangeText={text =>
-                        setEditedItem({ ...editedItem, item_name: text })
-                      }
+                      onChangeText={text => writeEditedItem({item_name: text})}
                       onBlur={() =>
                         void autoSaveField(
                           'item_name',
@@ -1559,9 +2093,7 @@ const EditItemModal = ({
                     <TextInput
                       style={[styles.squareOutlineInput, editTheme.outlineInput]}
                       value={editedItem.bar_code_no ?? ''}
-                      onChangeText={text =>
-                        setEditedItem({...editedItem, bar_code_no: text})
-                      }
+                      onChangeText={text => writeEditedItem({bar_code_no: text})}
                       onBlur={() =>
                         void autoSaveField(
                           'bar_code_no',
@@ -1598,9 +2130,7 @@ const EditItemModal = ({
                         editTheme.outlineInput,
                       ]}
                       value={editedItem.description ?? ''}
-                      onChangeText={text =>
-                        setEditedItem({ ...editedItem, description: text })
-                      }
+                      onChangeText={text => writeEditedItem({description: text})}
                       onBlur={() =>
                         void autoSaveField(
                           'description',
@@ -1706,47 +2236,202 @@ const EditItemModal = ({
 
                   <View style={[styles.editItemThickBar, editTheme.thickBar]} />
 
-                  <Text style={[styles.editItemSectionHeading, editTheme.sectionHeading]}>
-                    Units of measure
-                  </Text>
-                  <Text style={[styles.editItemOptionsCopy, editTheme.optionsCopy]}>
-                    Define how this item is sold (e.g. PCS, BOX). The default unit must
-                    have quantity per unit of 1.
-                  </Text>
-                  {!isPersisted || !editedItem.no ? (
-                    <Text style={[styles.editItemOptionsCopy, editTheme.optionsCopy]}>
-                      Enter a name to auto-save the item, then add units of measure.
-                    </Text>
-                  ) : (
-                    <TouchableOpacity
-                      style={styles.editItemCategoryRow}
-                      onPress={() => setUomModalVisible(true)}
-                      disabled={!canEdit}
-                      activeOpacity={0.65}>
-                      <View style={[styles.editItemFolderIconWrap, editTheme.folderWrap]}>
-                        <Image
-                          source={icons.product as any}
-                          style={[styles.editItemFolderIcon, editTheme.folderIcon]}
-                          resizeMode="contain"
-                        />
-                      </View>
-                      <View style={styles.editItemCategoryRowText}>
-                        <Text style={[styles.editItemCategoryRowTitle, editTheme.catTitle]}>
-                          Manage units
-                        </Text>
-                        <Text style={[styles.editItemCategoryRowSubtitle, editTheme.catSubtitle]}>
-                          {itemUomCount === 0
-                            ? 'No units yet — tap to add'
-                            : `${itemUomCount} unit${itemUomCount === 1 ? '' : 's'}`}
-                        </Text>
-                      </View>
+                  <TouchableOpacity
+                    onPress={openUnits}
+                    disabled={unitsLoading}
+                    activeOpacity={0.65}>
+                    <View style={styles.editItemSectionHeadingRow}>
+                      <Text style={[styles.editItemSectionHeading, editTheme.sectionHeading, styles.editItemSectionHeadingInRow]}>
+                        Units of measure
+                      </Text>
                       <Image
                         source={icons.down_arrow as any}
                         style={[styles.squareSettingsChevron, editTheme.settingsChevron]}
                         resizeMode="contain"
                       />
-                    </TouchableOpacity>
-                  )}
+                    </View>
+                    {itemUoms.length > 0 ? (
+                      [...itemUoms]
+                        .sort((a, b) => {
+                          if (a.default !== b.default) {
+                            return a.default ? -1 : 1;
+                          }
+                          return a.unit_of_measure.localeCompare(b.unit_of_measure);
+                        })
+                        .map(row => (
+                          <View
+                            key={row.id}
+                            style={[styles.faceUnitRow, {borderTopColor: colors.border}]}>
+                            <View style={styles.faceUnitTop}>
+                              <Text
+                                style={[styles.faceUnitTitle, editTheme.catTitle]}
+                                numberOfLines={1}>
+                                {unitLabel({
+                                  code: row.unit_of_measure,
+                                  description: row.unit_of_measure_description,
+                                })}
+                              </Text>
+                              {row.default ? (
+                                <View style={[styles.faceUnitBadge, editTheme.invSummaryCard]}>
+                                  <Text style={[styles.faceUnitBadgeText, editTheme.catSubtitle]}>
+                                    Default
+                                  </Text>
+                                </View>
+                              ) : null}
+                            </View>
+                            <Text style={[styles.faceUnitMeta, editTheme.catSubtitle]}>
+                              Qty per unit: {row.quantity_per_unit}
+                            </Text>
+                          </View>
+                        ))
+                    ) : (
+                      <Text style={[styles.editItemCategoryRowSubtitle, editTheme.catSubtitle]}>
+                        {unitsLoading
+                          ? 'Loading…'
+                          : editedItem.unit_of_measure
+                            ? getSelectedUnitLabel()
+                            : 'Defaults to PCS'}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+
+                  {efrisEnabled ? (
+                    <>
+                      <View style={[styles.editItemThickBar, editTheme.thickBar]} />
+                      <Text style={[styles.editItemSectionHeading, editTheme.sectionHeading]}>
+                        EFRIS
+                      </Text>
+                      <Text style={[styles.editItemOptionsCopy, editTheme.optionsCopy]}>
+                        {efrisUploaded
+                          ? 'This item is on EFRIS. Both values below must stay selected before you update it.'
+                          : 'Both fields are required. Tap each box, choose a value, and wait until it says Selected.'}
+                      </Text>
+                      {!isPersisted || !editedItem.no ? (
+                        <Text style={[styles.editItemOptionsCopy, editTheme.optionsCopy]}>
+                          Enter a name to save the item, then upload it to EFRIS.
+                        </Text>
+                      ) : efrisLoading ? (
+                        <ActivityIndicator size="small" color={COLORS.primary} />
+                      ) : (
+                        <>
+                          {([
+                            {
+                              kind: 'category' as const,
+                              label: 'Goods category',
+                              empty: 'Tap to choose a goods category',
+                              value:
+                                efrisCategories.find(row => row.code === efrisCategoryId)?.name ||
+                                efrisCategoryId,
+                              blocked: efrisCategories.length === 0,
+                              blockedText:
+                                'No categories loaded. Refresh dictionaries on the web app.',
+                            },
+                            {
+                              kind: 'unit' as const,
+                              label: 'EFRIS unit',
+                              empty: 'Tap to choose a unit',
+                              value:
+                                efrisUnits.find(row => row.code === efrisUnit)?.name ||
+                                efrisUnit,
+                              blocked: efrisUnits.length === 0,
+                              blockedText:
+                                'No units loaded. Refresh dictionaries on the web app.',
+                            },
+                          ]).map(field => {
+                            const selected = Boolean(field.value);
+                            const missing = efrisAttempted && !selected && !field.blocked;
+                            return (
+                              <TouchableOpacity
+                                key={field.kind}
+                                style={[
+                                  styles.efrisChoice,
+                                  editTheme.outlineField,
+                                  selected && styles.efrisChoiceSelected,
+                                  missing && styles.efrisChoiceMissing,
+                                ]}
+                                onPress={() => setEfrisPicker(field.kind)}
+                                disabled={!canEdit || field.blocked}
+                                activeOpacity={0.65}
+                                accessibilityRole="button"
+                                accessibilityLabel={
+                                  selected
+                                    ? `${field.label} selected: ${field.value}`
+                                    : `${field.label}, required`
+                                }>
+                                <View style={styles.efrisChoiceText}>
+                                  <View style={styles.efrisChoiceLabelRow}>
+                                    <Text style={[styles.efrisChoiceLabel, editTheme.outlineLabel]}>
+                                      {field.label}
+                                    </Text>
+                                    <View
+                                      style={[
+                                        styles.efrisChoiceBadge,
+                                        selected
+                                          ? styles.efrisChoiceBadgeSelected
+                                          : styles.efrisChoiceBadgeRequired,
+                                      ]}>
+                                      <Text
+                                        style={[
+                                          styles.efrisChoiceBadgeText,
+                                          selected
+                                            ? styles.efrisChoiceBadgeTextSelected
+                                            : styles.efrisChoiceBadgeTextRequired,
+                                        ]}>
+                                        {selected ? 'Selected' : 'Required'}
+                                      </Text>
+                                    </View>
+                                  </View>
+                                  <Text
+                                    style={[
+                                      styles.efrisChoiceValue,
+                                      selected
+                                        ? editTheme.staticValue
+                                        : styles.efrisChoicePlaceholder,
+                                    ]}
+                                    numberOfLines={2}>
+                                    {field.blocked
+                                      ? field.blockedText
+                                      : selected
+                                        ? field.value
+                                        : field.empty}
+                                  </Text>
+                                </View>
+                                {selected ? (
+                                  <Image
+                                    source={icons.check_circle}
+                                    style={styles.efrisChoiceCheck}
+                                    resizeMode="contain"
+                                  />
+                                ) : (
+                                  <Image
+                                    source={icons.down_arrow as any}
+                                    style={[styles.squareSettingsChevron, editTheme.settingsChevron]}
+                                    resizeMode="contain"
+                                  />
+                                )}
+                              </TouchableOpacity>
+                            );
+                          })}
+                          <TouchableOpacity
+                            style={[
+                              styles.costSourceActionPill,
+                              {backgroundColor: COLORS.primary2, alignSelf: 'flex-start'},
+                            ]}
+                            onPress={() => void handleUploadToEfris()}
+                            disabled={!canEdit || efrisUploading}
+                            activeOpacity={0.7}>
+                            {efrisUploading ? (
+                              <ActivityIndicator size="small" color={COLORS.white} />
+                            ) : (
+                              <Text style={[styles.costSourceActionPillText, {color: COLORS.white}]}>
+                                {efrisUploaded ? 'Update on EFRIS' : 'Upload to EFRIS'}
+                              </Text>
+                            )}
+                          </TouchableOpacity>
+                        </>
+                      )}
+                    </>
+                  ) : null}
 
                   <View style={[styles.editItemThickBar, editTheme.thickBar]} />
 
@@ -1763,10 +2448,7 @@ const EditItemModal = ({
                         onChangeText={text => {
                           const numericValue =
                             parseFloat(text.replace(/,/g, '')) || 0;
-                          setEditedItem({
-                            ...editedItem,
-                            unit_price: numericValue,
-                          });
+                          writeEditedItem({unit_price: numericValue});
                         }}
                         onBlur={() =>
                           void autoSaveField(
@@ -1800,10 +2482,7 @@ const EditItemModal = ({
                             onChangeText={text => {
                               const numericValue =
                                 parseFloat(text.replace(/,/g, '')) || 0;
-                              setEditedItem({
-                                ...editedItem,
-                                unit_cost: numericValue,
-                              });
+                              writeEditedItem({unit_cost: numericValue});
                             }}
                             onBlur={() =>
                               void autoSaveField(
@@ -1833,56 +2512,61 @@ const EditItemModal = ({
 
                   {editedItem.type !== 'Service' &&
                   editedItem.type !== 'Non-Inventory' ? (
-                    <>
-                      <Text style={[styles.editItemOptionsCopy, editTheme.optionsCopy]}>
-                        Buying price and quantity are not typed here. They are set
-                        when you record a purchase or opening stock.
+                    <View style={[styles.costSourceCallout, editTheme.outlineField]}>
+                      <Text style={styles.costSourceCalloutTitle}>
+                        Buying price and quantity
+                      </Text>
+                      <Text
+                        style={[
+                          styles.costSourceCalloutCopy,
+                          editTheme.staticValue,
+                        ]}>
+                        These are not typed here. Set them when you record a
+                        purchase or opening stock.
                       </Text>
                       {isPersisted ? (
-                        <View style={styles.costSourceActionRow}>
+                        <View style={styles.costSourceCalloutActions}>
                           <TouchableOpacity
-                            style={[
-                              styles.costSourceActionPill,
-                              editTheme.addOptionsPill,
-                            ]}
-                            onPress={() => {
-                              onClose();
-                              (navigation as any).navigate('OpeningBalanceJournal');
-                            }}
-                            activeOpacity={0.7}>
+                            style={styles.costSourceCalloutButton}
+                            onPress={() =>
+                              void handleDismissEdit(() =>
+                                (navigation as any).navigate(
+                                  'OpeningBalanceJournal',
+                                ),
+                              )
+                            }
+                            activeOpacity={0.7}
+                            accessibilityRole="button"
+                            accessibilityLabel="Record opening stock">
                             <Text
-                              style={[
-                                styles.costSourceActionPillText,
-                                editTheme.addOptionsPillText,
-                              ]}>
+                              style={styles.costSourceCalloutButtonText}
+                              numberOfLines={1}>
                               Opening stock
                             </Text>
                           </TouchableOpacity>
                           <TouchableOpacity
-                            style={[
-                              styles.costSourceActionPill,
-                              editTheme.addOptionsPill,
-                            ]}
-                            onPress={() => {
-                              onClose();
-                              (navigation as any).navigate('PurchaseCreation');
-                            }}
-                            activeOpacity={0.7}>
+                            style={styles.costSourceCalloutButton}
+                            onPress={() =>
+                              void handleDismissEdit(() =>
+                                (navigation as any).navigate('PurchaseCreation'),
+                              )
+                            }
+                            activeOpacity={0.7}
+                            accessibilityRole="button"
+                            accessibilityLabel="Record a purchase">
                             <Text
-                              style={[
-                                styles.costSourceActionPillText,
-                                editTheme.addOptionsPillText,
-                              ]}>
+                              style={styles.costSourceCalloutButtonText}
+                              numberOfLines={1}>
                               Purchase
                             </Text>
                           </TouchableOpacity>
                         </View>
                       ) : (
-                        <Text style={[styles.editItemOptionsCopy, editTheme.optionsCopy]}>
+                        <Text style={styles.costSourceCalloutNote}>
                           Save the item first, then add opening stock or a purchase.
                         </Text>
                       )}
-                    </>
+                    </View>
                   ) : null}
 
                   {canSeeProfitMarginUi ? (
@@ -1925,8 +2609,7 @@ const EditItemModal = ({
                         }
                         onChangeText={text => {
                           const digits = text.replace(/[^0-9]/g, '');
-                          setEditedItem({
-                            ...editedItem,
+                          writeEditedItem({
                             minimum_stock:
                               digits.length > 0 ? parseInt(digits, 10) : null,
                           });
@@ -2110,18 +2793,6 @@ const EditItemModal = ({
           </View>
         </View>
       </Modal>
-      <ItemUnitOfMeasureModal
-        visible={uomModalVisible && visible}
-        onClose={() => setUomModalVisible(false)}
-        itemNo={editedItem?.no ?? ''}
-        itemName={editedItem?.item_name}
-        canEdit={canEdit}
-        onChanged={() => {
-          if (editedItem?.no) {
-            loadItemUomCount(editedItem.no);
-          }
-        }}
-      />
       <ItemCategoryFormModal
         visible={categoryFormVisible && visible}
         onClose={() => {
@@ -2142,9 +2813,198 @@ const EditItemModal = ({
         canEdit={canEditCategory(CATEGORY_PAGE_NAME)}
         categories={categoryRecords}
       />
+      <UnitOfMeasureFormModal
+        visible={uomFormVisible && visible}
+        onClose={() => {
+          setUomFormVisible(false);
+          setUnitBeingEdited(null);
+        }}
+        unit={unitBeingEdited}
+        onSave={saved => {
+          if (saved?.code) {
+            setPickerSelectedUom(saved.code);
+          }
+          void loadUnits();
+        }}
+        canCreate={canCreateCategory(UNIT_PAGE_NAME)}
+        canEdit={canEditCategory(UNIT_PAGE_NAME)}
+      />
+      <SearchableSelectModal
+        visible={efrisPicker === 'category'}
+        title="Goods category"
+        options={efrisCategories.map(row => ({
+          id: row.code,
+          label: row.name || row.code,
+          subtitle: row.name && row.name !== row.code ? row.code : undefined,
+        }))}
+        selectedId={efrisCategoryId || null}
+        searchPlaceholder="Search categories…"
+        onClose={() => setEfrisPicker(null)}
+        onSelect={id => {
+          const next = String(id);
+          const label =
+            efrisCategories.find(row => row.code === next)?.name || next;
+          setEfrisCategoryId(next);
+          setEfrisPicker(null);
+          void persistEfrisChoice(
+            {goods_category_id: next},
+            {title: 'Goods category selected', value: label},
+          );
+        }}
+      />
+      <SearchableSelectModal
+        visible={efrisPicker === 'unit'}
+        title="EFRIS unit"
+        options={efrisUnits.map(row => ({
+          id: row.code,
+          label: row.name || row.code,
+          subtitle: row.name && row.name !== row.code ? row.code : undefined,
+        }))}
+        selectedId={efrisUnit || null}
+        searchPlaceholder="Search units…"
+        onClose={() => setEfrisPicker(null)}
+        onSelect={id => {
+          const next = String(id);
+          const label = efrisUnits.find(row => row.code === next)?.name || next;
+          setEfrisUnit(next);
+          setEfrisPicker(null);
+          void persistEfrisChoice(
+            {measure_unit: next},
+            {title: 'EFRIS unit selected', value: label},
+          );
+        }}
+      />
     </>
   );
 };
+
+type ItemStockFilter = 'all' | 'in_stock' | 'low_stock' | 'out_of_stock';
+
+function itemListInitials(name?: string) {
+  const words = (name || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (words.length === 0) {
+    return 'IT';
+  }
+
+  if (words.length === 1) {
+    return words[0].slice(0, 2).toUpperCase();
+  }
+
+  return `${words[0][0]}${words[1][0]}`.toUpperCase();
+}
+
+const ItemListCard = React.memo(function ItemListCard({
+  item,
+  borderColor,
+  imageBackground,
+  textPrimary,
+  textSecondary,
+  canEdit,
+  showCost,
+  stockFilter,
+  onPress,
+}: {
+  item: Item;
+  borderColor: string;
+  imageBackground: string;
+  textPrimary: string;
+  textSecondary: string;
+  canEdit: boolean;
+  showCost: boolean;
+  stockFilter: ItemStockFilter;
+  onPress: (item: Item) => void;
+}) {
+  const initials = itemListInitials(item?.item_name);
+  const showStock =
+    stockFilter !== 'all' &&
+    item?.type !== 'Service' &&
+    item?.type !== 'Non-Inventory';
+
+  return (
+    <Pressable
+      {...ICON_BUTTON_QUICK_PRESS}
+      style={({pressed}) => [
+        styles.itemCard,
+        {borderBottomColor: borderColor},
+        pressed && canEdit ? {opacity: 0.7} : null,
+      ]}
+      disabled={!canEdit}
+      onPress={() => onPress(item)}>
+      <View
+        style={[
+          styles.itemImageContainer,
+          {backgroundColor: imageBackground},
+        ]}>
+        {item?.item_images &&
+        item.item_images.length > 0 &&
+        item.item_images[0]?.url ? (
+          <Image
+            source={{uri: item.item_images[0].url}}
+            style={styles.itemImage}
+            resizeMode="cover"
+          />
+        ) : (
+          <View
+            style={[
+              styles.placeholderImage,
+              {backgroundColor: imageBackground},
+            ]}>
+            <Text style={[styles.itemInitials, {color: textSecondary}]}>
+              {initials}
+            </Text>
+          </View>
+        )}
+      </View>
+
+      <View style={styles.itemInfo}>
+        <View style={styles.itemTopRow}>
+          <Text
+            style={[styles.itemName, {color: textPrimary}]}
+            numberOfLines={1}>
+            {item?.item_name || 'Unnamed Item'}
+          </Text>
+          <Text style={[styles.itemPrice, {color: textPrimary}]}>
+            {formatCurrencyCompact(item?.unit_price)}
+          </Text>
+        </View>
+        {item?.bar_code_no?.trim() ? (
+          <Text
+            style={[styles.itemBarcodeMeta, {color: textSecondary}]}
+            numberOfLines={1}>
+            Barcode: {item.bar_code_no.trim()}
+          </Text>
+        ) : null}
+        {showCost && Number(item?.unit_cost) > 0 ? (
+          <Text
+            style={[styles.itemBarcodeMeta, {color: textSecondary}]}
+            numberOfLines={1}>
+            Cost: {formatCurrencyCompact(item.unit_cost)}
+          </Text>
+        ) : null}
+        {showStock ? (
+          <Text
+            style={[
+              styles.itemStockMeta,
+              {
+                color:
+                  stockFilter === 'low_stock' ? COLORS.error : textSecondary,
+              },
+            ]}
+            numberOfLines={1}>
+            Qty {Math.max(0, Math.floor(Number(item?.inventory) || 0))}
+            {item?.minimum_stock != null && item.minimum_stock > 0
+              ? ` · Min ${item.minimum_stock}`
+              : ''}
+          </Text>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+});
 
 const Items = () => {
   const navigation = useNavigation();
@@ -2411,7 +3271,7 @@ const Items = () => {
     setCreateModal(true);
   };
 
-  const handleEditItem = (item: Item) => {
+  const handleEditItem = useCallback((item: Item) => {
     console.log('handleEditItem called with:', item);
     if (!item || (!item.id && !item.no)) {
       console.warn('Invalid item data for editing - missing id or no field');
@@ -2422,107 +3282,34 @@ const Items = () => {
     setCreateModal(false);
     setSelectedItem(item);
     setEditModal(true);
-  };
+  }, []);
 
-  const formatItemPrice = (value: number | string | undefined | null) =>
-    formatCurrencyCompact(value);
-
-  const getItemInitials = (name?: string) => {
-    const words = (name || '')
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean);
-
-    if (words.length === 0) {
-      return 'IT';
-    }
-
-    if (words.length === 1) {
-      return words[0].slice(0, 2).toUpperCase();
-    }
-
-    return `${words[0][0]}${words[1][0]}`.toUpperCase();
-  };
-
-  const renderItemCard = ({ item }: { item: Item }) => {
-    const initials = getItemInitials(item?.item_name);
-    return (
-      <TouchableOpacity
-        style={[styles.itemCard, { borderBottomColor: colors.border }]}
-        activeOpacity={0.7}
-        disabled={!canEdit(PAGE_NAME)}
-        onPress={() => canEdit(PAGE_NAME) && handleEditItem(item)}>
-        <View
-          style={[
-            styles.itemImageContainer,
-            { backgroundColor: colors.screenMuted },
-          ]}>
-          {item?.item_images &&
-            item.item_images.length > 0 &&
-            item.item_images[0]?.url ? (
-            <Image
-              source={{ uri: item.item_images[0].url }}
-              style={styles.itemImage}
-              resizeMode="cover"
-            />
-          ) : (
-            <View
-              style={[
-                styles.placeholderImage,
-                { backgroundColor: colors.screenMuted },
-              ]}>
-              <Text style={[styles.itemInitials, { color: colors.textSecondary }]}>
-                {initials}
-              </Text>
-            </View>
-          )}
-        </View>
-
-        <View style={styles.itemInfo}>
-          <View style={styles.itemTopRow}>
-            <Text
-              style={[styles.itemName, { color: colors.textPrimary }]}
-              numberOfLines={1}>
-              {item?.item_name || 'Unnamed Item'}
-            </Text>
-            <Text style={[styles.itemPrice, { color: colors.textPrimary }]}>
-              {formatItemPrice(item?.unit_price)}
-            </Text>
-          </View>
-          {item?.bar_code_no?.trim() ? (
-            <Text
-              style={[styles.itemBarcodeMeta, {color: colors.textSecondary}]}
-              numberOfLines={1}>
-              Barcode: {item.bar_code_no.trim()}
-            </Text>
-          ) : null}
-          {canSeeBuyingPriceUi && Number(item?.unit_cost) > 0 ? (
-            <Text
-              style={[styles.itemBarcodeMeta, {color: colors.textSecondary}]}
-              numberOfLines={1}>
-              Cost: {formatItemPrice(item.unit_cost)}
-            </Text>
-          ) : null}
-          {stockFilter !== 'all' && item?.type !== 'Service' && item?.type !== 'Non-Inventory' ? (
-            <Text
-              style={[
-                styles.itemStockMeta,
-                {
-                  color:
-                    stockFilter === 'low_stock' ? COLORS.error : colors.textSecondary,
-                },
-              ]}
-              numberOfLines={1}>
-              Qty {Math.max(0, Math.floor(Number(item?.inventory) || 0))}
-              {item?.minimum_stock != null && item.minimum_stock > 0
-                ? ` · Min ${item.minimum_stock}`
-                : ''}
-            </Text>
-          ) : null}
-        </View>
-      </TouchableOpacity>
-    );
-  };
+  const canEditItems = canEdit(PAGE_NAME);
+  const renderItemCard = useCallback(
+    ({item}: {item: Item}) => (
+      <ItemListCard
+        item={item}
+        borderColor={colors.border}
+        imageBackground={colors.screenMuted}
+        textPrimary={colors.textPrimary}
+        textSecondary={colors.textSecondary}
+        canEdit={canEditItems}
+        showCost={canSeeBuyingPriceUi}
+        stockFilter={stockFilter}
+        onPress={handleEditItem}
+      />
+    ),
+    [
+      canEditItems,
+      canSeeBuyingPriceUi,
+      colors.border,
+      colors.screenMuted,
+      colors.textPrimary,
+      colors.textSecondary,
+      handleEditItem,
+      stockFilter,
+    ],
+  );
 
   const handleItemDelete = async (itemToDelete: Item) => {
     if (!canDelete(PAGE_NAME)) {
@@ -2726,11 +3513,11 @@ const Items = () => {
             style={styles.listFlex}
             data={items || []}
             renderItem={renderItemCard}
-            keyExtractor={item =>
+            keyExtractor={(item, index) =>
               item?.id?.toString() ||
               item?.no ||
               item?.system_id ||
-              Math.random().toString()
+              `item-${index}`
             }
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
@@ -3283,7 +4070,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
   },
   editItemHeaderSide: {
-    width: 88,
+    width: 108,
     flexDirection: 'row',
     alignItems: 'center',
   },
@@ -3331,6 +4118,9 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.primary2,
     minWidth: 72,
     alignItems: 'center',
+  },
+  editItemSavedPill: {
+    backgroundColor: COLORS.success,
   },
   editItemDonePillText: {
     ...FONTS.body4,
@@ -3577,11 +4367,127 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 8,
   },
-  costSourceActionRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+  costSourceCallout: {
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 14,
     marginBottom: 18,
+  },
+  costSourceCalloutTitle: {
+    ...FONTS.body3,
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: '700',
+    color: COLORS.primary,
+    marginBottom: 4,
+  },
+  costSourceCalloutCopy: {
+    ...FONTS.body4,
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '500',
+    marginBottom: 14,
+  },
+  costSourceCalloutNote: {
+    ...FONTS.body4,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '700',
+    color: COLORS.primary2,
+  },
+  costSourceCalloutActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  costSourceCalloutButton: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 0,
+    minWidth: 0,
+    minHeight: 46,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    backgroundColor: COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  costSourceCalloutButtonText: {
+    ...FONTS.body4,
+    fontSize: 15,
+    fontWeight: '700',
+    color: COLORS.white,
+  },
+  efrisChoice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 10,
+    minHeight: 72,
+  },
+  efrisChoiceSelected: {
+    borderColor: COLORS.primary2,
+    borderWidth: 1.5,
+  },
+  efrisChoiceMissing: {
+    borderColor: COLORS.error,
+    borderWidth: 1.5,
+  },
+  efrisChoiceText: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: 10,
+  },
+  efrisChoiceLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  efrisChoiceLabel: {
+    ...FONTS.body5,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  efrisChoiceBadge: {
+    marginLeft: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 999,
+  },
+  efrisChoiceBadgeRequired: {
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+  },
+  efrisChoiceBadgeSelected: {
+    backgroundColor: 'rgba(26, 147, 138, 0.14)',
+  },
+  efrisChoiceBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  efrisChoiceBadgeTextRequired: {
+    color: COLORS.error,
+  },
+  efrisChoiceBadgeTextSelected: {
+    color: COLORS.primary,
+  },
+  efrisChoiceValue: {
+    ...FONTS.body3,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  efrisChoicePlaceholder: {
+    color: COLORS.gray2,
+    fontWeight: '500',
+  },
+  efrisChoiceCheck: {
+    width: 22,
+    height: 22,
+    tintColor: COLORS.primary2,
   },
   costSourceActionPill: {
     paddingVertical: 10,
@@ -3739,6 +4645,45 @@ const styles = StyleSheet.create({
     color: COLORS.black,
     marginBottom: 12,
     letterSpacing: -0.2,
+  },
+  editItemSectionHeadingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  editItemSectionHeadingInRow: {
+    flex: 1,
+    marginBottom: 8,
+  },
+  faceUnitRow: {
+    paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.lightGray1,
+  },
+  faceUnitTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  faceUnitTitle: {
+    ...FONTS.body3,
+    fontSize: 16,
+    fontWeight: '700',
+    flex: 1,
+  },
+  faceUnitMeta: {
+    ...FONTS.body4,
+    fontSize: 14,
+    marginTop: 2,
+  },
+  faceUnitBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  faceUnitBadgeText: {
+    ...FONTS.body5,
+    fontWeight: '600',
   },
   editItemCategoryRow: {
     flexDirection: 'row',

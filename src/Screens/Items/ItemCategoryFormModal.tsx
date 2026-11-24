@@ -11,6 +11,7 @@ import {
   Platform,
   FlatList,
   Image,
+  Keyboard,
 } from 'react-native';
 import {COLORS} from '../../constants/theme';
 import {QuickIconPressable} from '../../Components';
@@ -84,9 +85,26 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
   const currentRecordRef = useRef(currentRecord);
   const savingRef = useRef(false);
   const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
+  const descriptionInputRef = useRef<TextInput>(null);
+
+  const enqueueSave = useCallback(<T,>(task: () => Promise<T>): Promise<T> => {
+    const run = saveQueueRef.current.then(task, task);
+    saveQueueRef.current = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }, []);
 
   formDataRef.current = formData;
   currentRecordRef.current = currentRecord;
+
+  const writeForm = (patch: Partial<CategoryFormValues>) => {
+    const next = {...formDataRef.current, ...patch};
+    formDataRef.current = next;
+    setFormData(next);
+  };
 
   const isEditMode = !!currentRecord?.code;
   const canWrite = isEditMode ? canEdit : canCreate;
@@ -226,14 +244,17 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
     async (
       field: keyof CategoryFormValues,
       rawValue: CategoryFormValues[keyof CategoryFormValues],
-    ) => {
-      if (!visible || !canWrite || savingRef.current) {
-        return;
+    ): Promise<boolean> => {
+      if (!visible || !canWrite) {
+        return true;
+      }
+      if (savingRef.current) {
+        return false;
       }
 
       // Code is immutable after create.
       if (field === 'code' && currentRecordRef.current?.code) {
-        return;
+        return true;
       }
 
       const value =
@@ -248,14 +269,14 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
       if (record?.code) {
         const existing = (record as any)[field];
         if (String(existing ?? '') === String(normalizedValue ?? '')) {
-          return;
+          return true;
         }
       }
 
       const fieldError = getFieldError(field, normalizedValue);
       if (fieldError) {
         setErrors(prev => ({...prev, [field]: fieldError}));
-        return;
+        return false;
       }
 
       if (
@@ -264,7 +285,7 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
           normalizedValue === null ||
           normalizedValue === undefined)
       ) {
-        return;
+        return true;
       }
 
       const codeForCreate =
@@ -272,7 +293,7 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
           ? String(normalizedValue || '')
           : values.code || '';
       if (!record?.code && !codeForCreate.trim()) {
-        return;
+        return true;
       }
 
       setErrors(prev => {
@@ -291,11 +312,15 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
               [field]: normalizedValue as any,
             }),
           );
+          const createdForm = categoryToForm(created);
+          currentRecordRef.current = created;
+          formDataRef.current = createdForm;
           setCurrentRecord(created);
-          setFormData(categoryToForm(created));
+          setFormData(createdForm);
           onRecordChange?.(created);
           onSave();
           flashSaved();
+          return true;
         } else {
           const patch: Partial<ItemCategory> = {
             [field]:
@@ -305,17 +330,21 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
                 : normalizedValue,
           } as Partial<ItemCategory>;
           const updated = await updateItemCategory(record.code, patch);
-          setCurrentRecord(updated);
+          currentRecordRef.current = updated;
           if (field === 'description' || field === 'parent_id') {
-            setFormData(prev => ({
-              ...prev,
-              description: updated.description || prev.description,
+            const nextForm = {
+              ...formDataRef.current,
+              description: updated.description || formDataRef.current.description,
               parent_id: updated.parent_id ?? null,
-            }));
+            };
+            formDataRef.current = nextForm;
+            setFormData(nextForm);
           }
+          setCurrentRecord(updated);
           onRecordChange?.(updated);
           onSave();
           flashSaved();
+          return true;
         }
       } catch (error: any) {
         console.error('Error auto-saving category:', error);
@@ -328,9 +357,10 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
         setErrors(prev => ({...prev, [field]: String(errorMessage)}));
         Toast.show({
           type: 'error',
-          text1: 'Error',
-          text2: String(errorMessage),
+          text1: String(errorMessage),
+          visibilityTime: 5000,
         });
+        return false;
       } finally {
         savingRef.current = false;
         setIsSaving(false);
@@ -338,6 +368,47 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
     },
     [visible, canWrite, onRecordChange, onSave, flashSaved],
   );
+
+  const flushCategory = useCallback(async () => {
+    const fields: (keyof CategoryFormValues)[] = [
+      'code',
+      'description',
+      'parent_id',
+    ];
+    for (const field of fields) {
+      const saved = await enqueueSave(() =>
+        autoSaveField(field, formDataRef.current[field]),
+      );
+      if (!saved) {
+        return false;
+      }
+    }
+    return true;
+  }, [autoSaveField, enqueueSave]);
+
+  const handleSavePress = useCallback(async () => {
+    Keyboard.dismiss();
+    const ok = await flushCategory();
+    if (ok && currentRecordRef.current?.code) {
+      flashSaved();
+    }
+  }, [flushCategory, flashSaved]);
+
+  const handleDismiss = useCallback(async () => {
+    Keyboard.dismiss();
+    if (
+      !currentRecordRef.current?.code &&
+      !formDataRef.current.code.trim()
+    ) {
+      onClose();
+      return;
+    }
+    const ok = await flushCategory();
+    if (!ok) {
+      return;
+    }
+    onClose();
+  }, [flushCategory, onClose]);
 
   // Filter out current category and its descendants from parent options
   const getParentOptions = () => {
@@ -394,14 +465,14 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
       visible={visible}
       animationType="slide"
       transparent={false}
-      onRequestClose={onClose}>
+      onRequestClose={() => void handleDismiss()}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={[styles.pageRoot, catTheme.pageRoot]}>
         <View style={[styles.page, catTheme.page]}>
           <View style={[styles.pageHeader, {paddingTop: topInset}]}>
             <QuickIconPressable
-              onPress={onClose}
+              onPress={() => void handleDismiss()}
               style={styles.headerIconButton}
               hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
               accessibilityLabel="Close">
@@ -412,15 +483,23 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
               />
             </QuickIconPressable>
 
-            {canWrite && (isSaving || showSaved) ? (
-              <View
-                style={styles.headerSaveStatus}
-                accessibilityRole="text"
-                accessibilityLabel={isSaving ? 'Saving' : 'Saved'}>
-                <Text style={[styles.headerSaveText, catTheme.headerSaveText]}>
-                  {isSaving ? 'Saving...' : 'Saved'}
+            {canWrite ? (
+              <TouchableOpacity
+                style={[
+                  styles.headerSaveButton,
+                  showSaved && !isSaving ? styles.headerSaveButtonSaved : null,
+                ]}
+                onPress={() => void handleSavePress()}
+                disabled={isSaving}
+                activeOpacity={0.7}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  isSaving ? 'Saving' : showSaved ? 'Saved' : 'Save'
+                }>
+                <Text style={styles.headerSaveText}>
+                  {isSaving ? 'Saving' : showSaved ? 'Saved' : 'Save'}
                 </Text>
-              </View>
+              </TouchableOpacity>
             ) : (
               <View style={styles.headerSpacer} />
             )}
@@ -435,7 +514,7 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
               {isEditMode ? 'Edit category' : 'Create category'}
             </Text>
             <Text style={[styles.autoSaveHint, catTheme.autoSaveHint]}>
-              Changes save automatically when you leave a field
+              Tap Save to keep your changes. Leaving a field also saves.
             </Text>
 
             <View style={styles.previewSection}>
@@ -455,8 +534,8 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
                 onPress={() =>
                   Toast.show({
                     type: 'info',
-                    text1: 'POS tile preview',
-                    text2: 'Tile customization will be added in a later update.',
+                    text1: 'Tile editing isn’t available yet',
+                    visibilityTime: 2500,
                   })
                 }
                 activeOpacity={0.8}>
@@ -487,17 +566,26 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
                 value={isEditMode ? formData.description : formData.code}
                 onChangeText={text =>
                   isEditMode
-                    ? setFormData({...formData, description: text.toUpperCase()})
-                    : setFormData({...formData, code: text.toUpperCase()})
+                    ? writeForm({description: text.toUpperCase()})
+                    : writeForm({code: text.toUpperCase()})
                 }
-                onBlur={() =>
-                  isEditMode
-                    ? autoSaveField(
-                        'description',
-                        formDataRef.current.description || '',
-                      )
-                    : autoSaveField('code', formDataRef.current.code)
-                }
+                onBlur={() => {
+                  void enqueueSave(() =>
+                    isEditMode
+                      ? autoSaveField(
+                          'description',
+                          formDataRef.current.description || '',
+                        )
+                      : autoSaveField('code', formDataRef.current.code),
+                  );
+                }}
+                returnKeyType={isEditMode ? 'done' : 'next'}
+                blurOnSubmit={isEditMode}
+                onSubmitEditing={() => {
+                  if (!isEditMode) {
+                    descriptionInputRef.current?.focus();
+                  }
+                }}
                 editable={canWrite}
                 autoCapitalize="characters"
                 maxLength={255}
@@ -512,6 +600,7 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
               {isEditMode ? null : (
                 <>
                   <TextInput
+                    ref={descriptionInputRef}
                     style={[
                       styles.input,
                       catTheme.input,
@@ -521,15 +610,17 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
                     placeholder="Description (optional)"
                     placeholderTextColor={colors.placeholder}
                     value={formData.description}
-                    onChangeText={text =>
-                      setFormData({...formData, description: text})
-                    }
-                    onBlur={() =>
-                      autoSaveField(
-                        'description',
-                        formDataRef.current.description || '',
-                      )
-                    }
+                    onChangeText={text => writeForm({description: text})}
+                    onBlur={() => {
+                      void enqueueSave(() =>
+                        autoSaveField(
+                          'description',
+                          formDataRef.current.description || '',
+                        ),
+                      );
+                    }}
+                    returnKeyType="done"
+                    blurOnSubmit
                     editable={canWrite}
                     autoCapitalize="sentences"
                     maxLength={255}
@@ -672,13 +763,14 @@ const ItemCategoryFormModal: React.FC<ItemCategoryFormModalProps> = ({
                   ]}
                   onPress={() => {
                     const nextParentId = item.code || null;
-                    setFormData({
-                      ...formData,
+                    writeForm({
                       parent_id: nextParentId,
                     });
                     setParentPickerVisible(false);
                     setParentSearchQuery('');
-                    void autoSaveField('parent_id', nextParentId);
+                    void enqueueSave(() =>
+                      autoSaveField('parent_id', nextParentId),
+                    );
                   }}
                   activeOpacity={0.7}>
                   <Text
@@ -745,16 +837,20 @@ const styles = StyleSheet.create({
     height: 20,
     tintColor: COLORS.primary3,
   },
-  headerSaveStatus: {
-    minWidth: 88,
-    height: 48,
+  headerSaveButton: {
+    minWidth: 72,
+    height: 36,
+    borderRadius: 999,
+    backgroundColor: COLORS.primary2,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    backgroundColor: 'transparent',
+    paddingHorizontal: 18,
+  },
+  headerSaveButtonSaved: {
+    backgroundColor: COLORS.success,
   },
   headerSaveText: {
-    color: COLORS.gray2,
+    color: COLORS.white,
     fontSize: 15,
     fontWeight: '600',
   },

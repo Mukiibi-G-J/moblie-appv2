@@ -116,11 +116,11 @@ const Customers = () => {
     const detail =
       (customersError as any)?.response?.data?.detail ||
       (customersError as any)?.message ||
-      'Failed to load customers';
+      'Couldn’t load customers';
     Toast.show({
       type: 'error',
-      text1: 'Error',
-      text2: String(detail),
+      text1: String(detail),
+      visibilityTime: 5000,
     });
   }, [customersError]);
 
@@ -180,16 +180,16 @@ const Customers = () => {
               await CustomerServices.deleteCustomer(customer.id);
               Toast.show({
                 type: 'success',
-                text1: 'Success',
-                text2: 'Customer deleted successfully',
+                text1: 'Customer deleted',
+                visibilityTime: 2000,
               });
               onRefresh();
             } catch (error: any) {
               Toast.show({
                 type: 'error',
-                text1: 'Error',
-                text2:
-                  error?.response?.data?.detail || 'Failed to delete customer',
+                text1:
+                  error?.response?.data?.detail || 'Couldn’t delete this customer',
+                visibilityTime: 5000,
               });
             }
           },
@@ -217,8 +217,8 @@ const Customers = () => {
       setCustomerLedgerEntries([]);
       Toast.show({
         type: 'error',
-        text1: 'Error',
-        text2: 'Failed to load customer ledger entries.',
+        text1: 'Couldn’t load this customer’s ledger',
+        visibilityTime: 5000,
       });
     } finally {
       setLedgerLoading(false);

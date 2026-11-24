@@ -178,9 +178,8 @@ export default function Home() {
     canAccessMobileNav('items', PAGE_NAMES.ITEMS);
 
   const canViewReceivables =
-    (isModuleVisible('payments') || isModuleVisible('customers')) &&
-    (canAccessMobileNav('payments', PAGE_NAMES.PAYMENTS) ||
-      canAccessMobileNav('customers', PAGE_NAMES.CUSTOMER_MANAGEMENT));
+    isModuleVisible('payments') &&
+    canAccessMobileNav('payments', PAGE_NAMES.PAYMENTS);
 
   const canViewMySalesToday =
     isModuleVisible('sales') &&

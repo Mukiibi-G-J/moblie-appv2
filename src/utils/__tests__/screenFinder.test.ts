@@ -29,7 +29,27 @@ const items: ScreenFinderItem[] = [
     key: 'settings',
     label: 'Settings',
     section: 'App & account',
-    keywords: 'settings preferences',
+    keywords: 'settings preferences printer print',
+  },
+  {
+    key: 'printerConfig',
+    label: 'Printer configuration',
+    section: 'App & account',
+    keywords: 'printer print receipt bluetooth usb sunmi thermal',
+  },
+  {
+    key: 'receiptLayout',
+    label: 'Receipt layout',
+    section: 'App & account',
+    keywords:
+      'receipt layout template look design format slip how the receipt looks',
+  },
+  {
+    key: 'generalSetup',
+    label: 'General setup',
+    section: 'Company',
+    keywords:
+      'general ledger setup gl setup g/l setup vat currency branches',
   },
 ];
 
@@ -60,6 +80,38 @@ describe('filterScreens', () => {
     ]);
     expect(filterScreens(items, 'pnl').map(item => item.key)).toEqual([
       'profitLoss',
+    ]);
+  });
+
+  it('matches printer configuration by printer aliases', () => {
+    expect(filterScreens(items, 'printer').map(item => item.key)).toEqual([
+      'settings',
+      'printerConfig',
+    ]);
+    expect(filterScreens(items, 'bluetooth').map(item => item.key)).toEqual([
+      'printerConfig',
+    ]);
+  });
+
+  it('matches receipt layout by receipt and layout', () => {
+    expect(filterScreens(items, 'receipt').map(item => item.key)).toEqual([
+      'printerConfig',
+      'receiptLayout',
+    ]);
+    expect(filterScreens(items, 'layout').map(item => item.key)).toEqual([
+      'receiptLayout',
+    ]);
+  });
+
+  it('matches general setup by partial name and aliases', () => {
+    expect(filterScreens(items, 'General se').map(item => item.key)).toEqual([
+      'generalSetup',
+    ]);
+    expect(filterScreens(items, 'g/l setup').map(item => item.key)).toEqual([
+      'generalSetup',
+    ]);
+    expect(filterScreens(items, 'vat').map(item => item.key)).toEqual([
+      'generalSetup',
     ]);
   });
 

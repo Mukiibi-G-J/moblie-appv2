@@ -14,7 +14,7 @@ import { COLORS, constants, FONTS, images, SIZES } from '../constants';
 const LARGE_SCREEN_BREAKPOINT = 600;
 const MAX_CONTENT_WIDTH = 900;
 
-const OnBoarding = ({ navigation }: { navigation: any }) => {
+const OnBoarding = ({navigation}: {navigation?: any}) => {
   const { width: screenWidth, height: screenHeight } = useWindowDimensions();
   const isLargeScreen = screenWidth >= LARGE_SCREEN_BREAKPOINT;
   const contentWidth = isLargeScreen

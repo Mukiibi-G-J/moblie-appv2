@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { fetchCompanyInfoForReceipt } from "../utils/companyReceiptInfo";
 import { isPlaceholderCompanyLogo } from "../utils/companyLogoUrl";
 import type { KotData } from "./UsbPrinterService";
 import type { CompanyInfo, PrintReceiptData, PrinterType } from "./PrintService";
@@ -13,8 +14,10 @@ import {
 } from "../shared/receipt/receiptRuntime";
 import type {
   PayeeLine,
+  ReceiptBuildPayload,
   ReceiptDocument,
   ReceiptProcess,
+  ReceiptType,
   PrinterType as ApiPrinterType,
   ResolvedReceiptTemplate,
   SaleReceiptPayload,
@@ -200,4 +203,78 @@ export async function buildKotReceiptDocument(
   );
   const payload = kotTicketDataToPayload(data, "kot");
   return buildReceiptDocumentFromTemplate(payload, template, branding);
+}
+
+function layoutSamplePayload(receiptType: ReceiptType): ReceiptBuildPayload {
+  const printedAt = new Date().toISOString();
+  if (receiptType === "kot" || receiptType === "bar") {
+    return {
+      receiptType,
+      title: receiptType === "kot" ? "KITCHEN" : "BAR",
+      orderNo: "1042",
+      tableLabel: "Table 4",
+      orderTypeDisplay: "Dine in",
+      waiterName: "Amina",
+      printedAt,
+      items: [
+        { item_name: "Chapati", quantity: 2, special_instructions: "No salt" },
+        { item_name: "Rolex", quantity: 1 },
+      ],
+    };
+  }
+  if (receiptType === "payment_journal") {
+    return {
+      receiptType,
+      documentNo: "PAY-1042",
+      documentDate: printedAt,
+      lines: [{ item_name: "Customer payment", quantity: 1, total_price: 25000 }],
+      totalAmount: 25000,
+      paymentMethod: "Cash",
+    };
+  }
+  return {
+    receiptType: receiptType === "prepayment" ? "prepayment" : "sale",
+    invoiceNo: receiptType === "prepayment" ? "TEST-PREPAY" : "TEST-SALE",
+    documentDate: printedAt,
+    customerName: "Walk-in",
+    sellerName: "Test cashier",
+    lines: [
+      { item_name: "Chapati", quantity: 2, unit_price: 2000, line_total: 4000 },
+      { item_name: "Rolex", quantity: 1, unit_price: 5000, line_total: 5000 },
+    ],
+    totalAmount: 9000,
+    amountReceived: 10000,
+    changeAmount: 1000,
+    paymentMethod: "Cash",
+  };
+}
+
+/** Print the layout open on the screen, including changes that are not saved yet. */
+export async function buildLayoutSampleDocument(
+  template: ResolvedReceiptTemplate,
+  printerType: PrinterType,
+): Promise<ReceiptDocument> {
+  const company = await fetchCompanyInfoForReceipt();
+  const branchCode = await loadBranchCode();
+  const branding = brandingFromCompany(company, branchCode);
+  const fitted = clampMobilePaperProfile(
+    {
+      ...template,
+      paperProfile: template.paperProfile || { widthMm: 58, charsPerLine: 32 },
+    },
+    printerType,
+  );
+  const sample = layoutSamplePayload(template.receiptType);
+  const payload =
+    sample.receiptType === "sale" || sample.receiptType === "prepayment"
+      ? await applyCompanyReceiptFields(sample, {
+          cartItems: [],
+          total: sample.totalAmount,
+          username: sample.sellerName || "Test cashier",
+          payeeLines: sample.payeeLines,
+          vatEnabled: sample.vatEnabled,
+          vatAmount: sample.vatAmount,
+        })
+      : sample;
+  return buildReceiptDocumentFromTemplate(payload, fitted, branding);
 }

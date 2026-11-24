@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Image,
   Platform,
+  Keyboard,
 } from 'react-native';
 import {Picker} from '@react-native-picker/picker';
 import {COLORS, FONTS} from '../../constants';
@@ -150,6 +151,12 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
   formDataRef.current = formData;
   currentRecordRef.current = currentRecord;
 
+  const writeForm = (patch: Partial<VendorFormValues>) => {
+    const next = {...formDataRef.current, ...patch};
+    formDataRef.current = next;
+    setFormData(next);
+  };
+
   const isEditMode = !!currentRecord?.id;
   const isGeneralVendor = isProtectedGeneralVendor(currentRecord || vendor);
   const canWrite = isEditMode ? canEdit : canCreate;
@@ -254,9 +261,12 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
     async (
       field: keyof VendorFormValues,
       rawValue: VendorFormValues[keyof VendorFormValues],
-    ) => {
-      if (!visible || isGeneralVendor || !canWrite || savingRef.current) {
-        return;
+    ): Promise<boolean> => {
+      if (!visible || isGeneralVendor || !canWrite) {
+        return true;
+      }
+      if (savingRef.current) {
+        return false;
       }
 
       const value =
@@ -267,14 +277,14 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
       if (record?.id) {
         const existing = (record as any)[field];
         if (String(existing ?? '') === String(value ?? '')) {
-          return;
+          return true;
         }
       }
 
       const fieldError = getFieldError(field, value);
       if (fieldError) {
         setErrors(prev => ({...prev, [field]: fieldError}));
-        return;
+        return false;
       }
 
       if (
@@ -282,13 +292,13 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
         !OPTIONAL_VENDOR_FIELDS.has(field) &&
         (value === '' || value === null || value === undefined)
       ) {
-        return;
+        return true;
       }
 
       const nameForCreate =
         field === 'name' ? String(value || '') : values.name || '';
       if (!record?.id && !nameForCreate.trim()) {
-        return;
+        return true;
       }
 
       setErrors(prev => {
@@ -304,19 +314,25 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
           const created = await VendorServices.createVendor(
             buildCreatePayload({...values, [field]: value as any}),
           );
+          const nextForm = vendorToForm(created);
+          currentRecordRef.current = created;
+          formDataRef.current = nextForm;
           setCurrentRecord(created);
-          setFormData(vendorToForm(created));
+          setFormData(nextForm);
           onRecordChange?.(created);
           onSave();
           flashSaved();
+          return true;
         } else {
           const updated = await VendorServices.updateVendor(record.id, {
             [field]: value,
           } as Partial<Vendor>);
+          currentRecordRef.current = updated;
           setCurrentRecord(updated);
           onRecordChange?.(updated);
           onSave();
           flashSaved();
+          return true;
         }
       } catch (error: any) {
         console.error('Error auto-saving vendor:', error);
@@ -329,9 +345,10 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
         setErrors(prev => ({...prev, [field]: errorMessage}));
         Toast.show({
           type: 'error',
-          text1: 'Error',
-          text2: errorMessage,
+          text1: errorMessage,
+          visibilityTime: 5000,
         });
+        return false;
       } finally {
         savingRef.current = false;
         setIsSaving(false);
@@ -339,6 +356,61 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
     },
     [visible, isGeneralVendor, canWrite, onRecordChange, onSave, flashSaved],
   );
+
+  const waitUntilIdle = () =>
+    new Promise<void>(resolve => {
+      const tick = () => {
+        if (!savingRef.current) {
+          resolve();
+          return;
+        }
+        setTimeout(tick, 40);
+      };
+      tick();
+    });
+
+  const flushVendor = useCallback(async () => {
+    const fields: (keyof VendorFormValues)[] = [
+      'name',
+      'phone',
+      'email',
+      'website',
+      'address',
+      'city',
+      'payment_method',
+      'blocked',
+    ];
+    for (const field of fields) {
+      await waitUntilIdle();
+      const saved = await autoSaveField(field, formDataRef.current[field]);
+      if (!saved) {
+        return false;
+      }
+    }
+    return true;
+  }, [autoSaveField]);
+
+  const handleSavePress = useCallback(async () => {
+    Keyboard.dismiss();
+    const ok = await flushVendor();
+    if (ok && currentRecordRef.current?.id) {
+      flashSaved();
+    }
+  }, [flushVendor, flashSaved]);
+
+  const handleDismiss = useCallback(async () => {
+    Keyboard.dismiss();
+    await waitUntilIdle();
+    if (!currentRecordRef.current?.id && !formDataRef.current.name.trim()) {
+      onClose();
+      return;
+    }
+    const ok = await flushVendor();
+    if (!ok) {
+      return;
+    }
+    onClose();
+  }, [flushVendor, onClose]);
 
   const previewName = (formData.name || 'My Supplier').trim();
   const previewInitials =
@@ -356,11 +428,11 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
       visible={visible}
       animationType="slide"
       transparent={false}
-      onRequestClose={onClose}>
+      onRequestClose={() => void handleDismiss()}>
       <View style={[styles.pageRoot, themed.pageRoot]}>
         <View style={[styles.pageHeader, {paddingTop: topInset}]}>
           <QuickIconPressable
-            onPress={onClose}
+            onPress={() => void handleDismiss()}
             style={[styles.headerIconButton, themed.headerIconButton]}
             hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}
             accessibilityLabel="Close">
@@ -371,15 +443,23 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
             />
           </QuickIconPressable>
 
-          {canWrite && !isGeneralVendor && (isSaving || showSaved) ? (
-            <View
-              style={styles.headerSaveButton}
-              accessibilityRole="text"
-              accessibilityLabel={isSaving ? 'Saving' : 'Saved'}>
-              <Text style={[styles.headerSaveText, {color: colors.textSecondary}]}>
-                {isSaving ? 'Saving...' : 'Saved'}
+          {canWrite && !isGeneralVendor ? (
+            <TouchableOpacity
+              style={[
+                styles.headerSaveButton,
+                showSaved && !isSaving ? styles.headerSaveButtonSaved : null,
+              ]}
+              onPress={() => void handleSavePress()}
+              disabled={isSaving}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={
+                isSaving ? 'Saving' : showSaved ? 'Saved' : 'Save'
+              }>
+              <Text style={styles.headerSaveText}>
+                {isSaving ? 'Saving' : showSaved ? 'Saved' : 'Save'}
               </Text>
-            </View>
+            </TouchableOpacity>
           ) : (
             <View style={styles.headerSpacer} />
           )}
@@ -394,7 +474,7 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
             {isEditMode ? 'Edit supplier' : 'Add supplier'}
           </Text>
           <Text style={[styles.autoSaveHint, themed.autoSaveHint]}>
-            Changes save automatically when you leave a field
+            Tap Save to keep your changes. Leaving a field also saves.
           </Text>
 
           <View style={[styles.previewSection, themed.previewSection]}>
@@ -432,7 +512,7 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
               <TextInput
                 style={[styles.input, themed.input, errors.name && styles.inputError]}
                 value={formData.name}
-                onChangeText={text => setFormData({...formData, name: text})}
+                onChangeText={text => writeForm({name: text})}
                 onBlur={() => autoSaveField('name', formDataRef.current.name)}
                 placeholder="Supplier name"
                 placeholderTextColor={colors.placeholder}
@@ -446,7 +526,7 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
               <TextInput
                 style={[styles.input, themed.input, errors.phone && styles.inputError]}
                 value={formData.phone}
-                onChangeText={text => setFormData({...formData, phone: text})}
+                onChangeText={text => writeForm({phone: text})}
                 onBlur={() =>
                   autoSaveField('phone', formDataRef.current.phone || '')
                 }
@@ -463,7 +543,7 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
               <TextInput
                 style={[styles.input, themed.input, errors.email && styles.inputError]}
                 value={formData.email}
-                onChangeText={text => setFormData({...formData, email: text})}
+                onChangeText={text => writeForm({email: text})}
                 onBlur={() =>
                   autoSaveField('email', formDataRef.current.email || '')
                 }
@@ -481,7 +561,7 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
               <TextInput
                 style={[styles.input, themed.input, errors.website && styles.inputError]}
                 value={formData.website}
-                onChangeText={text => setFormData({...formData, website: text})}
+                onChangeText={text => writeForm({website: text})}
                 onBlur={() =>
                   autoSaveField('website', formDataRef.current.website || '')
                 }
@@ -505,8 +585,8 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
               activeOpacity={0.8}
               disabled={isGeneralVendor || !canWrite}
               onPress={() => {
-                const nextBlocked = !formData.blocked;
-                setFormData(prev => ({...prev, blocked: nextBlocked}));
+                const nextBlocked = !formDataRef.current.blocked;
+                writeForm({blocked: nextBlocked});
                 void autoSaveField('blocked', nextBlocked);
               }}>
               <View
@@ -535,7 +615,7 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
               <TextInput
                 style={[styles.input, styles.textArea, themed.input]}
                 value={formData.address}
-                onChangeText={text => setFormData({...formData, address: text})}
+                onChangeText={text => writeForm({address: text})}
                 onBlur={() =>
                   autoSaveField('address', formDataRef.current.address || '')
                 }
@@ -552,7 +632,7 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
               <TextInput
                 style={[styles.input, themed.input]}
                 value={formData.city}
-                onChangeText={text => setFormData({...formData, city: text})}
+                onChangeText={text => writeForm({city: text})}
                 onBlur={() =>
                   autoSaveField('city', formDataRef.current.city || '')
                 }
@@ -584,7 +664,7 @@ const VendorFormModal: React.FC<VendorFormModalProps> = ({
                       selectedValue={formData.payment_method || 0}
                       onValueChange={value => {
                         const nextValue = value === 0 ? null : value;
-                        setFormData({...formData, payment_method: nextValue});
+                        writeForm({payment_method: nextValue});
                         void autoSaveField('payment_method', nextValue);
                       }}
                       style={[styles.picker, themed.picker]}
@@ -649,15 +729,19 @@ const styles = StyleSheet.create({
     marginBottom: 18,
   },
   headerSaveButton: {
-    minWidth: 88,
-    height: 48,
+    minWidth: 72,
+    height: 36,
+    borderRadius: 999,
+    backgroundColor: COLORS.primary2,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 8,
-    backgroundColor: 'transparent',
+    paddingHorizontal: 18,
+  },
+  headerSaveButtonSaved: {
+    backgroundColor: COLORS.success,
   },
   headerSaveText: {
-    color: COLORS.gray2,
+    color: COLORS.white,
     fontSize: 15,
     fontWeight: '600',
   },

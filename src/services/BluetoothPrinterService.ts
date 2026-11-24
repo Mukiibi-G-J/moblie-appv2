@@ -8,6 +8,7 @@ import Toast from 'react-native-toast-message';
 import {
   prepareCompanyLogoForPrint,
   fitReceiptLogoSize,
+  logoBoxPixels,
 } from '../utils/companyLogoUrl';
 import type {ItemLabelPrintData, PrintReceiptData} from './PrintService';
 import type {KotData} from './UsbPrinterService';
@@ -373,7 +374,7 @@ class BluetoothPrinterService {
       if (!hasPermissions) {
         Toast.show({
           type: 'error',
-          text1: 'Permissions Required',
+          text1: 'Allow Bluetooth to continue',
           text2: 'Bluetooth permissions are required to scan for printers.',
         });
         return [];
@@ -561,7 +562,7 @@ class BluetoothPrinterService {
         if (devices.length > 0) {
           Toast.show({
             type: 'success',
-            text1: 'Scan Complete',
+            text1: 'Scan finished',
             text2: `Found ${devices.length} device(s)`,
           });
           return devices;
@@ -571,7 +572,7 @@ class BluetoothPrinterService {
         if (discoveryError || (result as any).error) {
           Toast.show({
             type: 'error',
-            text1: 'Scan Failed',
+            text1: 'Couldn’t scan for printers',
             text2:
               discoveryError ||
               (result as any).error ||
@@ -580,7 +581,7 @@ class BluetoothPrinterService {
         } else {
           Toast.show({
             type: 'info',
-            text1: 'No Printers Found',
+            text1: 'No printers found',
             text2:
               'Make sure your printer is powered on and paired in Android Bluetooth Settings first.',
           });
@@ -606,7 +607,7 @@ class BluetoothPrinterService {
 
         Toast.show({
           type: 'error',
-          text1: 'Scan Failed',
+          text1: 'Couldn’t scan for printers',
           text2:
             scanError?.message ||
             'Failed to scan for Bluetooth printers. Please pair your printer in Android Bluetooth Settings first.',
@@ -617,7 +618,7 @@ class BluetoothPrinterService {
       console.error('Failed to scan for printers:', error);
       Toast.show({
         type: 'error',
-        text1: 'Scan Failed',
+        text1: 'Couldn’t scan for printers',
         text2: error?.message || 'Failed to scan for Bluetooth printers.',
       });
       return [];
@@ -708,7 +709,7 @@ class BluetoothPrinterService {
               'Connection test failed';
         Toast.show({
           type: 'error',
-          text1: 'Connection Failed',
+          text1: 'Couldn’t connect to the printer',
           text2: errorMsg,
         });
       }
@@ -721,7 +722,7 @@ class BluetoothPrinterService {
       if (showToast) {
         Toast.show({
           type: 'error',
-          text1: 'Connection Failed',
+          text1: 'Couldn’t connect to the printer',
           text2:
             e?.message ||
             'Failed to connect to Bluetooth printer. Please ensure the printer is nearby and powered on.',
@@ -1105,7 +1106,10 @@ class BluetoothPrinterService {
       : this.buildFullReceiptRawBytes(data);
   }
 
-  private async printReceiptLogo(logo?: string): Promise<boolean> {
+  private async printReceiptLogo(
+    logo?: string,
+    box?: {maxWidthMm?: number; maxHeightMm?: number},
+  ): Promise<boolean> {
     if (!logo?.trim() || !this.printerAddress) {
       return false;
     }
@@ -1122,7 +1126,14 @@ class BluetoothPrinterService {
     }
 
     // BT path scales by width only — pick a width that keeps height ≤ max.
-    const {width} = fitReceiptLogoSize(prepared.width, prepared.height);
+    const logoBox = logoBoxPixels(box);
+    const {width} = fitReceiptLogoSize(
+      prepared.width,
+      prepared.height,
+      logoBox.maxW,
+      logoBox.maxH,
+      logoBox.allowUpscale,
+    );
 
     const result = await NativePrinter.printImage(
       this.printerAddress,
@@ -1646,7 +1657,7 @@ class BluetoothPrinterService {
       if (!this.isConnected || !this.connectedDevice || !this.printerAddress) {
         Toast.show({
           type: 'error',
-          text1: 'Printer Not Connected',
+          text1: 'Printer isn’t connected',
           text2: 'Please connect to a Bluetooth printer first.',
         });
         return false;
@@ -1656,7 +1667,7 @@ class BluetoothPrinterService {
       if (!hasPermissions) {
         Toast.show({
           type: 'error',
-          text1: 'Permissions Required',
+          text1: 'Allow Bluetooth to continue',
           text2: 'Bluetooth permissions are required to print.',
         });
         return false;
@@ -1666,7 +1677,7 @@ class BluetoothPrinterService {
       if (!sessionReady) {
         Toast.show({
           type: 'error',
-          text1: 'Printer Not Connected',
+          text1: 'Printer isn’t connected',
           text2: 'Could not open a Bluetooth print session. Re-pair the printer and try again.',
         });
         return false;
@@ -1708,7 +1719,7 @@ class BluetoothPrinterService {
       console.error('Failed to print item label via Bluetooth:', error);
       Toast.show({
         type: 'error',
-        text1: 'Print Failed',
+        text1: 'Couldn’t print',
         text2:
           error?.message ||
           'Could not print the label. Check the printer connection.',
@@ -1746,6 +1757,35 @@ class BluetoothPrinterService {
     return true;
   }
 
+  /** Print a document that was already built, including a layout-screen sample. */
+  public async printPreparedDocument(document: ReceiptDocument): Promise<boolean> {
+    try {
+      if (!this.isConnected || !this.connectedDevice || !this.printerAddress) {
+        return false;
+      }
+      const hasPermissions = await this.requestBluetoothPermissions();
+      if (!hasPermissions) {
+        return false;
+      }
+      const sessionReady = await this.ensureFreshBluetoothSession();
+      if (!sessionReady) {
+        return false;
+      }
+      const logoNode = document.nodes.find(node => node.type === 'image');
+      let logoPrinted = false;
+      try {
+        logoPrinted = await this.printReceiptLogo(logoNode?.src, logoNode);
+      } catch (logoError) {
+        console.warn('Bluetooth receipt logo skipped:', logoError);
+      }
+      await this.printReceiptDocument(document, logoPrinted);
+      return true;
+    } catch (error) {
+      console.error('Bluetooth layout test print failed:', error);
+      return false;
+    }
+  }
+
   /**
    * Print receipt using Bluetooth
    */
@@ -1754,7 +1794,7 @@ class BluetoothPrinterService {
       if (!this.isConnected || !this.connectedDevice || !this.printerAddress) {
         Toast.show({
           type: 'error',
-          text1: 'Printer Not Connected',
+          text1: 'Printer isn’t connected',
           text2: 'Please connect to a Bluetooth printer first.',
         });
         return false;
@@ -1764,7 +1804,7 @@ class BluetoothPrinterService {
       if (!hasPermissions) {
         Toast.show({
           type: 'error',
-          text1: 'Permissions Required',
+          text1: 'Allow Bluetooth to continue',
           text2: 'Bluetooth permissions are required to print.',
         });
         return false;
@@ -1774,7 +1814,7 @@ class BluetoothPrinterService {
       if (!sessionReady) {
         Toast.show({
           type: 'error',
-          text1: 'Printer Not Connected',
+          text1: 'Printer isn’t connected',
           text2: 'Could not open a Bluetooth print session. Re-pair the printer and try again.',
         });
         return false;
@@ -1788,12 +1828,11 @@ class BluetoothPrinterService {
         process,
         'bluetooth',
       );
-      const logoSrc =
-        document.nodes.find(node => node.type === 'image')?.src ||
-        data.companyInfo?.logo;
+      const logoNode = document.nodes.find(node => node.type === 'image');
+      const logoSrc = logoNode?.src || data.companyInfo?.logo;
       let logoPrinted = false;
       try {
-        logoPrinted = await this.printReceiptLogo(logoSrc);
+        logoPrinted = await this.printReceiptLogo(logoSrc, logoNode);
       } catch (logoError) {
         console.warn('Bluetooth receipt logo skipped:', logoError);
       }
@@ -1802,7 +1841,7 @@ class BluetoothPrinterService {
 
       Toast.show({
         type: 'success',
-        text1: 'Print Successful',
+        text1: 'Printed',
         text2: 'Receipt printed successfully',
       });
       return true;
@@ -1810,7 +1849,7 @@ class BluetoothPrinterService {
       console.error('Failed to print via Bluetooth:', error);
       Toast.show({
         type: 'error',
-        text1: 'Print Failed',
+        text1: 'Couldn’t print',
         text2:
           error?.message ||
           'Failed to print receipt. Please check printer connection.',
@@ -1863,7 +1902,7 @@ class BluetoothPrinterService {
       if (!this.isConnected || !this.connectedDevice || !this.printerAddress) {
         Toast.show({
           type: 'error',
-          text1: 'Printer Not Connected',
+          text1: 'Printer isn’t connected',
           text2: 'Please connect to a Bluetooth printer first.',
         });
         return false;
@@ -1873,7 +1912,7 @@ class BluetoothPrinterService {
       if (!hasPermissions) {
         Toast.show({
           type: 'error',
-          text1: 'Permissions Required',
+          text1: 'Allow Bluetooth to continue',
           text2: 'Bluetooth permissions are required to print.',
         });
         return false;
@@ -1885,7 +1924,7 @@ class BluetoothPrinterService {
       if (!sessionReady) {
         Toast.show({
           type: 'error',
-          text1: 'Printer Not Connected',
+          text1: 'Printer isn’t connected',
           text2: 'Could not prepare Bluetooth print session.',
         });
         return false;
@@ -1897,8 +1936,8 @@ class BluetoothPrinterService {
 
         Toast.show({
           type: 'success',
-          text1: 'Test Print',
-          text2: 'Test print completed successfully',
+          text1: 'Test page printed',
+          visibilityTime: 2000,
         });
 
         return true;
@@ -1915,7 +1954,7 @@ class BluetoothPrinterService {
 
       Toast.show({
         type: 'error',
-        text1: 'Print Test Failed',
+        text1: 'Test page didn’t print',
         text2: errorMessage,
       });
 

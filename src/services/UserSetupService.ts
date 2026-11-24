@@ -25,8 +25,22 @@ export const UserSetupService = {
         ({
           id: Number(row.id) || 0,
           system_id: String(row.SystemId ?? row.system_id ?? ''),
-          user: row.user as any,
-          user_name: String(row.user_name ?? row.user ?? ''),
+          user: Number(row.user_id ?? row.user) || 0,
+          userId: Number(row.user_id ?? row.user) || 0,
+          username: String(
+            row.username ?? row.user__username ?? row.user_name ?? '',
+          ),
+          email: String(row['user__email'] ?? row.email ?? ''),
+          fullName: String(
+            row['user__full_name'] ??
+              row.full_name ??
+              row.fullName ??
+              row.user_name ??
+              '',
+          ),
+          user_name: String(
+            row['user__full_name'] ?? row.user_name ?? row.user ?? '',
+          ),
           allow_posting_from: row.allow_posting_from as any,
           allow_posting_to: row.allow_posting_to as any,
           sales_resp_ctr_filter: row.sales_resp_ctr_filter as any,

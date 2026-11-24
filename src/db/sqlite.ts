@@ -322,6 +322,16 @@ export async function getOrCreateDeviceId(): Promise<string> {
   return id;
 }
 
+/** OFF-{device}-{n}. The counter is stored so a reload does not reuse numbers. */
+export async function nextOfflineReceiptNo(deviceId: string): Promise<string> {
+  const shortDevice = deviceId.slice(0, 8);
+  const key = `receipt_seq_${shortDevice}`;
+  const raw = await getSyncMeta(key);
+  const next = (Number.parseInt(raw || '0', 10) || 0) + 1;
+  await setSyncMeta(key, String(next));
+  return `OFF-${shortDevice}-${next}`;
+}
+
 export async function saveItemOnHand(
   rows: {
     item_system_id: string;

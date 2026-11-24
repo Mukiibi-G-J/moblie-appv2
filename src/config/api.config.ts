@@ -1,19 +1,19 @@
 import {Platform} from 'react-native';
 
 // Set USE_TEST_ENV to true to use test environment
-export const USE_TEST_ENV = true;
+export const USE_TEST_ENV = false;
 
 /**
- * Test-only master switch for simulated offline (requires USE_TEST_ENV = true).
- * When false: no API blocking, Settings toggle hidden, production-safe default.
- * When true: blocks axios calls; optional Settings toggle can turn it off without rebuild.
+ * Starting value for Settings → Offline POS → Simulate offline.
+ * The switch shows in test and dev builds and stays off unless this is true.
+ * Turning it on blocks API calls and queues sales on the device, same as the desktop dev toggle.
  */
 export const SIMULATE_OFFLINE_POS = false;
 
 export const TEST_API_PORT = 8000;
 
 /** Your PC WiFi IPv4 — run `ipconfig` on Windows and pick the WiFi adapter address. */
-export const TEST_API_LAN_HOST = '192.168.1.3';
+export const TEST_API_LAN_HOST = '192.168.1.4';
 
 /**
  * How the Android device reaches your local Django server:

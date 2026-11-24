@@ -102,7 +102,13 @@ function buildSaleSection(
   switch (section.id) {
     case "logo":
       if (hasPrintableLogo(branding.logo)) {
-        nodes.push({ type: "image", src: branding.logo as string, style: { align: "center" } });
+        const large = sectionFlag(cfg, "large", false);
+        nodes.push({
+          type: "image",
+          src: branding.logo as string,
+          style: { align: "center" },
+          ...(large ? { maxWidthMm: 42, maxHeightMm: 22 } : {}),
+        });
       }
       break;
     case "title": {
@@ -336,13 +342,34 @@ function buildSaleSection(
   void cols;
 }
 
+function pushLogoNode(
+  nodes: ReceiptDocumentNode[],
+  branding: ReceiptBranding,
+  cfg: Record<string, unknown>,
+): void {
+  if (!hasPrintableLogo(branding.logo)) {
+    return;
+  }
+  const large = sectionFlag(cfg, "large", false);
+  nodes.push({
+    type: "image",
+    src: branding.logo as string,
+    style: { align: "center" },
+    ...(large ? { maxWidthMm: 42, maxHeightMm: 22 } : {}),
+  });
+}
+
 function buildKotBarSection(
   section: TemplateSection,
   payload: KotBarPayload,
+  branding: ReceiptBranding,
   nodes: ReceiptDocumentNode[],
 ): void {
   const cfg = section.config || {};
   switch (section.id) {
+    case "logo":
+      pushLogoNode(nodes, branding, cfg);
+      break;
     case "title":
       nodes.push({
         type: "text",
@@ -420,6 +447,9 @@ function buildPaymentJournalSection(
 ): void {
   const cfg = section.config || {};
   switch (section.id) {
+    case "logo":
+      pushLogoNode(nodes, branding, cfg);
+      break;
     case "title":
       nodes.push({
         type: "text",
@@ -531,7 +561,7 @@ export function buildReceiptDocument(
 
   for (const section of enabledSections(template)) {
     if (payload.receiptType === "kot" || payload.receiptType === "bar") {
-      buildKotBarSection(section, payload as KotBarPayload, nodes);
+      buildKotBarSection(section, payload as KotBarPayload, branding, nodes);
     } else if (payload.receiptType === "payment_journal") {
       buildPaymentJournalSection(
         section,

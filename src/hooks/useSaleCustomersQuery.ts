@@ -1,6 +1,6 @@
 import {useQuery, useQueryClient} from '@tanstack/react-query';
 import {fetchCustomers, fetchPaymentMethods} from '../services/app.services';
-import {getLocalPaymentMethods} from '../services/localData';
+import {getLocalCustomers, getLocalPaymentMethods} from '../services/localData';
 import {getEffectiveIsOnline} from '../utils/posConnectivity';
 import {queryKeys} from '../query/keys';
 
@@ -10,7 +10,16 @@ export function useSaleCustomersQuery(enabled = true) {
     queryKey: queryKeys.saleCustomers(),
     enabled,
     staleTime: 60_000,
-    queryFn: () => fetchCustomers(),
+    queryFn: async () => {
+      if (!getEffectiveIsOnline()) {
+        return getLocalCustomers();
+      }
+      const rows = await fetchCustomers();
+      if (rows.length) {
+        return rows;
+      }
+      return getLocalCustomers();
+    },
   });
 }
 
