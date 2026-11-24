@@ -433,9 +433,13 @@ const Cart = ({
    * iOS cannot present a modal while another is still animating out: opening
    * SalesCompletionModal in the same tick the "Current sale" sheet closes leaves an
    * invisible backdrop that swallows every touch (the app looks frozen). On iOS the
-   * Charge total is parked here and the payment modal opens from the sheet's onModalHide.
+   * Charge total is parked here and the payment modal opens from the sheet's native
+   * onDismiss. react-native-modal's onModalHide fires before UIKit has finished the
+   * dismissal, which is too early on the New Architecture, so it is not used. A
+   * fallback timer covers the case where onDismiss never arrives.
    */
   const pendingChargeTotalRef = useRef<number | null>(null);
+  const pendingChargeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cartItemsRef = useRef(null) as React.MutableRefObject<CartItem[]>;
   const trackingOptionsCacheRef = useRef(
     {} as Record<string, TrackingLotOption[]>,
@@ -2243,7 +2247,12 @@ const Cart = ({
         animationInTiming={120}
         animationOutTiming={100}
         onBackdropPress={dismissReviewSaleSheet}
-        onModalHide={() => {
+        onDismiss={() => {
+          // iOS only: fires after UIKit has fully dismissed the sheet.
+          if (pendingChargeTimerRef.current) {
+            clearTimeout(pendingChargeTimerRef.current);
+            pendingChargeTimerRef.current = null;
+          }
           const pendingTotal = pendingChargeTotalRef.current;
           if (pendingTotal == null) {
             return;
@@ -2465,6 +2474,16 @@ const Cart = ({
                 if (Platform.OS === 'ios') {
                   // Open the payment modal only after this sheet has fully hidden.
                   pendingChargeTotalRef.current = total;
+                  // Fallback in case the native onDismiss never fires.
+                  pendingChargeTimerRef.current = setTimeout(() => {
+                    pendingChargeTimerRef.current = null;
+                    const pendingTotal = pendingChargeTotalRef.current;
+                    if (pendingTotal == null) {
+                      return;
+                    }
+                    pendingChargeTotalRef.current = null;
+                    void handlePlaceOrder(pendingTotal);
+                  }, 900);
                   dismissReviewSaleSheet();
                   return;
                 }
