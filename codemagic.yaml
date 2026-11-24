@@ -34,7 +34,9 @@ workflows:
         - pattern: "ios-v*"
     scripts:
       - name: Install JS dependencies (runs patch-package)
-        script: npm ci
+        # @finan-me/react-native-thermal-printer declares peer react-native >=0.76.9 while the
+        # app is on 0.76.1; the lockfile was created with legacy peer deps, so install the same way.
+        script: npm ci --legacy-peer-deps
 
       - name: Add GoogleService-Info.plist
         script: |
