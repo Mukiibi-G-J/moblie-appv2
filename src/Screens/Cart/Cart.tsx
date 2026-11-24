@@ -429,6 +429,13 @@ const Cart = ({
     setCustomerPickerQuery('');
     setReviewSaleVisible(false);
   }, []);
+  /**
+   * iOS cannot present a modal while another is still animating out: opening
+   * SalesCompletionModal in the same tick the "Current sale" sheet closes leaves an
+   * invisible backdrop that swallows every touch (the app looks frozen). On iOS the
+   * Charge total is parked here and the payment modal opens from the sheet's onModalHide.
+   */
+  const pendingChargeTotalRef = useRef<number | null>(null);
   const cartItemsRef = useRef(null) as React.MutableRefObject<CartItem[]>;
   const trackingOptionsCacheRef = useRef(
     {} as Record<string, TrackingLotOption[]>,
@@ -2236,6 +2243,14 @@ const Cart = ({
         animationInTiming={120}
         animationOutTiming={100}
         onBackdropPress={dismissReviewSaleSheet}
+        onModalHide={() => {
+          const pendingTotal = pendingChargeTotalRef.current;
+          if (pendingTotal == null) {
+            return;
+          }
+          pendingChargeTotalRef.current = null;
+          void handlePlaceOrder(pendingTotal);
+        }}
         style={styles.reviewSaleModal}
         backdropOpacity={0.28}
         backdropTransitionInTiming={90}
@@ -2447,6 +2462,12 @@ const Cart = ({
               printReceipt={printReceipt}
               setPrintReceipt={setPrintReceipt}
               onPress={() => {
+                if (Platform.OS === 'ios') {
+                  // Open the payment modal only after this sheet has fully hidden.
+                  pendingChargeTotalRef.current = total;
+                  dismissReviewSaleSheet();
+                  return;
+                }
                 dismissReviewSaleSheet();
                 handlePlaceOrder(total);
               }}
