@@ -61,7 +61,9 @@ workflows:
         script: cd ios && pod install --repo-update
 
       - name: Set up code signing
-        script: xcode-project use-profiles
+        # Only the app project: by default this scans every **/*.xcodeproj, including ones
+        # shipped inside node_modules (e.g. RNDateTimePicker.xcodeproj), and fails on them.
+        script: xcode-project use-profiles --project "ios/zentroapp.xcodeproj"
 
       - name: Set build number (latest TestFlight build + 1)
         script: |
